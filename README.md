@@ -1,22 +1,38 @@
 # wkdomains
 
-wkdomains is a small macOS browser built for developers working with coding
-tools like Codex, Claude Code, and similar agents.
+wkdomains is a macOS browser for developers working with coding agents like
+Codex, Claude Code, and similar tools.
 
-The idea is simple: the human uses the browser normally, logs in normally, and
-navigates to the page they care about. A coding tool can then inspect the same
-page state over a local HTTP API. That lets the tool see what the human sees,
-capture the current viewport, inspect browser-observed XHR/fetch traffic, and
-use the same auth context to reproduce API calls.
+It gives the agent a clean view into the browser state the human is already
+using: screenshots, observed XHR/fetch calls, compact JSON response shapes, and
+the auth context needed to replay those same requests.
 
-This is intentionally much narrower than driving a site with Playwright. A
-coding tool usually does not need to own the whole browser automation stack,
-recreate a login flow, maintain selectors, wait on fragile UI states, or scrape
-around the page to guess what matters. wkdomains exposes the specific developer
-primitives the tool needs: the visible screenshot, the XHR/fetch calls, compact
-JSON shapes, and the browser auth context needed to replay those calls. The
-human stays in control of the browser, and the tool gets a clean API for the
-useful state.
+The goal is to make the browser a shared workbench. The human stays in control
+of navigation, login, permissions, and intent. The coding agent gets structured
+local APIs for the exact page the human is looking at.
+
+## Why not just use Playwright?
+
+Playwright is excellent when the agent needs to own the browser and automate a
+repeatable workflow from scratch. That is not always what you want while
+debugging or building against a real logged-in product.
+
+A coding agent usually does not need the full browser automation stack. It does
+not need to recreate your login flow, maintain fragile selectors, wait on UI
+states, scrape the page to guess which data matters, or fight an app that
+behaves differently under automation.
+
+wkdomains takes a narrower approach:
+
+- The human uses the browser normally.
+- The app records the useful browser facts.
+- The coding agent asks local endpoints for exactly what it needs.
+
+That means the agent can see the current page, inspect the real network traffic,
+understand response shapes, and replay authenticated API calls without turning
+the whole task into a browser automation project.
+
+## Local API
 
 The local API currently runs on:
 
@@ -32,19 +48,19 @@ Use `/api/v1/screenshot` to get a PNG of the currently rendered visible page:
 curl http://localhost:9001/api/v1/screenshot --output - > foo.png
 ```
 
-The screenshot is rendered from the active browser viewport. wkdomains keeps a
-fresh screenshot in memory after pages load and after visible state changes. If
-a fresh render is still in progress when the endpoint is called, the request
-waits briefly so the PNG is usually ready by the time curl returns.
+The screenshot comes from the active browser viewport. wkdomains keeps a fresh
+screenshot in memory after pages load and after visible state changes. If a
+fresh render is still in progress when the endpoint is called, the request waits
+briefly so the PNG is usually ready by the time curl returns.
 
-The toolbar has viewport buttons for:
+The toolbar supports multiple viewport modes:
 
 - Desktop: the normal app viewport
 - Mobile Large: 700px wide
 - Mobile Small: 390px wide
 
 Select a mobile viewport in the app, then run the same screenshot curl command.
-The returned PNG will use that selected viewport width.
+The returned PNG will use the selected viewport width.
 
 ## Inspect XHR and fetch calls
 
@@ -89,10 +105,10 @@ Example shape:
 }
 ```
 
-The useful part is `jsonShape`. It gives a compact description of the response
-body without dumping the full response. That is enough for a coding agent to
-understand which API calls exist, what they return, and which endpoint is likely
-to contain the data it needs.
+The important field is `jsonShape`. It gives the agent a compact map of the
+response body without dumping the full response. That is enough to identify
+which API calls exist, what they return, and which endpoint is likely to contain
+the data needed for the task.
 
 ## Inspect cookies and browser storage
 
@@ -160,7 +176,9 @@ the same XHR endpoints and retrieve full JSON directly. Treat the output as
 sensitive. Cookie values, bearer tokens, session IDs, account IDs, and user IDs
 should be redacted before sharing logs or examples.
 
-## Workflow
+## A better agent workflow
+
+Typical flow:
 
 1. Open wkdomains.
 2. Navigate to the app or website you want to inspect.
@@ -173,40 +191,80 @@ curl http://localhost:9001/api/v1/xhr/app.netlify.com | jq .
 curl http://localhost:9001/api/v1/cookies/app.netlify.com | jq .
 ```
 
-From there, the coding tool can compare the screenshot with the DOM/API state,
-identify the relevant XHR calls, and replay authenticated API requests using
-the same browser session.
+From there, the coding tool can compare the screenshot with the API state,
+identify the relevant XHR calls, and replay authenticated requests using the
+same browser session.
 
-## Roadmap
+Instead of saying "look at this page" and hoping the agent can infer everything,
+wkdomains gives the agent the same practical signals a developer would use:
 
-Future versions will add an MCP server and many more developer-agent features.
-With MCP, a coding tool could use wkdomains as a live browser context instead
-of asking the user to paste screenshots, cookies, network logs, or copied JSON.
+- What is visible?
+- Which API calls produced it?
+- What shape is the JSON?
+- Which authenticated request should be replayed?
+- Does the issue happen in mobile viewports too?
 
-Some examples of what that enables:
+## Future MCP ideas
 
-- `get_current_screenshot`: let the tool inspect the exact rendered page the
-  human is looking at, including desktop and mobile viewport modes.
-- `list_xhr`: show the tool the important API calls the page already made,
-  including methods, URLs, status codes, response sizes, and compact
-  `jsonShape` summaries.
-- `replay_xhr`: let the tool rerun a selected authenticated request and inspect
-  the full JSON response without rebuilding the browser login flow.
-- `find_api_for_visible_text`: connect something visible in the screenshot to
-  the XHR response that produced it.
+Future versions will add an MCP server so coding agents can use wkdomains as a
+live browser context without asking the human to paste screenshots, cookies,
+network logs, or copied JSON.
+
+The most interesting direction is a real human-agent loop.
+
+Imagine right-clicking a button, table row, chart, error message, or confusing
+piece of UI and choosing "Ask coding agent". wkdomains could package the current
+URL, viewport, screenshot, screenshot crop, element text, accessibility info,
+nearby DOM, recent XHR calls, console errors, and auth shape into one pending
+MCP request. The agent could notice it, investigate, and reply back into the
+browser.
+
+That makes the browser interactive for both sides:
+
+- Human: "Why is this button disabled?"
+- Agent: checks the element state, failed API calls, permissions response, and
+  answers in the browser.
+- Human: "Where does this number come from?"
+- Agent: maps the visible text to the XHR response that produced it.
+- Human: "Make this section work on mobile."
+- Agent: captures desktop, mobile-large, and mobile-small screenshots, then
+  edits the app and verifies the layout.
+- Agent: "Please log in and navigate to billing."
+- Human: does it and clicks "Done".
+- Agent: continues using the live authenticated browser state.
+
+Possible MCP tools:
+
+- `get_current_screenshot`: inspect the exact rendered page the human sees.
+- `list_xhr`: list important browser-observed API calls with `jsonShape`
+  summaries.
+- `replay_xhr`: rerun a selected authenticated request and inspect the full JSON
+  response.
+- `find_api_for_visible_text`: connect a visible label, table value, or error
+  message to the API response that produced it.
 - `compare_viewports`: capture desktop, mobile-large, and mobile-small
-  screenshots so the tool can spot responsive layout bugs.
-- `watch_page_changes`: notify the tool when the page navigates, when new XHR
-  calls arrive, or when the visible render changes.
+  screenshots to find responsive layout bugs.
+- `watch_page_changes`: notify the agent when navigation, new XHR calls, or
+  visible renders happen.
 - `extract_auth_context`: provide the minimum cookies, headers, and storage
-  values needed to reproduce a request, with sensitive values explicitly marked.
-- `debug_failed_state`: package the screenshot, recent XHR failures, console
-  errors, URL, viewport, and auth shape into one context bundle for an agent.
-- `generate_curl_for_request`: turn a browser-observed XHR into a sanitized
-  curl command the developer can run and edit.
-- `verify_fix`: after a code change, let the tool reload the app, inspect the
-  screenshot, and confirm that the relevant API calls and UI state look right.
+  values needed to reproduce a request, with sensitive values clearly marked.
+- `debug_failed_state`: package screenshot, recent XHR failures, console errors,
+  URL, viewport, and auth shape into one debugging bundle.
+- `generate_curl_for_request`: turn a browser-observed XHR into a sanitized curl
+  command the developer can run and edit.
+- `verify_fix`: reload the page after a code change, inspect screenshots and
+  XHR, and confirm the UI state changed as expected.
+- `get_human_requests`: let the agent poll for right-click questions or toolbar
+  requests created by the human.
+- `reply_to_human_request`: let the agent answer inside wkdomains instead of
+  forcing the conversation back into a terminal.
+- `highlight_page_region`: let the agent point to the exact part of the page it
+  is talking about.
+- `request_human_action`: let the agent ask the human to log in, navigate,
+  approve replaying a sensitive request, or perform a step that should remain
+  human-controlled.
 
 The long-term goal is for a coding agent to work with web apps the way a human
-does: seeing the screen, understanding the network traffic behind it, and using
-the browser's real authenticated state when it needs deeper data.
+developer does: see the screen, understand the network traffic behind it, ask
+for help when it needs human action, and use the browser's real authenticated
+state when deeper data is needed.
