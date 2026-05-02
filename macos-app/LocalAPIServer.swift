@@ -97,21 +97,31 @@ final class LocalAPIServer {
             return
         }
 
-        let prefix = "/api/v1/cookies/"
-        guard request.path.hasPrefix(prefix) else {
-            sendError(status: .notFound, message: "Endpoint not found.", on: connection)
+        if request.path.hasPrefix("/api/v1/cookies/") {
+            let rawDomain = String(request.path.dropFirst("/api/v1/cookies/".count))
+            guard let domain = RequestedDomain(rawValue: rawDomain) else {
+                sendError(status: .badRequest, message: "Provide a valid domain.", on: connection)
+                return
+            }
+
+            dataReader.readStorage(for: domain) { [weak self] response in
+                self?.sendJSON(response, status: .ok, on: connection)
+            }
             return
         }
 
-        let rawDomain = String(request.path.dropFirst(prefix.count))
-        guard let domain = RequestedDomain(rawValue: rawDomain) else {
-            sendError(status: .badRequest, message: "Provide a valid domain.", on: connection)
+        if request.path.hasPrefix("/api/v1/xhr/") {
+            let rawHostname = String(request.path.dropFirst("/api/v1/xhr/".count))
+            guard let domain = RequestedDomain(rawValue: rawHostname) else {
+                sendError(status: .badRequest, message: "Provide a valid hostname.", on: connection)
+                return
+            }
+
+            sendJSON(dataReader.readXHRRequests(for: domain), status: .ok, on: connection)
             return
         }
 
-        dataReader.readStorage(for: domain) { [weak self] response in
-            self?.sendJSON(response, status: .ok, on: connection)
-        }
+        sendError(status: .notFound, message: "Endpoint not found.", on: connection)
     }
 
     private func isLoopback(_ endpoint: NWEndpoint) -> Bool {
@@ -287,6 +297,15 @@ private final class WebsiteDataReader {
         }
     }
 
+    func readXHRRequests(for domain: RequestedDomain) -> XHRRequestsResponse {
+        XHRRequestsResponse(
+            hostname: domain.host,
+            activePageURL: browser.webView.url?.absoluteString,
+            activePageHost: browser.webView.url?.host,
+            requests: browser.xhrRequests(for: domain.host).map(XHRRequestResponse.init(record:))
+        )
+    }
+
     private func cookie(_ cookie: HTTPCookie, matches host: String) -> Bool {
         let cookieDomain = cookie.domain
             .lowercased()
@@ -422,6 +441,43 @@ private struct DomainStorageResponse: Encodable {
     let cookies: [CookieResponse]
     let localStorage: [LocalStorageOriginResponse]
     let sessionStorage: [SessionStorageOriginResponse]
+}
+
+private struct XHRRequestsResponse: Encodable {
+    let hostname: String
+    let activePageURL: String?
+    let activePageHost: String?
+    let requests: [XHRRequestResponse]
+}
+
+private struct XHRRequestResponse: Encodable {
+    let id: String
+    let kind: String
+    let method: String
+    let url: String
+    let host: String?
+    let pageURL: String?
+    let pageHost: String?
+    let startedAt: Date
+    let completedAt: Date?
+    let status: Int?
+    let responseURL: String?
+    let error: String?
+
+    init(record: XHRRequestRecord) {
+        id = record.id
+        kind = record.kind
+        method = record.method
+        url = record.url
+        host = record.host
+        pageURL = record.pageURL
+        pageHost = record.pageHost
+        startedAt = record.startedAt
+        completedAt = record.completedAt
+        status = record.status
+        responseURL = record.responseURL
+        error = record.error
+    }
 }
 
 private struct CookieResponse: Encodable {

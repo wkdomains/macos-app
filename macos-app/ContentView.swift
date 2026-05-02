@@ -10,6 +10,21 @@ import Combine
 import SwiftUI
 import WebKit
 
+struct XHRRequestRecord: Encodable {
+    let id: String
+    let kind: String
+    let method: String
+    let url: String
+    let host: String?
+    let pageURL: String?
+    let pageHost: String?
+    let startedAt: Date
+    var completedAt: Date?
+    var status: Int?
+    var responseURL: String?
+    var error: String?
+}
+
 struct ContentView: View {
     @ObservedObject var browser: BrowserModel
     @FocusState private var isAddressFocused: Bool
@@ -359,6 +374,9 @@ final class BrowserModel: NSObject, ObservableObject {
     let webView: BrowserWKWebView
 
     private var observations: [NSKeyValueObservation] = []
+    private var activePageHost: String?
+    private var xhrRecords: [XHRRequestRecord] = []
+    private var xhrRecordIndexesByID: [String: Int] = [:]
 
     init(dataStore: WKWebsiteDataStore = .default()) {
         let configuration = WKWebViewConfiguration()
@@ -372,6 +390,7 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.browserContextMenuDelegate = self
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        installXHRTrackingScript(on: webView.configuration.userContentController)
 
         observations = [
             webView.observe(\.estimatedProgress, options: [.initial, .new]) { [weak self] webView, _ in
@@ -467,6 +486,70 @@ final class BrowserModel: NSObject, ObservableObject {
         }
     }
 
+    func xhrRequests(for host: String) -> [XHRRequestRecord] {
+        let normalizedHost = Self.normalizedHost(host)
+
+        return xhrRecords.filter { record in
+            guard let recordHost = record.host ?? URL(string: record.url)?.host else {
+                return false
+            }
+
+            return Self.host(recordHost, matches: normalizedHost)
+        }
+    }
+
+    private func resetXHRTracking(for url: URL?) {
+        activePageHost = url?.host?.lowercased()
+        xhrRecords.removeAll(keepingCapacity: true)
+        xhrRecordIndexesByID.removeAll(keepingCapacity: true)
+    }
+
+    private func recordXHRMessage(_ message: [String: Any]) {
+        guard let event = message["event"] as? String,
+              let id = message["id"] as? String
+        else {
+            return
+        }
+
+        if event == "start" {
+            guard let rawURL = message["url"] as? String,
+                  let url = URL(string: rawURL)
+            else {
+                return
+            }
+
+            let record = XHRRequestRecord(
+                id: id,
+                kind: message["kind"] as? String ?? "xhr",
+                method: (message["method"] as? String ?? "GET").uppercased(),
+                url: url.absoluteString,
+                host: url.host?.lowercased(),
+                pageURL: message["pageURL"] as? String,
+                pageHost: (message["pageHost"] as? String)?.lowercased(),
+                startedAt: Date(),
+                completedAt: nil,
+                status: nil,
+                responseURL: nil,
+                error: nil
+            )
+
+            xhrRecordIndexesByID[id] = xhrRecords.count
+            xhrRecords.append(record)
+            return
+        }
+
+        guard let index = xhrRecordIndexesByID[id],
+              xhrRecords.indices.contains(index)
+        else {
+            return
+        }
+
+        xhrRecords[index].completedAt = Date()
+        xhrRecords[index].status = message["status"] as? Int
+        xhrRecords[index].responseURL = message["responseURL"] as? String
+        xhrRecords[index].error = message["error"] as? String
+    }
+
     private func syncAddress(from webView: WKWebView) {
         guard let url = webView.url else { return }
 
@@ -483,6 +566,7 @@ final class BrowserModel: NSObject, ObservableObject {
         errorMessage = nil
         addressText = url.absoluteString
         isSecurePage = url.scheme?.lowercased() == "https"
+        resetXHRTracking(for: url)
 
         webView.load(URLRequest(url: url))
     }
@@ -513,9 +597,151 @@ final class BrowserModel: NSObject, ObservableObject {
 
         return url
     }
+
+    private static func normalizedHost(_ host: String) -> String {
+        host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    }
+
+    private static func host(_ host: String, matches requestedHost: String) -> Bool {
+        let host = normalizedHost(host)
+
+        return host == requestedHost
+            || host.hasSuffix(".\(requestedHost)")
+            || requestedHost.hasSuffix(".\(host)")
+    }
+
+    private func installXHRTrackingScript(on userContentController: WKUserContentController) {
+        userContentController.add(self, name: "wkdomainsXHR")
+        userContentController.addUserScript(
+            WKUserScript(
+                source: Self.xhrTrackingScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false
+            )
+        )
+    }
+
+    private static let xhrTrackingScript = """
+    (() => {
+      if (window.__wkdomainsXHRInstalled) return;
+      window.__wkdomainsXHRInstalled = true;
+
+      let nextID = 1;
+
+      const post = (payload) => {
+        try {
+          window.webkit.messageHandlers.wkdomainsXHR.postMessage({
+            pageURL: location.href,
+            pageHost: location.hostname,
+            ...payload
+          });
+        } catch (_) {}
+      };
+
+      const requestID = () => `${Date.now()}-${nextID++}`;
+
+      const normalizeURL = (input) => {
+        try {
+          if (input instanceof Request) return input.url;
+          if (input && typeof input === "object" && "href" in input) return input.href;
+          return new URL(String(input), location.href).href;
+        } catch (_) {
+          return String(input);
+        }
+      };
+
+      const originalFetch = window.fetch;
+      if (typeof originalFetch === "function") {
+        window.fetch = function(input, init) {
+          const id = requestID();
+          const method = (init && init.method) || (input && input.method) || "GET";
+          const url = normalizeURL(input);
+
+          post({ event: "start", id, kind: "fetch", method, url });
+
+          return originalFetch.apply(this, arguments).then((response) => {
+            post({
+              event: "finish",
+              id,
+              status: response.status,
+              responseURL: response.url || url
+            });
+            return response;
+          }).catch((error) => {
+            post({
+              event: "error",
+              id,
+              error: error && error.message ? error.message : String(error)
+            });
+            throw error;
+          });
+        };
+      }
+
+      const OriginalXHR = window.XMLHttpRequest;
+      if (typeof OriginalXHR === "function") {
+        const originalOpen = OriginalXHR.prototype.open;
+        const originalSend = OriginalXHR.prototype.send;
+
+        OriginalXHR.prototype.open = function(method, url) {
+          this.__wkdomainsXHR = {
+            method: method || "GET",
+            url: normalizeURL(url)
+          };
+
+          return originalOpen.apply(this, arguments);
+        };
+
+        OriginalXHR.prototype.send = function() {
+          const info = this.__wkdomainsXHR || {};
+          const id = requestID();
+          info.id = id;
+
+          post({
+            event: "start",
+            id,
+            kind: "xmlhttprequest",
+            method: info.method || "GET",
+            url: info.url || ""
+          });
+
+          this.addEventListener("loadend", () => {
+            post({
+              event: "finish",
+              id,
+              status: this.status,
+              responseURL: this.responseURL || info.url || ""
+            });
+          }, { once: true });
+
+          this.addEventListener("error", () => {
+            post({ event: "error", id, error: "XMLHttpRequest error" });
+          }, { once: true });
+
+          this.addEventListener("abort", () => {
+            post({ event: "error", id, error: "XMLHttpRequest aborted" });
+          }, { once: true });
+
+          return originalSend.apply(this, arguments);
+        };
+      }
+    })();
+    """
 }
 
 extension BrowserModel: BrowserContextMenuDelegate {}
+
+extension BrowserModel: WKScriptMessageHandler {
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "wkdomainsXHR",
+              let body = message.body as? [String: Any]
+        else {
+            return
+        }
+
+        recordXHRMessage(body)
+    }
+}
 
 extension BrowserModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -523,6 +749,7 @@ extension BrowserModel: WKNavigationDelegate {
         hasAttemptedNavigation = true
         isLoading = true
         estimatedProgress = max(0.08, webView.estimatedProgress)
+        resetXHRTracking(for: webView.url)
         syncAddress(from: webView)
     }
 
