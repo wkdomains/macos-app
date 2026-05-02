@@ -19,6 +19,7 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published private(set) var hasAttemptedNavigation = false
     @Published private(set) var isLoading = false
     @Published private(set) var isSecurePage = false
+    @Published private(set) var viewportMode: BrowserViewportMode = .desktop
 
     let webView: BrowserWKWebView
 
@@ -44,6 +45,9 @@ final class BrowserModel: NSObject, ObservableObject {
 
         webView.allowsBackForwardNavigationGestures = true
         webView.browserContextMenuDelegate = self
+        webView.viewportSizeDidChange = { [weak self] in
+            self?.markScreenshotDirty(scheduleAfter: 0.25)
+        }
         webView.navigationDelegate = self
         webView.uiDelegate = self
         installPageTrackingScripts(on: webView.configuration.userContentController)
@@ -179,6 +183,12 @@ final class BrowserModel: NSObject, ObservableObject {
 
         guard !webView.isLoading else { return }
         scheduleScreenshotCapture(after: 0)
+    }
+
+    func setViewportMode(_ mode: BrowserViewportMode) {
+        guard viewportMode != mode else { return }
+        viewportMode = mode
+        markScreenshotDirty(scheduleAfter: 0.35)
     }
 
     func load(_ url: URL) {

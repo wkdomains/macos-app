@@ -17,21 +17,30 @@ struct ContentView: View {
             progressBar
 
             ZStack {
-                BrowserWebView(webView: browser.webView)
-                    .opacity(browser.hasAttemptedNavigation ? 1 : 0)
+                Color(nsColor: browser.viewportMode == .desktop ? .textBackgroundColor : .windowBackgroundColor)
 
-                if !browser.hasAttemptedNavigation {
-                    EmptyBrowserState()
-                }
+                ZStack {
+                    BrowserWebView(webView: browser.webView)
+                        .opacity(browser.hasAttemptedNavigation ? 1 : 0)
 
-                if let errorMessage = browser.errorMessage {
-                    BrowserErrorState(message: errorMessage) {
-                        browser.reload()
+                    if !browser.hasAttemptedNavigation {
+                        EmptyBrowserState()
+                    }
+
+                    if let errorMessage = browser.errorMessage {
+                        BrowserErrorState(message: errorMessage) {
+                            browser.reload()
+                        }
                     }
                 }
+                .frame(width: browser.viewportMode.width)
+                .frame(
+                    maxWidth: browser.viewportMode == .desktop ? .infinity : nil,
+                    maxHeight: .infinity
+                )
+                .background(Color(nsColor: .textBackgroundColor))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .textBackgroundColor))
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(minWidth: 720, minHeight: 520)
@@ -113,6 +122,8 @@ struct ContentView: View {
                     )
             )
 
+            viewportControls
+
             Button {
                 browser.loadCurrentAddress()
             } label: {
@@ -128,6 +139,38 @@ struct ContentView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.bar)
+    }
+
+    private var viewportControls: some View {
+        HStack(spacing: 2) {
+            ForEach(BrowserViewportMode.allCases) { mode in
+                Button {
+                    browser.setViewportMode(mode)
+                } label: {
+                    Image(systemName: mode.systemName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(browser.viewportMode == mode ? Color.accentColor : .secondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(browser.viewportMode == mode ? Color.accentColor.opacity(0.14) : Color.clear)
+                )
+                .accessibilityLabel(mode.accessibilityLabel)
+                .help(mode.helpText)
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
+        )
     }
 
     private var progressBar: some View {

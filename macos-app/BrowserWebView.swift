@@ -25,12 +25,19 @@ protocol BrowserContextMenuDelegate: AnyObject {
 
 final class BrowserWKWebView: WKWebView {
     weak var browserContextMenuDelegate: BrowserContextMenuDelegate?
+    var viewportSizeDidChange: (() -> Void)?
     private var contextMenuEventMonitor: Any?
+    private var lastReportedViewportSize = NSSize.zero
 
     deinit {
         if let contextMenuEventMonitor {
             NSEvent.removeMonitor(contextMenuEventMonitor)
         }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        reportViewportSizeIfNeeded(newSize)
     }
 
     override func viewDidMoveToWindow() {
@@ -116,5 +123,14 @@ final class BrowserWKWebView: WKWebView {
 
     @objc private func clearCookiesFromContextMenu() {
         browserContextMenuDelegate?.clearCookiesForCurrentDomain()
+    }
+
+    private func reportViewportSizeIfNeeded(_ size: NSSize) {
+        let didChange = abs(size.width - lastReportedViewportSize.width) >= 1
+            || abs(size.height - lastReportedViewportSize.height) >= 1
+
+        guard didChange else { return }
+        lastReportedViewportSize = size
+        viewportSizeDidChange?()
     }
 }
