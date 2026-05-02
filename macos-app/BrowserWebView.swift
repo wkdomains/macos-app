@@ -26,71 +26,28 @@ protocol BrowserContextMenuDelegate: AnyObject {
 final class BrowserWKWebView: WKWebView {
     weak var browserContextMenuDelegate: BrowserContextMenuDelegate?
     var viewportSizeDidChange: (() -> Void)?
-    private var contextMenuEventMonitor: Any?
     private var lastReportedViewportSize = NSSize.zero
-
-    deinit {
-        if let contextMenuEventMonitor {
-            NSEvent.removeMonitor(contextMenuEventMonitor)
-        }
-    }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         reportViewportSizeIfNeeded(newSize)
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
+    override func rightMouseDown(with event: NSEvent) {
+        showBrowserContextMenu(with: event)
+    }
 
-        if window == nil {
-            removeContextMenuEventMonitor()
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) {
+            showBrowserContextMenu(with: event)
         } else {
-            installContextMenuEventMonitor()
+            super.mouseDown(with: event)
         }
     }
 
-    override func menu(for event: NSEvent) -> NSMenu? {
-        browserContextMenu()
-    }
-
-    private func installContextMenuEventMonitor() {
-        guard contextMenuEventMonitor == nil else { return }
-
-        contextMenuEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { [weak self] event in
-            guard let self else { return event }
-
-            let isContextClick = event.type == .rightMouseDown
-                || (event.type == .leftMouseDown && event.modifierFlags.contains(.control))
-
-            guard isContextClick,
-                  self.shouldHandleContextMenuEvent(event)
-            else {
-                return event
-            }
-
-            NSMenu.popUpContextMenu(self.browserContextMenu(), with: event, for: self)
-            self.window?.invalidateCursorRects(for: self)
-            return nil
-        }
-    }
-
-    private func removeContextMenuEventMonitor() {
-        guard let contextMenuEventMonitor else { return }
-        NSEvent.removeMonitor(contextMenuEventMonitor)
-        self.contextMenuEventMonitor = nil
-    }
-
-    private func shouldHandleContextMenuEvent(_ event: NSEvent) -> Bool {
-        guard event.window === window,
-              isHidden == false,
-              alphaValue > 0
-        else {
-            return false
-        }
-
-        let point = convert(event.locationInWindow, from: nil)
-        return bounds.contains(point)
+    private func showBrowserContextMenu(with event: NSEvent) {
+        NSMenu.popUpContextMenu(browserContextMenu(), with: event, for: self)
+        window?.invalidateCursorRects(for: self)
     }
 
     private func browserContextMenu() -> NSMenu {
