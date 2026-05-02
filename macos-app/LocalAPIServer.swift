@@ -41,8 +41,8 @@ final class LocalAPIServer {
     private let queue = DispatchQueue.main
     private var listener: NWListener?
 
-    init(dataStore: WKWebsiteDataStore, settings: ServerSettings) {
-        dataReader = WebsiteDataReader(dataStore: dataStore)
+    init(browser: BrowserModel, settings: ServerSettings) {
+        dataReader = WebsiteDataReader(browser: browser)
         requestedPort = settings.port
     }
 
@@ -270,11 +270,13 @@ private struct APIErrorResponse: Encodable {
 
 @MainActor
 private final class WebsiteDataReader {
+    private let browser: BrowserModel
     private let dataStore: WKWebsiteDataStore
     private let localStorageReader: LocalStorageReader
 
-    init(dataStore: WKWebsiteDataStore) {
-        self.dataStore = dataStore
+    init(browser: BrowserModel) {
+        self.browser = browser
+        self.dataStore = browser.webView.configuration.websiteDataStore
         localStorageReader = LocalStorageReader(dataStore: dataStore)
     }
 
@@ -294,14 +296,17 @@ private final class WebsiteDataReader {
                         return left.domain < right.domain
                     }
 
-                self.localStorageReader.readLocalStorage(for: domain.localStorageOrigins) { origins in
-                    completion(
-                        DomainStorageResponse(
-                            domain: domain.host,
-                            cookies: matchingCookies,
-                            localStorage: origins
+                self.localStorageReader.readLocalStorage(for: domain.localStorageOrigins) { localStorageOrigins in
+                    self.readActiveSessionStorage(for: domain) { sessionStorageOrigins in
+                        completion(
+                            DomainStorageResponse(
+                                domain: domain.host,
+                                cookies: matchingCookies,
+                                localStorage: localStorageOrigins,
+                                sessionStorage: sessionStorageOrigins
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
@@ -315,6 +320,74 @@ private final class WebsiteDataReader {
         return cookieDomain == host
             || cookieDomain.hasSuffix(".\(host)")
             || host.hasSuffix(".\(cookieDomain)")
+    }
+
+    private func readActiveSessionStorage(
+        for domain: RequestedDomain,
+        completion: @escaping ([SessionStorageOriginResponse]) -> Void
+    ) {
+        guard let url = browser.webView.url,
+              let host = url.host?.lowercased(),
+              domain.matches(host: host)
+        else {
+            completion([])
+            return
+        }
+
+        let script = """
+        JSON.stringify(Array.from({ length: sessionStorage.length }, (_, index) => {
+            const key = sessionStorage.key(index);
+            return { key, value: sessionStorage.getItem(key) };
+        }))
+        """
+
+        browser.webView.evaluateJavaScript(script) { value, error in
+            Task { @MainActor in
+                let origin = Self.originString(from: url)
+
+                if let error {
+                    completion([
+                        SessionStorageOriginResponse(
+                            origin: origin,
+                            items: [],
+                            error: error.localizedDescription
+                        )
+                    ])
+                    return
+                }
+
+                guard let json = value as? String,
+                      let data = json.data(using: .utf8),
+                      let items = try? JSONDecoder().decode([StorageItem].self, from: data)
+                else {
+                    completion([
+                        SessionStorageOriginResponse(
+                            origin: origin,
+                            items: [],
+                            error: "Could not decode sessionStorage."
+                        )
+                    ])
+                    return
+                }
+
+                completion([
+                    SessionStorageOriginResponse(
+                        origin: origin,
+                        items: items.sorted { $0.key < $1.key },
+                        error: nil
+                    )
+                ])
+            }
+        }
+    }
+
+    private static func originString(from url: URL) -> String {
+        var components = URLComponents()
+        components.scheme = url.scheme
+        components.host = url.host
+        components.port = url.port
+
+        return components.url?.absoluteString ?? url.absoluteString
     }
 }
 
@@ -359,12 +432,21 @@ private extension RequestedDomain {
             || host == "127.0.0.1"
             || host == "::1"
     }
+
+    func matches(host candidate: String) -> Bool {
+        let candidate = candidate.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+
+        return candidate == host
+            || candidate.hasSuffix(".\(host)")
+            || host.hasSuffix(".\(candidate)")
+    }
 }
 
 private struct DomainStorageResponse: Encodable {
     let domain: String
     let cookies: [CookieResponse]
     let localStorage: [LocalStorageOriginResponse]
+    let sessionStorage: [SessionStorageOriginResponse]
 }
 
 private struct CookieResponse: Encodable {
@@ -391,11 +473,17 @@ private struct CookieResponse: Encodable {
 
 private struct LocalStorageOriginResponse: Encodable {
     let origin: String
-    let items: [LocalStorageItem]
+    let items: [StorageItem]
     let error: String?
 }
 
-private struct LocalStorageItem: Codable {
+private struct SessionStorageOriginResponse: Encodable {
+    let origin: String
+    let items: [StorageItem]
+    let error: String?
+}
+
+private struct StorageItem: Codable {
     let key: String
     let value: String?
 }
@@ -496,7 +584,7 @@ private final class LocalStorageSession: NSObject, WKNavigationDelegate {
 
                 guard let json = value as? String,
                       let data = json.data(using: .utf8),
-                      let items = try? JSONDecoder().decode([LocalStorageItem].self, from: data)
+                      let items = try? JSONDecoder().decode([StorageItem].self, from: data)
                 else {
                     self.finish(items: [], error: "Could not decode localStorage.")
                     return
@@ -507,7 +595,7 @@ private final class LocalStorageSession: NSObject, WKNavigationDelegate {
         }
     }
 
-    private func finish(items: [LocalStorageItem], error: String?) {
+    private func finish(items: [StorageItem], error: String?) {
         guard !completed else { return }
         completed = true
 
