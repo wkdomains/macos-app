@@ -9,6 +9,15 @@ page state over a local HTTP API. That lets the tool see what the human sees,
 capture the current viewport, inspect browser-observed XHR/fetch traffic, and
 use the same auth context to reproduce API calls.
 
+This is intentionally much narrower than driving a site with Playwright. A
+coding tool usually does not need to own the whole browser automation stack,
+recreate a login flow, maintain selectors, wait on fragile UI states, or scrape
+around the page to guess what matters. wkdomains exposes the specific developer
+primitives the tool needs: the visible screenshot, the XHR/fetch calls, compact
+JSON shapes, and the browser auth context needed to replay those calls. The
+human stays in control of the browser, and the tool gets a clean API for the
+useful state.
+
 The local API currently runs on:
 
 ```sh
