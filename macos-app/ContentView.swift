@@ -183,13 +183,113 @@ private struct BrowserToolbarButton: View {
 }
 
 private struct BrowserWebView: NSViewRepresentable {
-    let webView: WKWebView
+    let webView: BrowserWKWebView
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeNSView(context: Context) -> BrowserWKWebView {
         webView
     }
 
-    func updateNSView(_ nsView: WKWebView, context: Context) {}
+    func updateNSView(_ nsView: BrowserWKWebView, context: Context) {}
+}
+
+fileprivate protocol BrowserContextMenuDelegate: AnyObject {
+    func clearCookiesForCurrentDomain()
+}
+
+final class BrowserWKWebView: WKWebView {
+    fileprivate weak var browserContextMenuDelegate: BrowserContextMenuDelegate?
+    private var contextMenuEventMonitor: Any?
+
+    deinit {
+        if let contextMenuEventMonitor {
+            NSEvent.removeMonitor(contextMenuEventMonitor)
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        if window == nil {
+            removeContextMenuEventMonitor()
+        } else {
+            installContextMenuEventMonitor()
+        }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        browserContextMenu()
+    }
+
+    private func installContextMenuEventMonitor() {
+        guard contextMenuEventMonitor == nil else { return }
+
+        contextMenuEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { [weak self] event in
+            guard let self else { return event }
+
+            let isContextClick = event.type == .rightMouseDown
+                || (event.type == .leftMouseDown && event.modifierFlags.contains(.control))
+
+            guard isContextClick,
+                  self.shouldHandleContextMenuEvent(event)
+            else {
+                return event
+            }
+
+            NSMenu.popUpContextMenu(self.browserContextMenu(), with: event, for: self)
+            self.window?.invalidateCursorRects(for: self)
+            return nil
+        }
+    }
+
+    private func removeContextMenuEventMonitor() {
+        guard let contextMenuEventMonitor else { return }
+        NSEvent.removeMonitor(contextMenuEventMonitor)
+        self.contextMenuEventMonitor = nil
+    }
+
+    private func shouldHandleContextMenuEvent(_ event: NSEvent) -> Bool {
+        guard event.window === window,
+              isHidden == false,
+              alphaValue > 0
+        else {
+            return false
+        }
+
+        let point = convert(event.locationInWindow, from: nil)
+        return bounds.contains(point)
+    }
+
+    private func browserContextMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        let reloadItem = NSMenuItem(
+            title: "Reload",
+            action: #selector(reloadFromContextMenu),
+            keyEquivalent: ""
+        )
+        reloadItem.target = self
+        menu.addItem(reloadItem)
+
+        if url?.host != nil {
+            let clearCookiesItem = NSMenuItem(
+                title: "Clear cookies",
+                action: #selector(clearCookiesFromContextMenu),
+                keyEquivalent: ""
+            )
+            clearCookiesItem.target = self
+            menu.addItem(clearCookiesItem)
+        }
+
+        return menu
+    }
+
+    @objc private func reloadFromContextMenu() {
+        reload()
+    }
+
+    @objc private func clearCookiesFromContextMenu() {
+        browserContextMenuDelegate?.clearCookiesForCurrentDomain()
+    }
 }
 
 private struct EmptyBrowserState: View {
@@ -256,7 +356,7 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var isSecurePage = false
 
-    let webView: WKWebView
+    let webView: BrowserWKWebView
 
     private var observations: [NSKeyValueObservation] = []
 
@@ -264,11 +364,12 @@ final class BrowserModel: NSObject, ObservableObject {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
 
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView = BrowserWKWebView(frame: .zero, configuration: configuration)
 
         super.init()
 
         webView.allowsBackForwardNavigationGestures = true
+        webView.browserContextMenuDelegate = self
         webView.navigationDelegate = self
         webView.uiDelegate = self
 
@@ -345,6 +446,27 @@ final class BrowserModel: NSObject, ObservableObject {
         isLoading = false
     }
 
+    func clearCookiesForCurrentDomain() {
+        guard let host = webView.url?.host?.lowercased() else { return }
+        let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+
+        cookieStore.getAllCookies { cookies in
+            let matchingCookies = cookies.filter { cookie in
+                let cookieDomain = cookie.domain
+                    .lowercased()
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+
+                return cookieDomain == host
+                    || cookieDomain.hasSuffix(".\(host)")
+                    || host.hasSuffix(".\(cookieDomain)")
+            }
+
+            for cookie in matchingCookies {
+                cookieStore.delete(cookie)
+            }
+        }
+    }
+
     private func syncAddress(from webView: WKWebView) {
         guard let url = webView.url else { return }
 
@@ -383,6 +505,8 @@ final class BrowserModel: NSObject, ObservableObject {
         return url
     }
 }
+
+extension BrowserModel: BrowserContextMenuDelegate {}
 
 extension BrowserModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
