@@ -10,9 +10,9 @@
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
-	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
 	<array>
-		<string>/.config/wkdomains-macos-app/</string>
+		<string>/.config/wkdomains/</string>
 	</array>
 </dict>
 </plist>

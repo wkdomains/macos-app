@@ -16,9 +16,11 @@ final class AppModel: ObservableObject {
 
     init() {
         let dataStore = WKWebsiteDataStore.default()
+        let settingsStore = AppSettingsStore.shared
 
         browser = BrowserModel(dataStore: dataStore)
-        apiServer = LocalAPIServer(browser: browser, settings: ServerSettings.load())
+        apiServer = LocalAPIServer(browser: browser, settings: settingsStore.settings)
         apiServer.start()
+        browser.load(settingsStore.startupURL)
     }
 }

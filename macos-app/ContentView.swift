@@ -478,6 +478,15 @@ final class BrowserModel: NSObject, ObservableObject {
         isLoading = webView.isLoading
     }
 
+    func load(_ url: URL) {
+        hasAttemptedNavigation = true
+        errorMessage = nil
+        addressText = url.absoluteString
+        isSecurePage = url.scheme?.lowercased() == "https"
+
+        webView.load(URLRequest(url: url))
+    }
+
     private static func normalizedURL(from rawValue: String) -> URL? {
         guard !rawValue.isEmpty else { return nil }
         guard rawValue.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
@@ -520,12 +529,20 @@ extension BrowserModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         errorMessage = nil
         syncAddress(from: webView)
+
+        if let url = webView.url {
+            AppSettingsStore.shared.updateLastVisitedURL(url)
+        }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         errorMessage = nil
         estimatedProgress = 1
         syncAddress(from: webView)
+
+        if let url = webView.url {
+            AppSettingsStore.shared.updateLastVisitedURL(url)
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

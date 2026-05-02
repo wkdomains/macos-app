@@ -9,31 +9,6 @@ import Foundation
 @preconcurrency import Network
 @preconcurrency import WebKit
 
-struct ServerSettings {
-    static let defaultPort: UInt16 = 9001
-
-    let port: UInt16
-
-    static func load() -> ServerSettings {
-        let settingsURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/wkdomains-macos-app/settings.json")
-
-        guard let data = try? Data(contentsOf: settingsURL),
-              let file = try? JSONDecoder().decode(SettingsFile.self, from: data),
-              let port = file.port,
-              port > 0
-        else {
-            return ServerSettings(port: defaultPort)
-        }
-
-        return ServerSettings(port: port)
-    }
-
-    private struct SettingsFile: Decodable {
-        let port: UInt16?
-    }
-}
-
 @MainActor
 final class LocalAPIServer {
     private let dataReader: WebsiteDataReader
@@ -41,7 +16,7 @@ final class LocalAPIServer {
     private let queue = DispatchQueue.main
     private var listener: NWListener?
 
-    init(browser: BrowserModel, settings: ServerSettings) {
+    init(browser: BrowserModel, settings: AppSettings) {
         dataReader = WebsiteDataReader(browser: browser)
         requestedPort = settings.port
     }
@@ -60,11 +35,11 @@ final class LocalAPIServer {
             listener = nextListener
 
             nextListener.stateUpdateHandler = { [weak self] state in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     guard let self else { return }
 
                     if case .failed = state {
-                        let nextPort = port == UInt16.max ? ServerSettings.defaultPort : port + 1
+                        let nextPort = port == UInt16.max ? AppSettings.defaultPort : port + 1
                         self.listener?.cancel()
                         self.listener = nil
                         self.startListening(startingAt: nextPort, remainingAttempts: remainingAttempts - 1)
@@ -73,14 +48,14 @@ final class LocalAPIServer {
             }
 
             nextListener.newConnectionHandler = { [weak self] connection in
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
                     self?.handle(connection)
                 }
             }
 
             nextListener.start(queue: queue)
         } catch {
-            let nextPort = port == UInt16.max ? ServerSettings.defaultPort : port + 1
+            let nextPort = port == UInt16.max ? AppSettings.defaultPort : port + 1
             startListening(startingAt: nextPort, remainingAttempts: remainingAttempts - 1)
         }
     }
@@ -93,7 +68,7 @@ final class LocalAPIServer {
 
         connection.start(queue: queue)
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, _, error in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 guard let self else {
                     connection.cancel()
                     return
