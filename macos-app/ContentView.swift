@@ -26,8 +26,6 @@ struct XHRRequestRecord: Encodable {
     var jsonType: String?
     var jsonItems: Int?
     var jsonShape: String?
-    var keys: String?
-    var arrays: String?
     var error: String?
 }
 
@@ -540,8 +538,6 @@ final class BrowserModel: NSObject, ObservableObject {
                 jsonType: nil,
                 jsonItems: nil,
                 jsonShape: nil,
-                keys: nil,
-                arrays: nil,
                 error: nil
             )
 
@@ -563,8 +559,6 @@ final class BrowserModel: NSObject, ObservableObject {
         xhrRecords[index].jsonType = message["jsonType"] as? String
         xhrRecords[index].jsonItems = Self.intValue(from: message["jsonItems"])
         xhrRecords[index].jsonShape = message["jsonShape"] as? String
-        xhrRecords[index].keys = message["keys"] as? String
-        xhrRecords[index].arrays = message["arrays"] as? String
         xhrRecords[index].error = message["error"] as? String
     }
 
@@ -703,17 +697,6 @@ final class BrowserModel: NSObject, ObservableObject {
         return keys.slice(0, limit).concat(`+${keys.length - limit} more`);
       };
 
-      const arrayItemKeys = (array) => {
-        if (!Array.isArray(array) || array.length === 0) return "";
-
-        const firstItem = array[0];
-        if (!firstItem || typeof firstItem !== "object" || Array.isArray(firstItem)) {
-          return valueType(firstItem);
-        }
-
-        return truncatedKeys(firstItem).join(",");
-      };
-
       const isPlainObject = (value) => {
         return !!value && typeof value === "object" && !Array.isArray(value);
       };
@@ -815,27 +798,8 @@ final class BrowserModel: NSObject, ObservableObject {
 
           if (type === "array") {
             summary.jsonItems = value.length;
-            summary.keys = "";
-            summary.arrays = `$[${arrayItemKeys(value)}]`;
             return summary;
           }
-
-          if (type !== "object") return summary;
-
-          const keys = [];
-          const arrays = [];
-
-          Object.keys(value).forEach((key) => {
-            const item = value[key];
-            if (Array.isArray(item)) {
-              arrays.push(`${key}[${arrayItemKeys(item)}]`);
-            } else {
-              keys.push(key);
-            }
-          });
-
-          summary.keys = keys.join(",");
-          summary.arrays = arrays.join(",");
         } catch (_) {}
 
         return summary;
