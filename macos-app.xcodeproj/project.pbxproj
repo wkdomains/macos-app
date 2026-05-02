@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		00C324482FA6900200FF317A /* wkdomains.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "wkdomains.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		00C324482FA6900200FF317A /* wkdomains.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = wkdomains.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */

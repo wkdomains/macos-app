@@ -92,6 +92,16 @@ final class LocalAPIServer {
     }
 
     private func route(_ request: HTTPRequest, connection: NWConnection) {
+        if request.path == "/mcp" {
+            routeMCP(request, connection: connection)
+            return
+        }
+
+        if request.method == "OPTIONS" {
+            sendEmpty(status: .accepted, on: connection)
+            return
+        }
+
         guard request.method == "GET" else {
             sendError(status: .methodNotAllowed, message: "Only GET is supported.", on: connection)
             return
@@ -136,6 +146,148 @@ final class LocalAPIServer {
         sendError(status: .notFound, message: "Endpoint not found.", on: connection)
     }
 
+    private func routeMCP(_ request: HTTPRequest, connection: NWConnection) {
+        guard request.method != "GET" else {
+            sendError(status: .methodNotAllowed, message: "This MCP endpoint does not provide an SSE stream.", on: connection)
+            return
+        }
+
+        guard request.method == "POST" else {
+            sendError(status: .methodNotAllowed, message: "Use POST for MCP JSON-RPC messages.", on: connection)
+            return
+        }
+
+        guard request.originIsAllowed else {
+            sendError(status: .badRequest, message: "Origin is not allowed.", on: connection)
+            return
+        }
+
+        guard let jsonObject = try? JSONSerialization.jsonObject(with: request.body),
+              let message = jsonObject as? [String: Any]
+        else {
+            sendMCPError(id: nil, code: -32700, message: "Invalid JSON-RPC request.", on: connection)
+            return
+        }
+
+        guard let method = message["method"] as? String else {
+            sendEmpty(status: .accepted, on: connection)
+            return
+        }
+
+        let id = message["id"]
+
+        guard id != nil else {
+            sendEmpty(status: .accepted, on: connection)
+            return
+        }
+
+        switch method {
+        case "initialize":
+            sendMCPResult(
+                id: id,
+                result: [
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": [
+                        "tools": [:]
+                    ],
+                    "serverInfo": [
+                        "name": "wkdomains",
+                        "version": "0.0.1"
+                    ]
+                ],
+                on: connection
+            )
+        case "tools/list":
+            sendMCPResult(id: id, result: ["tools": mcpTools], on: connection)
+        case "tools/call":
+            guard let params = message["params"] as? [String: Any],
+                  let toolName = params["name"] as? String
+            else {
+                sendMCPError(id: id, code: -32602, message: "Missing tool name.", on: connection)
+                return
+            }
+
+            let arguments = params["arguments"] as? [String: Any] ?? [:]
+            callMCPTool(named: toolName, arguments: arguments, id: id, connection: connection)
+        default:
+            sendMCPError(id: id, code: -32601, message: "Method not found.", on: connection)
+        }
+    }
+
+    private var mcpTools: [[String: Any]] {
+        [
+            [
+                "name": "get_human_requests",
+                "description": "Return pending requests created by the human in wkdomains, including the current URL, derived domain, llms.txt URL, and required user-agent.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [:],
+                    "additionalProperties": false
+                ]
+            ],
+            [
+                "name": "reply_to_human_request",
+                "description": "Send a terminal reply for a pending human request.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "requestId": [
+                            "type": "string",
+                            "description": "The pending request id."
+                        ],
+                        "summary": [
+                            "type": "string",
+                            "description": "The summary or answer to display in the terminal."
+                        ]
+                    ],
+                    "required": ["requestId", "summary"],
+                    "additionalProperties": false
+                ]
+            ],
+            [
+                "name": "get_current_page",
+                "description": "Return the current browser URL and host.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [:],
+                    "additionalProperties": false
+                ]
+            ]
+        ]
+    }
+
+    private func callMCPTool(
+        named toolName: String,
+        arguments: [String: Any],
+        id: Any?,
+        connection: NWConnection
+    ) {
+        switch toolName {
+        case "get_human_requests":
+            let requests = dataReader.readPendingBotRequests()
+            sendMCPToolResult(id: id, value: ["requests": requests], on: connection)
+        case "reply_to_human_request":
+            guard let requestId = arguments["requestId"] as? String,
+                  let uuid = UUID(uuidString: requestId),
+                  let summary = arguments["summary"] as? String
+            else {
+                sendMCPError(id: id, code: -32602, message: "Provide requestId and summary.", on: connection)
+                return
+            }
+
+            guard dataReader.replyToBotRequest(id: uuid, summary: summary) else {
+                sendMCPError(id: id, code: -32602, message: "Request not found.", on: connection)
+                return
+            }
+
+            sendMCPToolResult(id: id, value: ["ok": true], on: connection)
+        case "get_current_page":
+            sendMCPToolResult(id: id, value: dataReader.readCurrentPage(), on: connection)
+        default:
+            sendMCPError(id: id, code: -32602, message: "Unknown tool.", on: connection)
+        }
+    }
+
     private func isLoopback(_ endpoint: NWEndpoint) -> Bool {
         switch endpoint {
         case .hostPort(let host, _):
@@ -158,6 +310,60 @@ final class LocalAPIServer {
         sendJSON(APIErrorResponse(error: message), status: status, on: connection)
     }
 
+    private func sendMCPResult(id: Any?, result: [String: Any], on connection: NWConnection) {
+        sendJSONObject(
+            [
+                "jsonrpc": "2.0",
+                "id": id ?? NSNull(),
+                "result": result
+            ],
+            contentType: "application/json; charset=utf-8",
+            status: .ok,
+            on: connection
+        )
+    }
+
+    private func sendMCPToolResult(id: Any?, value: Any, on connection: NWConnection) {
+        let text: String
+        if let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+           let json = String(data: data, encoding: .utf8)
+        {
+            text = json
+        } else {
+            text = String(describing: value)
+        }
+
+        sendMCPResult(
+            id: id,
+            result: [
+                "content": [
+                    [
+                        "type": "text",
+                        "text": text
+                    ]
+                ],
+                "isError": false
+            ],
+            on: connection
+        )
+    }
+
+    private func sendMCPError(id: Any?, code: Int, message: String, on connection: NWConnection) {
+        sendJSONObject(
+            [
+                "jsonrpc": "2.0",
+                "id": id ?? NSNull(),
+                "error": [
+                    "code": code,
+                    "message": message
+                ]
+            ],
+            contentType: "application/json; charset=utf-8",
+            status: .ok,
+            on: connection
+        )
+    }
+
     private func sendJSON<T: Encodable>(_ value: T, status: HTTPStatus, on connection: NWConnection) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -165,6 +371,16 @@ final class LocalAPIServer {
 
         let body = (try? encoder.encode(value)) ?? Data(#"{"error":"Could not encode response."}"#.utf8)
         sendData(body, contentType: "application/json; charset=utf-8", status: status, on: connection)
+    }
+
+    private func sendJSONObject(_ value: Any, contentType: String, status: HTTPStatus, on connection: NWConnection) {
+        let body = (try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]))
+            ?? Data(#"{"error":"Could not encode response."}"#.utf8)
+        sendData(body, contentType: contentType, status: status, on: connection)
+    }
+
+    private func sendEmpty(status: HTTPStatus, on connection: NWConnection) {
+        sendData(Data(), contentType: "text/plain; charset=utf-8", status: status, on: connection)
     }
 
     private func sendData(_ body: Data, contentType: String, status: HTTPStatus, on connection: NWConnection) {
@@ -191,10 +407,14 @@ final class LocalAPIServer {
 private struct HTTPRequest {
     let method: String
     let path: String
+    let headers: [String: String]
+    let body: Data
 
     init?(data: Data) {
-        guard let text = String(data: data, encoding: .utf8),
-              let requestLine = text.components(separatedBy: "\r\n").first
+        let delimiter = Data("\r\n\r\n".utf8)
+        guard let headerRange = data.range(of: delimiter),
+              let headerText = String(data: data[..<headerRange.lowerBound], encoding: .utf8),
+              let requestLine = headerText.components(separatedBy: "\r\n").first
         else {
             return nil
         }
@@ -212,6 +432,28 @@ private struct HTTPRequest {
         } else {
             path = target
         }
+
+        var parsedHeaders: [String: String] = [:]
+        for line in headerText.components(separatedBy: "\r\n").dropFirst() {
+            let headerParts = line.split(separator: ":", maxSplits: 1).map(String.init)
+            guard headerParts.count == 2 else { continue }
+
+            parsedHeaders[headerParts[0].lowercased()] = headerParts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        headers = parsedHeaders
+        body = data[headerRange.upperBound...]
+    }
+
+    var originIsAllowed: Bool {
+        guard let origin = headers["origin"],
+              let originURL = URL(string: origin),
+              let host = originURL.host?.lowercased()
+        else {
+            return true
+        }
+
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
     }
 }
 
@@ -247,6 +489,7 @@ private struct RequestedDomain {
 
 private enum HTTPStatus: Int {
     case ok = 200
+    case accepted = 202
     case badRequest = 400
     case notFound = 404
     case methodNotAllowed = 405
@@ -256,6 +499,8 @@ private enum HTTPStatus: Int {
         switch self {
         case .ok:
             return "OK"
+        case .accepted:
+            return "Accepted"
         case .badRequest:
             return "Bad Request"
         case .notFound:
@@ -342,6 +587,37 @@ private final class WebsiteDataReader {
         browser.currentVisiblePageScreenshotPNG(completion: completion)
     }
 
+    func readPendingBotRequests() -> [[String: Any]] {
+        browser.pendingBotRequests().map { request in
+            [
+                "id": request.id.uuidString,
+                "createdAt": Self.iso8601Formatter.string(from: request.createdAt),
+                "currentURL": request.currentURL,
+                "pageHost": request.pageHost,
+                "domain": request.domain,
+                "llmsURL": request.llmsURL,
+                "userAgent": request.userAgent,
+                "prompt": request.prompt,
+                "status": request.status
+            ]
+        }
+    }
+
+    func replyToBotRequest(id: UUID, summary: String) -> Bool {
+        browser.replyToBotRequest(id: id, summary: summary)
+    }
+
+    func readCurrentPage() -> [String: Any] {
+        var response: [String: Any] = [:]
+
+        if let url = browser.webView.url {
+            response["url"] = url.absoluteString
+            response["host"] = url.host
+        }
+
+        return response
+    }
+
     private func cookie(_ cookie: HTTPCookie, matches host: String) -> Bool {
         let cookieDomain = cookie.domain
             .lowercased()
@@ -419,6 +695,12 @@ private final class WebsiteDataReader {
 
         return components.url?.absoluteString ?? url.absoluteString
     }
+
+    private static let iso8601Formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 }
 
 private extension RequestedDomain {

@@ -22,6 +22,7 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published private(set) var viewportMode: BrowserViewportMode = .desktop
 
     let webView: BrowserWKWebView
+    let botTerminal = BotTerminalModel()
 
     private var observations: [NSKeyValueObservation] = []
     private var activePageHost: String?
@@ -189,6 +190,18 @@ final class BrowserModel: NSObject, ObservableObject {
         guard viewportMode != mode else { return }
         viewportMode = mode
         markScreenshotDirty(scheduleAfter: 0.35)
+    }
+
+    func requestLLMSSummary() {
+        botTerminal.startLLMsRequest(currentURL: webView.url)
+    }
+
+    func pendingBotRequests() -> [BotTerminalRequest] {
+        botTerminal.pendingRequests()
+    }
+
+    func replyToBotRequest(id: UUID, summary: String) -> Bool {
+        botTerminal.completeRequest(id: id, summary: summary)
     }
 
     func load(_ url: URL) {

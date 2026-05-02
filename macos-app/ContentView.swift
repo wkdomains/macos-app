@@ -127,7 +127,7 @@ struct ContentView: View {
                     .frame(width: isBotPanelVisible ? proxy.size.width * 0.75 : proxy.size.width)
 
                 if isBotPanelVisible {
-                    BotTerminalPanel()
+                    BotTerminalPanel(terminal: browser.botTerminal)
                         .frame(width: proxy.size.width * 0.25)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
@@ -201,7 +201,12 @@ struct ContentView: View {
     private var botControls: some View {
         HStack(spacing: 2) {
             Button {
-                isBotPanelVisible.toggle()
+                if isBotPanelVisible {
+                    isBotPanelVisible = false
+                } else {
+                    isBotPanelVisible = true
+                    browser.requestLLMSSummary()
+                }
             } label: {
                 Image(systemName: "memorychip")
                     .font(.system(size: 13, weight: .semibold))
@@ -250,17 +255,23 @@ struct ContentView: View {
 }
 
 private struct BotTerminalPanel: View {
+    @ObservedObject var terminal: BotTerminalModel
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.black
 
-            Text("Fetching llms.txt...")
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .foregroundStyle(Color(red: 0.44, green: 1.0, blue: 0.52))
-                .padding(16)
+            ScrollView {
+                Text(terminal.message)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(red: 0.44, green: 1.0, blue: 0.52))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(16)
+            }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Fetching llms.txt")
+        .accessibilityLabel(terminal.message)
     }
 }
 
