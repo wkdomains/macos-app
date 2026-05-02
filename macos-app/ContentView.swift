@@ -201,9 +201,9 @@ struct ContentView: View {
     private var botControls: some View {
         HStack(spacing: 2) {
             Button {
-                isBotPanelVisible = true
+                isBotPanelVisible.toggle()
             } label: {
-                Image(systemName: "brain.head.profile")
+                Image(systemName: "memorychip")
                     .font(.system(size: 13, weight: .semibold))
                     .frame(width: 30, height: 30)
                     .contentShape(Rectangle())
