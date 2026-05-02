@@ -5,6 +5,7 @@
 //  Created by aa on 5/2/26.
 //
 
+import Darwin
 import Foundation
 
 struct AppSettings: Codable {
@@ -35,14 +36,20 @@ final class AppSettingsStore {
     private var cachedSettings: AppSettings
 
     init(fileManager: FileManager = .default) {
-        directoryURL = fileManager.homeDirectoryForCurrentUser
+        directoryURL = Self.realHomeDirectoryURL(fileManager: fileManager)
             .appendingPathComponent(".config/wkdomains", isDirectory: true)
         settingsURL = directoryURL.appendingPathComponent("settings.json")
 
         encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
-        cachedSettings = Self.readSettings(from: settingsURL, decoder: decoder) ?? .defaults
+        cachedSettings = Self.readSettings(from: settingsURL, decoder: decoder)
+            ?? Self.readSettings(
+                from: fileManager.homeDirectoryForCurrentUser
+                    .appendingPathComponent(".config/wkdomains/settings.json"),
+                decoder: decoder
+            )
+            ?? .defaults
         write(cachedSettings)
     }
 
@@ -111,5 +118,15 @@ final class AppSettingsStore {
         }
 
         return settings
+    }
+
+    private static func realHomeDirectoryURL(fileManager: FileManager) -> URL {
+        guard let passwd = getpwuid(getuid()),
+              let homePath = passwd.pointee.pw_dir
+        else {
+            return fileManager.homeDirectoryForCurrentUser
+        }
+
+        return URL(fileURLWithPath: String(cString: homePath), isDirectory: true)
     }
 }
