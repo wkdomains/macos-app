@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		00C324482FA6900200FF317A /* macos-app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "macos-app.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		00C324482FA6900200FF317A /* wkdomains.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "wkdomains.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -40,7 +40,7 @@
 		00C324492FA6900200FF317A /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				00C324482FA6900200FF317A /* macos-app.app */,
+				00C324482FA6900200FF317A /* wkdomains.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -66,8 +66,8 @@
 			name = "macos-app";
 			packageProductDependencies = (
 			);
-			productName = "macos-app";
-			productReference = 00C324482FA6900200FF317A /* macos-app.app */;
+			productName = wkdomains;
+			productReference = 00C324482FA6900200FF317A /* wkdomains.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -269,7 +269,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.wkdomains.macos-app";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = wkdomains;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -304,7 +304,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.wkdomains.macos-app";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = wkdomains;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;

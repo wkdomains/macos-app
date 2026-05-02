@@ -23,31 +23,7 @@ struct macos_appApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        DispatchQueue.main.async {
-            self.renameApplicationMenu()
-        }
-    }
-
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
-    }
-
-    private func renameApplicationMenu() {
-        guard let appMenuItem = NSApplication.shared.mainMenu?.items.first else { return }
-
-        appMenuItem.title = "wkdomains"
-
-        guard let appMenu = appMenuItem.submenu else { return }
-
-        for item in appMenu.items {
-            if item.title.hasPrefix("About ") {
-                item.title = "About wkdomains"
-            } else if item.title.hasPrefix("Hide ") {
-                item.title = "Hide wkdomains"
-            } else if item.title.hasPrefix("Quit ") {
-                item.title = "Quit wkdomains"
-            }
-        }
     }
 }
