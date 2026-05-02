@@ -121,6 +121,18 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/screenshot" {
+            dataReader.readScreenshot { [weak self] result in
+                switch result {
+                case .success(let pngData):
+                    self?.sendData(pngData, contentType: "image/png", status: .ok, on: connection)
+                case .failure(let error):
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
         sendError(status: .notFound, message: "Endpoint not found.", on: connection)
     }
 
@@ -152,9 +164,13 @@ final class LocalAPIServer {
         encoder.dateEncodingStrategy = .iso8601
 
         let body = (try? encoder.encode(value)) ?? Data(#"{"error":"Could not encode response."}"#.utf8)
+        sendData(body, contentType: "application/json; charset=utf-8", status: status, on: connection)
+    }
+
+    private func sendData(_ body: Data, contentType: String, status: HTTPStatus, on connection: NWConnection) {
         let headers = [
             "HTTP/1.1 \(status.rawValue) \(status.reason)",
-            "Content-Type: application/json; charset=utf-8",
+            "Content-Type: \(contentType)",
             "Content-Length: \(body.count)",
             "Cache-Control: no-store",
             "Connection: close",
@@ -234,6 +250,7 @@ private enum HTTPStatus: Int {
     case badRequest = 400
     case notFound = 404
     case methodNotAllowed = 405
+    case serviceUnavailable = 503
 
     var reason: String {
         switch self {
@@ -245,6 +262,8 @@ private enum HTTPStatus: Int {
             return "Not Found"
         case .methodNotAllowed:
             return "Method Not Allowed"
+        case .serviceUnavailable:
+            return "Service Unavailable"
         }
     }
 }
@@ -317,6 +336,10 @@ private final class WebsiteDataReader {
             activePageHost: browser.webView.url?.host,
             requests: requests
         )
+    }
+
+    func readScreenshot(completion: @escaping (Result<Data, Error>) -> Void) {
+        browser.currentVisiblePageScreenshotPNG(completion: completion)
     }
 
     private func cookie(_ cookie: HTTPCookie, matches host: String) -> Bool {
