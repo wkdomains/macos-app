@@ -11,7 +11,7 @@ import SwiftUI
 import WebKit
 
 struct ContentView: View {
-    @StateObject private var browser = BrowserModel()
+    @ObservedObject var browser: BrowserModel
     @FocusState private var isAddressFocused: Bool
 
     var body: some View {
@@ -246,7 +246,7 @@ private struct BrowserErrorState: View {
     }
 }
 
-private final class BrowserModel: NSObject, ObservableObject {
+final class BrowserModel: NSObject, ObservableObject {
     @Published var addressText = ""
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
@@ -260,9 +260,9 @@ private final class BrowserModel: NSObject, ObservableObject {
 
     private var observations: [NSKeyValueObservation] = []
 
-    override init() {
+    init(dataStore: WKWebsiteDataStore = .default()) {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = dataStore
 
         webView = WKWebView(frame: .zero, configuration: configuration)
 
@@ -453,5 +453,5 @@ extension BrowserModel: WKUIDelegate {
 }
 
 #Preview {
-    ContentView()
+    ContentView(browser: BrowserModel())
 }

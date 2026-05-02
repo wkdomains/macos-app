@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct macos_appApp: App {
+    @StateObject private var appModel = AppModel()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(browser: appModel.browser)
         }
     }
 }
