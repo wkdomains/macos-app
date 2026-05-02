@@ -26,6 +26,7 @@ final class BrowserModel: NSObject, ObservableObject {
 
     private var observations: [NSKeyValueObservation] = []
     private var activePageHost: String?
+    private var consoleRecords: [ConsoleMessageRecord] = []
     private var xhrRecords: [XHRRequestRecord] = []
     private var xhrRecordIndexesByID: [String: Int] = [:]
     private var screenshotPNG: Data?
@@ -159,6 +160,10 @@ final class BrowserModel: NSObject, ObservableObject {
         }
     }
 
+    func consoleMessages() -> [ConsoleMessageRecord] {
+        consoleRecords
+    }
+
     func currentVisiblePageScreenshotPNG(completion: @escaping (Result<Data, Error>) -> Void) {
         if let screenshotPNG,
            screenshotCapturedVersion == screenshotDirtyVersion,
@@ -218,6 +223,34 @@ final class BrowserModel: NSObject, ObservableObject {
         activePageHost = url?.host?.lowercased()
         xhrRecords.removeAll(keepingCapacity: true)
         xhrRecordIndexesByID.removeAll(keepingCapacity: true)
+        consoleRecords.removeAll(keepingCapacity: true)
+    }
+
+    private func recordConsoleMessage(_ message: [String: Any]) {
+        let rawArguments = message["arguments"] as? [Any] ?? []
+        let arguments = rawArguments.map { value in
+            if let value = value as? String {
+                return value
+            }
+
+            return String(describing: value)
+        }
+
+        let record = ConsoleMessageRecord(
+            id: UUID(),
+            level: message["level"] as? String ?? "log",
+            message: message["message"] as? String ?? arguments.joined(separator: " "),
+            arguments: arguments,
+            pageURL: message["pageURL"] as? String,
+            pageHost: (message["pageHost"] as? String)?.lowercased(),
+            stack: message["stack"] as? String,
+            createdAt: Date()
+        )
+
+        consoleRecords.append(record)
+        if consoleRecords.count > 200 {
+            consoleRecords.removeFirst(consoleRecords.count - 200)
+        }
     }
 
     private func recordXHRMessage(_ message: [String: Any]) {
@@ -341,6 +374,7 @@ final class BrowserModel: NSObject, ObservableObject {
     private func installPageTrackingScripts(on userContentController: WKUserContentController) {
         userContentController.add(self, name: "wkdomainsXHR")
         userContentController.add(self, name: "wkdomainsRender")
+        userContentController.add(self, name: "wkdomainsConsole")
         userContentController.addUserScript(
             WKUserScript(
                 source: Self.xhrTrackingScript,
@@ -351,6 +385,13 @@ final class BrowserModel: NSObject, ObservableObject {
         userContentController.addUserScript(
             WKUserScript(
                 source: Self.renderInvalidationScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false
+            )
+        )
+        userContentController.addUserScript(
+            WKUserScript(
+                source: Self.consoleTrackingScript,
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: false
             )
@@ -500,6 +541,8 @@ extension BrowserModel: WKScriptMessageHandler {
             recordXHRMessage(body)
         case "wkdomainsRender":
             markScreenshotDirty(scheduleAfter: 0.35)
+        case "wkdomainsConsole":
+            recordConsoleMessage(body)
         default:
             return
         }

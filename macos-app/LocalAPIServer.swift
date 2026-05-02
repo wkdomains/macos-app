@@ -143,6 +143,47 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/page" {
+            sendJSON(dataReader.readPage(), status: .ok, on: connection)
+            return
+        }
+
+        if request.path == "/api/v1/console" {
+            sendJSON(dataReader.readConsoleMessages(), status: .ok, on: connection)
+            return
+        }
+
+        if request.path == "/api/v1/dom" {
+            dataReader.readDOM { [weak self] result in
+                switch result {
+                case .success(let response):
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
+        if request.path == "/api/v1/links" {
+            dataReader.readLinks { [weak self] result in
+                switch result {
+                case .success(let response):
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
+        if request.path == "/api/v1/resources" {
+            dataReader.readResources { [weak self] response in
+                self?.sendJSON(response, status: .ok, on: connection)
+            }
+            return
+        }
+
         sendError(status: .notFound, message: "Endpoint not found.", on: connection)
     }
 
@@ -587,6 +628,70 @@ private final class WebsiteDataReader {
         browser.currentVisiblePageScreenshotPNG(completion: completion)
     }
 
+    func readPage() -> PageResponse {
+        let url = browser.webView.url
+        let host = url?.host?.lowercased()
+        let viewportWidth = browser.viewportMode.width ?? browser.webView.bounds.width
+
+        return PageResponse(
+            url: url?.absoluteString,
+            title: browser.webView.title,
+            host: host,
+            domain: host.map(DomainUtilities.registrableDomain(from:)),
+            origin: url.map(Self.originString(from:)),
+            viewportMode: browser.viewportMode.rawValue,
+            viewportWidth: Int(viewportWidth.rounded()),
+            viewportHeight: Int(browser.webView.bounds.height.rounded()),
+            isLoading: browser.webView.isLoading,
+            canGoBack: browser.webView.canGoBack,
+            canGoForward: browser.webView.canGoForward
+        )
+    }
+
+    func readConsoleMessages() -> ConsoleMessagesResponse {
+        let messages = browser.consoleMessages().map(ConsoleMessageResponse.init(record:))
+
+        return ConsoleMessagesResponse(
+            activePageURL: browser.webView.url?.absoluteString,
+            activePageHost: browser.webView.url?.host,
+            messages: messages
+        )
+    }
+
+    func readDOM(completion: @escaping (Result<Any, Error>) -> Void) {
+        evaluateJSONScript(BrowserModel.domInspectionScript, completion: completion)
+    }
+
+    func readLinks(completion: @escaping (Result<Any, Error>) -> Void) {
+        evaluateJSONScript(BrowserModel.linksInspectionScript, completion: completion)
+    }
+
+    func readResources(completion: @escaping (DomainResourcesResponse) -> Void) {
+        guard let host = browser.webView.url?.host?.lowercased() else {
+            completion(DomainResourcesResponse(domain: nil, pageHost: nil, resources: []))
+            return
+        }
+
+        let domain = DomainUtilities.registrableDomain(from: host)
+        let candidates = Self.resourceCandidates(for: domain)
+
+        Task {
+            var resources: [DomainResourceResponse] = []
+
+            for candidate in candidates {
+                resources.append(await Self.fetchResource(candidate))
+            }
+
+            completion(
+                DomainResourcesResponse(
+                    domain: domain,
+                    pageHost: host,
+                    resources: resources
+                )
+            )
+        }
+    }
+
     func readPendingBotRequests() -> [[String: Any]] {
         browser.pendingBotRequests().map { request in
             [
@@ -616,6 +721,32 @@ private final class WebsiteDataReader {
         }
 
         return response
+    }
+
+    private func evaluateJSONScript(_ script: String, completion: @escaping (Result<Any, Error>) -> Void) {
+        guard browser.webView.url != nil else {
+            completion(.failure(InspectionError.noPageLoaded))
+            return
+        }
+
+        browser.webView.evaluateJavaScript(script) { value, error in
+            Task { @MainActor in
+                if let error {
+                    completion(.failure(error))
+                    return
+                }
+
+                guard let json = value as? String,
+                      let data = json.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data)
+                else {
+                    completion(.failure(InspectionError.couldNotDecodePageJSON))
+                    return
+                }
+
+                completion(.success(object))
+            }
+        }
     }
 
     private func cookie(_ cookie: HTTPCookie, matches host: String) -> Bool {
@@ -696,11 +827,90 @@ private final class WebsiteDataReader {
         return components.url?.absoluteString ?? url.absoluteString
     }
 
+    private static func resourceCandidates(for domain: String) -> [URL] {
+        [
+            "/llms.txt",
+            "/llms-full.txt",
+            "/openapi.json",
+            "/swagger.json",
+            "/sitemap.xml",
+            "/robots.txt",
+            "/.well-known/openapi.json",
+            "/.well-known/agent-card.json",
+            "/.well-known/ai-plugin.json"
+        ].compactMap { path in
+            URL(string: "https://\(domain)\(path)")
+        }
+    }
+
+    private static func fetchResource(_ url: URL) async -> DomainResourceResponse {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 8
+        request.setValue(BotTerminalModel.llmsUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("bytes=0-8191", forHTTPHeaderField: "Range")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let httpResponse = response as? HTTPURLResponse
+            let contentType = httpResponse?.value(forHTTPHeaderField: "Content-Type")
+            let contentLength = httpResponse?.value(forHTTPHeaderField: "Content-Length").flatMap(Int.init)
+            let isText = contentType?.lowercased().contains("text") == true
+                || contentType?.lowercased().contains("json") == true
+                || contentType?.lowercased().contains("xml") == true
+
+            let preview: String?
+            if isText, let text = String(data: data, encoding: .utf8) {
+                preview = String(text.prefix(1200))
+            } else {
+                preview = nil
+            }
+
+            return DomainResourceResponse(
+                url: url.absoluteString,
+                path: url.path,
+                status: httpResponse?.statusCode,
+                found: (200..<400).contains(httpResponse?.statusCode ?? 0),
+                contentType: contentType,
+                contentLength: contentLength,
+                sampledBytes: data.count,
+                bodyPreview: preview,
+                error: nil
+            )
+        } catch {
+            return DomainResourceResponse(
+                url: url.absoluteString,
+                path: url.path,
+                status: nil,
+                found: false,
+                contentType: nil,
+                contentLength: nil,
+                sampledBytes: 0,
+                bodyPreview: nil,
+                error: error.localizedDescription
+            )
+        }
+    }
+
     private static let iso8601Formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
     }()
+}
+
+private enum InspectionError: LocalizedError {
+    case noPageLoaded
+    case couldNotDecodePageJSON
+
+    var errorDescription: String? {
+        switch self {
+        case .noPageLoaded:
+            return "No page is loaded."
+        case .couldNotDecodePageJSON:
+            return "Could not decode page inspection JSON."
+        }
+    }
 }
 
 private extension RequestedDomain {
@@ -766,6 +976,66 @@ private struct XHRRequestsResponse: Encodable {
     let activePageURL: String?
     let activePageHost: String?
     let requests: [XHRRequestResponse]
+}
+
+private struct PageResponse: Encodable {
+    let url: String?
+    let title: String?
+    let host: String?
+    let domain: String?
+    let origin: String?
+    let viewportMode: String
+    let viewportWidth: Int
+    let viewportHeight: Int
+    let isLoading: Bool
+    let canGoBack: Bool
+    let canGoForward: Bool
+}
+
+private struct ConsoleMessagesResponse: Encodable {
+    let activePageURL: String?
+    let activePageHost: String?
+    let messages: [ConsoleMessageResponse]
+}
+
+private struct ConsoleMessageResponse: Encodable {
+    let id: UUID
+    let level: String
+    let message: String
+    let arguments: [String]
+    let pageURL: String?
+    let pageHost: String?
+    let stack: String?
+    let createdAt: Date
+
+    init(record: ConsoleMessageRecord) {
+        id = record.id
+        level = record.level
+        message = record.message
+        arguments = record.arguments
+        pageURL = record.pageURL
+        pageHost = record.pageHost
+        stack = record.stack
+        createdAt = record.createdAt
+    }
+}
+
+private struct DomainResourcesResponse: Encodable {
+    let domain: String?
+    let pageHost: String?
+    let resources: [DomainResourceResponse]
+}
+
+private struct DomainResourceResponse: Encodable {
+    let url: String
+    let path: String
+    let status: Int?
+    let found: Bool
+    let contentType: String?
+    let contentLength: Int?
+    let sampledBytes: Int
+    let bodyPreview: String?
+    let error: String?
 }
 
 private struct XHRRequestResponse: Encodable {
