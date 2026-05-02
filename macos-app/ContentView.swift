@@ -23,6 +23,9 @@ struct XHRRequestRecord: Encodable {
     var status: Int?
     var responseURL: String?
     var responseBytes: Int?
+    var jsonType: String?
+    var jsonItems: Int?
+    var jsonShape: String?
     var keys: String?
     var arrays: String?
     var error: String?
@@ -534,6 +537,9 @@ final class BrowserModel: NSObject, ObservableObject {
                 status: nil,
                 responseURL: nil,
                 responseBytes: nil,
+                jsonType: nil,
+                jsonItems: nil,
+                jsonShape: nil,
                 keys: nil,
                 arrays: nil,
                 error: nil
@@ -554,6 +560,9 @@ final class BrowserModel: NSObject, ObservableObject {
         xhrRecords[index].status = Self.intValue(from: message["status"])
         xhrRecords[index].responseURL = message["responseURL"] as? String
         xhrRecords[index].responseBytes = Self.intValue(from: message["responseBytes"])
+        xhrRecords[index].jsonType = message["jsonType"] as? String
+        xhrRecords[index].jsonItems = Self.intValue(from: message["jsonItems"])
+        xhrRecords[index].jsonShape = message["jsonShape"] as? String
         xhrRecords[index].keys = message["keys"] as? String
         xhrRecords[index].arrays = message["arrays"] as? String
         xhrRecords[index].error = message["error"] as? String
@@ -679,6 +688,59 @@ final class BrowserModel: NSObject, ObservableObject {
         return String(text || "").length;
       };
 
+      const valueType = (value) => {
+        if (value === null) return "null";
+        if (Array.isArray(value)) return "array";
+        return typeof value;
+      };
+
+      const truncatedKeys = (object, limit = 80) => {
+        if (!object || typeof object !== "object" || Array.isArray(object)) return [];
+
+        const keys = Object.keys(object);
+        if (keys.length <= limit) return keys;
+
+        return keys.slice(0, limit).concat(`+${keys.length - limit} more`);
+      };
+
+      const arrayItemKeys = (array) => {
+        if (!Array.isArray(array) || array.length === 0) return "";
+
+        const firstItem = array[0];
+        if (!firstItem || typeof firstItem !== "object" || Array.isArray(firstItem)) {
+          return valueType(firstItem);
+        }
+
+        return truncatedKeys(firstItem).join(",");
+      };
+
+      const shapeForValue = (value, depth = 0) => {
+        const type = valueType(value);
+
+        if (type === "array") {
+          const count = value.length;
+          if (count === 0) return "array[0]";
+
+          return `array[${count}]<${shapeForValue(value[0], depth + 1)}>`;
+        }
+
+        if (type !== "object") return type;
+
+        const keys = truncatedKeys(value, depth === 0 ? 80 : 30);
+        if (keys.length === 0) return "object{}";
+
+        if (depth >= 2) {
+          return `object{${keys.join(",")}}`;
+        }
+
+        const fields = keys.map((key) => {
+          if (key.startsWith("+") && key.endsWith(" more")) return key;
+          return `${key}:${shapeForValue(value[key], depth + 1)}`;
+        });
+
+        return `object{${fields.join(",")}}`;
+      };
+
       const summarizeJSON = (text) => {
         const summary = {
           responseBytes: typeof text === "string" ? byteSize(text) : undefined
@@ -687,8 +749,21 @@ final class BrowserModel: NSObject, ObservableObject {
         if (typeof text !== "string" || text.length === 0) return summary;
 
         try {
-          const value = JSON.parse(text);
-          if (!value || Array.isArray(value) || typeof value !== "object") return summary;
+          const jsonText = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+          const value = JSON.parse(jsonText);
+          const type = valueType(value);
+
+          summary.jsonType = type;
+          summary.jsonShape = shapeForValue(value);
+
+          if (type === "array") {
+            summary.jsonItems = value.length;
+            summary.keys = "";
+            summary.arrays = `$[${arrayItemKeys(value)}]`;
+            return summary;
+          }
+
+          if (type !== "object") return summary;
 
           const keys = [];
           const arrays = [];
@@ -696,11 +771,7 @@ final class BrowserModel: NSObject, ObservableObject {
           Object.keys(value).forEach((key) => {
             const item = value[key];
             if (Array.isArray(item)) {
-              let itemKeys = [];
-              if (item.length > 0 && item[0] && typeof item[0] === "object" && !Array.isArray(item[0])) {
-                itemKeys = Object.keys(item[0]);
-              }
-              arrays.push(`${key}[${itemKeys.join(",")}]`);
+              arrays.push(`${key}[${arrayItemKeys(item)}]`);
             } else {
               keys.push(key);
             }

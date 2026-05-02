@@ -463,6 +463,9 @@ private struct XHRRequestResponse: Encodable {
     let status: Int?
     let responseURL: String?
     let responseBytes: Int?
+    let jsonType: String?
+    let jsonItems: Int?
+    let jsonShape: String?
     let keys: String?
     let arrays: String?
     let error: String?
@@ -480,6 +483,9 @@ private struct XHRRequestResponse: Encodable {
         status = record.status
         responseURL = record.responseURL
         responseBytes = record.responseBytes
+        jsonType = record.jsonType
+        jsonItems = record.jsonItems
+        jsonShape = record.jsonShape
         keys = record.keys
         arrays = record.arrays
         error = record.error
