@@ -654,6 +654,7 @@ private final class WebsiteDataReader {
         return ConsoleMessagesResponse(
             activePageURL: browser.webView.url?.absoluteString,
             activePageHost: browser.webView.url?.host,
+            capturedLevels: ["debug", "error", "info", "log", "warn"],
             messages: messages
         )
     }
@@ -995,6 +996,7 @@ private struct PageResponse: Encodable {
 private struct ConsoleMessagesResponse: Encodable {
     let activePageURL: String?
     let activePageHost: String?
+    let capturedLevels: [String]
     let messages: [ConsoleMessageResponse]
 }
 

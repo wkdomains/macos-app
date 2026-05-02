@@ -366,15 +366,43 @@ extension BrowserModel {
         } catch (_) {}
       };
 
-      ["error", "warn"].forEach((level) => {
+      ["debug", "error", "info", "log", "warn"].forEach((level) => {
         const original = console[level];
         if (typeof original !== "function") return;
 
-        console[level] = function() {
-          post(level, arguments);
-          return original.apply(this, arguments);
-        };
+        try {
+          Object.defineProperty(console, level, {
+            configurable: true,
+            writable: true,
+            value: function() {
+              post(level, arguments);
+              return original.apply(this, arguments);
+            }
+          });
+        } catch (_) {
+          console[level] = function() {
+            post(level, arguments);
+            return original.apply(this, arguments);
+          };
+        }
       });
+
+      const originalAssert = console.assert;
+      if (typeof originalAssert === "function") {
+        try {
+          Object.defineProperty(console, "assert", {
+            configurable: true,
+            writable: true,
+            value: function(condition) {
+              if (!condition) {
+                post("error", Array.prototype.slice.call(arguments, 1));
+              }
+
+              return originalAssert.apply(this, arguments);
+            }
+          });
+        } catch (_) {}
+      }
 
       window.addEventListener("error", (event) => {
         post("error", [event.message || "Window error"], event.error && event.error.stack);
@@ -382,6 +410,14 @@ extension BrowserModel {
 
       window.addEventListener("unhandledrejection", (event) => {
         post("error", ["Unhandled promise rejection", event.reason], event.reason && event.reason.stack);
+      });
+
+      document.addEventListener("securitypolicyviolation", (event) => {
+        post("warn", [
+          "Content Security Policy violation",
+          event.violatedDirective,
+          event.blockedURI
+        ]);
       });
     })();
     """
