@@ -22,6 +22,9 @@ struct XHRRequestRecord: Encodable {
     var completedAt: Date?
     var status: Int?
     var responseURL: String?
+    var responseBytes: Int?
+    var keys: String?
+    var arrays: String?
     var error: String?
 }
 
@@ -530,6 +533,9 @@ final class BrowserModel: NSObject, ObservableObject {
                 completedAt: nil,
                 status: nil,
                 responseURL: nil,
+                responseBytes: nil,
+                keys: nil,
+                arrays: nil,
                 error: nil
             )
 
@@ -545,8 +551,11 @@ final class BrowserModel: NSObject, ObservableObject {
         }
 
         xhrRecords[index].completedAt = Date()
-        xhrRecords[index].status = message["status"] as? Int
+        xhrRecords[index].status = Self.intValue(from: message["status"])
         xhrRecords[index].responseURL = message["responseURL"] as? String
+        xhrRecords[index].responseBytes = Self.intValue(from: message["responseBytes"])
+        xhrRecords[index].keys = message["keys"] as? String
+        xhrRecords[index].arrays = message["arrays"] as? String
         xhrRecords[index].error = message["error"] as? String
     }
 
@@ -610,6 +619,18 @@ final class BrowserModel: NSObject, ObservableObject {
             || requestedHost.hasSuffix(".\(host)")
     }
 
+    private static func intValue(from value: Any?) -> Int? {
+        if let value = value as? Int {
+            return value
+        }
+
+        if let value = value as? NSNumber {
+            return value.intValue
+        }
+
+        return nil
+    }
+
     private func installXHRTrackingScript(on userContentController: WKUserContentController) {
         userContentController.add(self, name: "wkdomainsXHR")
         userContentController.addUserScript(
@@ -650,6 +671,81 @@ final class BrowserModel: NSObject, ObservableObject {
         }
       };
 
+      const byteSize = (text) => {
+        try {
+          if (window.TextEncoder) return new TextEncoder().encode(text).length;
+        } catch (_) {}
+
+        return String(text || "").length;
+      };
+
+      const summarizeJSON = (text) => {
+        const summary = {
+          responseBytes: typeof text === "string" ? byteSize(text) : undefined
+        };
+
+        if (typeof text !== "string" || text.length === 0) return summary;
+
+        try {
+          const value = JSON.parse(text);
+          if (!value || Array.isArray(value) || typeof value !== "object") return summary;
+
+          const keys = [];
+          const arrays = [];
+
+          Object.keys(value).forEach((key) => {
+            const item = value[key];
+            if (Array.isArray(item)) {
+              let itemKeys = [];
+              if (item.length > 0 && item[0] && typeof item[0] === "object" && !Array.isArray(item[0])) {
+                itemKeys = Object.keys(item[0]);
+              }
+              arrays.push(`${key}[${itemKeys.join(",")}]`);
+            } else {
+              keys.push(key);
+            }
+          });
+
+          summary.keys = keys.join(",");
+          summary.arrays = arrays.join(",");
+        } catch (_) {}
+
+        return summary;
+      };
+
+      const finishFetch = (id, response, url) => {
+        const finishPayload = {
+          event: "finish",
+          id,
+          status: response.status,
+          responseURL: response.url || url
+        };
+
+        try {
+          response.clone().text().then((text) => {
+            post({ ...finishPayload, ...summarizeJSON(text) });
+          }).catch(() => {
+            post(finishPayload);
+          });
+        } catch (_) {
+          post(finishPayload);
+        }
+      };
+
+      const xhrResponseText = (xhr) => {
+        try {
+          if (!xhr.responseType || xhr.responseType === "text") return xhr.responseText;
+          if (xhr.responseType === "json") return JSON.stringify(xhr.response);
+        } catch (_) {}
+
+        try {
+          if (xhr.response instanceof ArrayBuffer) return { responseBytes: xhr.response.byteLength };
+          if (xhr.response instanceof Blob) return { responseBytes: xhr.response.size };
+        } catch (_) {}
+
+        return undefined;
+      };
+
       const originalFetch = window.fetch;
       if (typeof originalFetch === "function") {
         window.fetch = function(input, init) {
@@ -660,12 +756,7 @@ final class BrowserModel: NSObject, ObservableObject {
           post({ event: "start", id, kind: "fetch", method, url });
 
           return originalFetch.apply(this, arguments).then((response) => {
-            post({
-              event: "finish",
-              id,
-              status: response.status,
-              responseURL: response.url || url
-            });
+            finishFetch(id, response, url);
             return response;
           }).catch((error) => {
             post({
@@ -706,11 +797,17 @@ final class BrowserModel: NSObject, ObservableObject {
           });
 
           this.addEventListener("loadend", () => {
+            const body = xhrResponseText(this);
+            const bodySummary = typeof body === "string"
+              ? summarizeJSON(body)
+              : (body || {});
+
             post({
               event: "finish",
               id,
               status: this.status,
-              responseURL: this.responseURL || info.url || ""
+              responseURL: this.responseURL || info.url || "",
+              ...bodySummary
             });
           }, { once: true });
 

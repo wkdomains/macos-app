@@ -462,6 +462,9 @@ private struct XHRRequestResponse: Encodable {
     let completedAt: Date?
     let status: Int?
     let responseURL: String?
+    let responseBytes: Int?
+    let keys: String?
+    let arrays: String?
     let error: String?
 
     init(record: XHRRequestRecord) {
@@ -476,6 +479,9 @@ private struct XHRRequestResponse: Encodable {
         completedAt = record.completedAt
         status = record.status
         responseURL = record.responseURL
+        responseBytes = record.responseBytes
+        keys = record.keys
+        arrays = record.arrays
         error = record.error
     }
 }
