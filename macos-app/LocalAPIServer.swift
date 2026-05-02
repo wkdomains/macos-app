@@ -298,11 +298,24 @@ private final class WebsiteDataReader {
     }
 
     func readXHRRequests(for domain: RequestedDomain) -> XHRRequestsResponse {
-        XHRRequestsResponse(
+        let requests = browser.xhrRequests(for: domain.host)
+            .map(XHRRequestResponse.init(record:))
+            .sorted { left, right in
+                let leftBytes = left.responseBytes ?? -1
+                let rightBytes = right.responseBytes ?? -1
+
+                if leftBytes == rightBytes {
+                    return left.startedAt < right.startedAt
+                }
+
+                return leftBytes > rightBytes
+            }
+
+        return XHRRequestsResponse(
             hostname: domain.host,
             activePageURL: browser.webView.url?.absoluteString,
             activePageHost: browser.webView.url?.host,
-            requests: browser.xhrRequests(for: domain.host).map(XHRRequestResponse.init(record:))
+            requests: requests
         )
     }
 
