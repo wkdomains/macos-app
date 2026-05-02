@@ -180,3 +180,33 @@ the same browser session.
 ## Roadmap
 
 Future versions will add an MCP server and many more developer-agent features.
+With MCP, a coding tool could use wkdomains as a live browser context instead
+of asking the user to paste screenshots, cookies, network logs, or copied JSON.
+
+Some examples of what that enables:
+
+- `get_current_screenshot`: let the tool inspect the exact rendered page the
+  human is looking at, including desktop and mobile viewport modes.
+- `list_xhr`: show the tool the important API calls the page already made,
+  including methods, URLs, status codes, response sizes, and compact
+  `jsonShape` summaries.
+- `replay_xhr`: let the tool rerun a selected authenticated request and inspect
+  the full JSON response without rebuilding the browser login flow.
+- `find_api_for_visible_text`: connect something visible in the screenshot to
+  the XHR response that produced it.
+- `compare_viewports`: capture desktop, mobile-large, and mobile-small
+  screenshots so the tool can spot responsive layout bugs.
+- `watch_page_changes`: notify the tool when the page navigates, when new XHR
+  calls arrive, or when the visible render changes.
+- `extract_auth_context`: provide the minimum cookies, headers, and storage
+  values needed to reproduce a request, with sensitive values explicitly marked.
+- `debug_failed_state`: package the screenshot, recent XHR failures, console
+  errors, URL, viewport, and auth shape into one context bundle for an agent.
+- `generate_curl_for_request`: turn a browser-observed XHR into a sanitized
+  curl command the developer can run and edit.
+- `verify_fix`: after a code change, let the tool reload the app, inspect the
+  screenshot, and confirm that the relevant API calls and UI state look right.
+
+The long-term goal is for a coding agent to work with web apps the way a human
+does: seeing the screen, understanding the network traffic behind it, and using
+the browser's real authenticated state when it needs deeper data.
