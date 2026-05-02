@@ -40,6 +40,12 @@ The local API currently runs on:
 http://localhost:9001
 ```
 
+You can change the API port in:
+
+```sh
+~/.config/wkdomains/settings.json
+```
+
 ## Screenshot the current page
 
 Use `/api/v1/screenshot` to get a PNG of the currently rendered visible page:
