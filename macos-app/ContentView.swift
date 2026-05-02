@@ -714,6 +714,21 @@ final class BrowserModel: NSObject, ObservableObject {
         return truncatedKeys(firstItem).join(",");
       };
 
+      const sampleScalar = (value) => {
+        const type = valueType(value);
+
+        if (type === "string") {
+          const text = value.length > 160 ? `${value.slice(0, 160)}...` : value;
+          return JSON.stringify(text);
+        }
+
+        if (type === "number" || type === "boolean" || type === "null") {
+          return String(value);
+        }
+
+        return type;
+      };
+
       const shapeForValue = (value, depth = 0) => {
         const type = valueType(value);
 
@@ -724,14 +739,10 @@ final class BrowserModel: NSObject, ObservableObject {
           return `array[${count}]<${shapeForValue(value[0], depth + 1)}>`;
         }
 
-        if (type !== "object") return type;
+        if (type !== "object") return sampleScalar(value);
 
         const keys = truncatedKeys(value, depth === 0 ? 80 : 30);
         if (keys.length === 0) return "object{}";
-
-        if (depth >= 2) {
-          return `object{${keys.join(",")}}`;
-        }
 
         const fields = keys.map((key) => {
           if (key.startsWith("+") && key.endsWith(" more")) return key;
