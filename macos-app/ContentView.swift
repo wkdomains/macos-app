@@ -694,7 +694,7 @@ final class BrowserModel: NSObject, ObservableObject {
         return typeof value;
       };
 
-      const truncatedKeys = (object, limit = 80) => {
+      const truncatedKeys = (object, limit = 20) => {
         if (!object || typeof object !== "object" || Array.isArray(object)) return [];
 
         const keys = Object.keys(object);
@@ -714,11 +714,50 @@ final class BrowserModel: NSObject, ObservableObject {
         return truncatedKeys(firstItem).join(",");
       };
 
+      const isPlainObject = (value) => {
+        return !!value && typeof value === "object" && !Array.isArray(value);
+      };
+
+      const hasOnlyKeys = (value, expectedKeys) => {
+        if (!isPlainObject(value)) return false;
+
+        const keys = Object.keys(value);
+        if (keys.length !== expectedKeys.length) return false;
+
+        return expectedKeys.every((key) => keys.includes(key));
+      };
+
+      const isCRUDObject = (value) => {
+        return hasOnlyKeys(value, ["c", "r", "u", "d"])
+          && ["c", "r", "u", "d"].every((key) => typeof value[key] === "boolean");
+      };
+
+      const isCapabilityObject = (value) => {
+        return isPlainObject(value) && Object.prototype.hasOwnProperty.call(value, "included");
+      };
+
+      const collapsedObjectMap = (object) => {
+        const keys = Object.keys(object);
+        if (keys.length < 4) return undefined;
+
+        const values = keys.map((key) => object[key]);
+
+        if (values.every(isCRUDObject)) {
+          return `object<crud permissions>[${truncatedKeys(object).join(",")}]`;
+        }
+
+        if (values.every(isCapabilityObject)) {
+          return `object<capabilities>[${truncatedKeys(object).join(",")}]`;
+        }
+
+        return undefined;
+      };
+
       const sampleScalar = (value) => {
         const type = valueType(value);
 
         if (type === "string") {
-          const text = value.length > 160 ? `${value.slice(0, 160)}...` : value;
+          const text = value.length > 80 ? `${value.slice(0, 80)}...` : value;
           return JSON.stringify(text);
         }
 
@@ -741,8 +780,15 @@ final class BrowserModel: NSObject, ObservableObject {
 
         if (type !== "object") return sampleScalar(value);
 
-        const keys = truncatedKeys(value, depth === 0 ? 80 : 30);
+        const collapsed = collapsedObjectMap(value);
+        if (collapsed) return collapsed;
+
+        const keys = truncatedKeys(value, depth === 0 ? 45 : 14);
         if (keys.length === 0) return "object{}";
+
+        if (depth >= 3 || (depth > 0 && Object.keys(value).length > 14)) {
+          return `object{${keys.join(",")}}`;
+        }
 
         const fields = keys.map((key) => {
           if (key.startsWith("+") && key.endsWith(" more")) return key;
