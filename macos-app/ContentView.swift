@@ -92,7 +92,10 @@ struct ContentView: View {
         }
         .onAppear {
             addressDraft = browser.displayAddressText
-            focusAddressBar(selectAll: true)
+            isAddressFocused = false
+            shouldSelectAddressText = false
+            hideSuggestions()
+            focusBrowserContentWhenReady()
         }
         .onDisappear {
             suggestionTask?.cancel()
@@ -531,6 +534,15 @@ struct ContentView: View {
     private func focusBrowserContent() {
         DispatchQueue.main.async {
             browser.webView.focusFromBrowserChrome()
+        }
+    }
+
+    private func focusBrowserContentWhenReady() {
+        for delay in [0.0, 0.12, 0.35] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard !isAddressFocused else { return }
+                browser.webView.focusFromBrowserChrome()
+            }
         }
     }
 
