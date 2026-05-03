@@ -340,8 +340,13 @@ extension BrowserModel {
         const neutral = hsl.s < 0.16 || (hsl.l > 0.76 && hsl.h > 35 && hsl.h < 90) || (hsl.l > 0.82 && hsl.h > 200 && hsl.h < 280);
         const largeSurface = element && viewportShare(element) > 0.24;
 
-        if (!neutral && hsl.s > 0.55 && luminance < 0.42 && hsl.l < 0.58) {
-          return toRGBA(color);
+        if (!neutral && hsl.s > 0.55 && luminance < 0.48 && hsl.l < 0.62) {
+          return toRGBA(hslToRGB({
+            h: hsl.h,
+            s: clamp(hsl.s * 0.86, 0.54, 0.84),
+            l: clamp(hsl.l * 0.62, 0.24, 0.34),
+            a: color.a
+          }));
         }
 
         if (neutral && (largeSurface || luminance > 0.74)) {
