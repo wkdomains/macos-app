@@ -79,8 +79,8 @@ struct ContentView: View {
         }
         .onChange(of: isAddressFocused) { _, isFocused in
             if isFocused {
+                hideSuggestions()
                 selectAddressText()
-                scheduleSuggestions(for: browser.addressText)
             } else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     guard !isAddressFocused else { return }
