@@ -452,14 +452,16 @@ struct ContentView: View {
     }
 
     private func selectAddressText() {
-        DispatchQueue.main.async {
-            guard isAddressFocused,
-                  let fieldEditor = NSApp.keyWindow?.firstResponder as? NSTextView
-            else {
-                return
-            }
+        for delay in [0.0, 0.06, 0.16] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard isAddressFocused,
+                      let fieldEditor = NSApp.keyWindow?.firstResponder as? NSTextView
+                else {
+                    return
+                }
 
-            fieldEditor.selectAll(nil)
+                fieldEditor.selectAll(nil)
+            }
         }
     }
 
