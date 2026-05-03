@@ -213,10 +213,6 @@ struct ContentView: View {
         .onTapGesture {
             focusAddressBar(selectAll: true, syncToCommittedURL: false)
         }
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
         .overlay(alignment: .topLeading) {
             if shouldShowSuggestions {
                 suggestionMenu
