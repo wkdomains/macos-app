@@ -97,7 +97,7 @@ struct ContentView: View {
             isAddressEditing = false
             isAddressFocused = false
             shouldSelectAddressText = false
-            shouldFocusBrowserAfterLoad = false
+            shouldFocusBrowserAfterLoad = true
             hideSuggestions()
             focusBrowserContentWhenReady()
         }
@@ -122,7 +122,10 @@ struct ContentView: View {
             browser.webView.blocksProgrammaticFocus = isFocused
 
             if isFocused {
-                shouldFocusBrowserAfterLoad = false
+                if shouldSelectAddressText || !shouldFocusBrowserAfterLoad {
+                    shouldFocusBrowserAfterLoad = false
+                }
+
                 hideSuggestions()
                 scheduleSuggestions(for: addressDraft)
             } else {
@@ -567,8 +570,8 @@ struct ContentView: View {
     private func focusBrowserContentWhenReady() {
         for delay in [0.0, 0.12, 0.35] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard !isAddressFocused else { return }
-                browser.webView.focusFromBrowserChrome()
+                guard !isAddressFocused || (shouldFocusBrowserAfterLoad && !shouldSelectAddressText) else { return }
+                focusPendingBrowserContent()
             }
         }
     }

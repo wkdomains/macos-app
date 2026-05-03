@@ -79,12 +79,19 @@ struct AddressBarTextField: NSViewRepresentable {
         }
 
         func controlTextDidBeginEditing(_ notification: Notification) {
-            if let textField = notification.object as? BrowserAddressNSTextField {
-                textField.restoreFieldEditorInsertionPoint()
+            if let textField = notification.object as? BrowserAddressNSTextField,
+               !parent.isFocused,
+               !textField.isHandlingDirectUserFocus,
+               !Self.isKeyboardFocusEvent()
+            {
+                textField.hideFieldEditorInsertionPoint()
+                parent.isEditing = false
+                parent.isFocused = false
+                return
             }
 
-            if !parent.isFocused {
-                parent.selectAllOnFocus = true
+            if let textField = notification.object as? BrowserAddressNSTextField {
+                textField.restoreFieldEditorInsertionPoint()
             }
 
             parent.isEditing = true
@@ -195,11 +202,16 @@ struct AddressBarTextField: NSViewRepresentable {
                 return false
             }
         }
+
+        private static func isKeyboardFocusEvent() -> Bool {
+            NSApp.currentEvent?.type == .keyDown
+        }
     }
 }
 
 final class BrowserAddressNSTextField: NSTextField {
     var onKeyDown: ((NSEvent) -> Bool)?
+    private(set) var isHandlingDirectUserFocus = false
     private var fieldEditorInsertionPointColor: NSColor?
     private var fieldEditorWasEditable: Bool?
 
@@ -215,6 +227,7 @@ final class BrowserAddressNSTextField: NSTextField {
         }
 
         editor.insertionPointColor = .clear
+        editor.selectedRange = NSRange(location: editor.string.count, length: 0)
         editor.isEditable = false
         editor.needsDisplay = true
     }
@@ -236,10 +249,12 @@ final class BrowserAddressNSTextField: NSTextField {
     }
 
     override func mouseDown(with event: NSEvent) {
+        isHandlingDirectUserFocus = true
         super.mouseDown(with: event)
 
         DispatchQueue.main.async { [weak self] in
             self?.currentEditor()?.selectAll(nil)
+            self?.isHandlingDirectUserFocus = false
         }
     }
 
