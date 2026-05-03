@@ -366,46 +366,9 @@ extension BrowserModel {
       const installedAt = performance.now ? performance.now() : Date.now();
       let lastMutationAt = installedAt;
       let coverReleaseTimer = null;
-      const debugCounts = new Map();
-      const isTopFrame = (() => {
-        try { return window.top === window; } catch (_) { return false; }
-      })();
 
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-
-      const debugDarkMode = (event, data = {}, limit = 20) => {
-        if (!isTopFrame) return;
-
-        const count = debugCounts.get(event) || 0;
-        if (count >= limit) return;
-        debugCounts.set(event, count + 1);
-
-        const now = performance.now ? performance.now() : Date.now();
-        const payload = {
-          event,
-          elapsedMs: Math.round((now - installedAt) * 10) / 10,
-          readyState: document.readyState,
-          hasHead: !!document.head,
-          hasBody: !!document.body,
-          forced,
-          ...data
-        };
-        const message = `[wkdomains-dark] ${event} ${JSON.stringify(payload)}`;
-
-        try {
-          window.webkit.messageHandlers.wkdomainsConsole.postMessage({
-            level: "debug",
-            arguments: [message],
-            message,
-            pageURL: location.href,
-            pageHost: location.hostname
-          });
-        } catch (_) {
-          try { console.debug(message); } catch (_) {}
-        }
-      };
-
-      debugDarkMode("install");
+      const debugDarkMode = () => {};
 
       const parseComponent = (value, isAlpha = false) => {
         if (!value) return isAlpha ? 1 : 0;
@@ -790,8 +753,8 @@ extension BrowserModel {
           const hasUsefulContent = bodyChildren >= 8 || bodyHeight >= Math.max(360, innerHeight * 0.6);
 
           if (!hasUsefulContent && elapsed < 900) return true;
-          if (elapsed < 220) return true;
-          if (quietFor < 90 && elapsed < 900) return true;
+          if (hasUsefulContent && quietFor < 35 && elapsed < 450) return true;
+          if (!hasUsefulContent && quietFor < 90 && elapsed < 900) return true;
 
           return false;
         };
@@ -949,11 +912,12 @@ extension BrowserModel {
 
         observer = new MutationObserver(() => {
           lastMutationAt = performance.now ? performance.now() : Date.now();
+          const nextDelay = forced === null ? 0 : 35;
           debugDarkMode("mutation", {
             applying,
-            nextDelay: forced === null ? 0 : 140
+            nextDelay
           }, 30);
-          if (!applying) schedule(forced === null ? 0 : 140);
+          if (!applying) schedule(nextDelay);
         });
         observer.observe(document.documentElement, {
           attributes: true,
