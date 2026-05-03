@@ -686,11 +686,11 @@ extension BrowserModel {
         const style = document.createElement("style");
         style.id = STYLE_ID;
         style.textContent = `
-          :root[${ROOT_ATTRIBUTE}] {
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) {
             color-scheme: dark !important;
           }
-          :root[${ROOT_ATTRIBUTE}],
-          :root[${ROOT_ATTRIBUTE}] body {
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]),
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body {
             background: ${toRGBA(DEFAULT_BACKGROUND)} !important;
             color: ${toRGBA(DEFAULT_TEXT)} !important;
           }
@@ -708,13 +708,13 @@ extension BrowserModel {
           :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [bgcolor] :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path) {
             background-color: transparent !important;
           }
-          :root[${ROOT_ATTRIBUTE}] input,
-          :root[${ROOT_ATTRIBUTE}] textarea,
-          :root[${ROOT_ATTRIBUTE}] select,
-          :root[${ROOT_ATTRIBUTE}] button {
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input,
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) textarea,
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) select,
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) button {
             color-scheme: dark !important;
           }
-          :root[${ROOT_ATTRIBUTE}] ::selection {
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) ::selection {
             background: rgb(67, 91, 122) !important;
             color: rgb(246, 248, 250) !important;
           }
