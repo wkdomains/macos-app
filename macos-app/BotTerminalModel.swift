@@ -29,6 +29,8 @@ final class BotTerminalModel: ObservableObject {
 
     private var requests: [BotTerminalRequest] = []
     private var discoveryTask: Task<Void, Never>?
+    private var terminalLines: [String] = []
+    private var loadingLineIndex: Int?
 
     func open(currentURL: URL?, pageTitle: String?, viewportMode: BrowserViewportMode, xhrCount: Int) {
         isOpen = true
@@ -59,7 +61,8 @@ final class BotTerminalModel: ObservableObject {
 
     private func startDiscovery(currentURL: URL?, pageTitle: String?, viewportMode: BrowserViewportMode, xhrCount: Int) {
         discoveryTask?.cancel()
-        message = ""
+        terminalLines = []
+        loadingLineIndex = nil
 
         guard let currentURL,
               let host = currentURL.host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")),
@@ -71,14 +74,16 @@ final class BotTerminalModel: ObservableObject {
 
         let domain = DomainUtilities.registrableDomain(from: host)
         let llmsURL = "https://\(domain)/llms.txt"
-        appendLine("[page] \(currentURL.absoluteString)")
+        appendLine("wkdomains agent view")
+        appendLine("Domain: \(domain)")
+        appendLine("Page: \(currentURL.absoluteString)")
         if let pageTitle, !pageTitle.isEmpty {
-            appendLine("[page] title: \(pageTitle)")
+            appendLine("Title: \(pageTitle)")
         }
-        appendLine("[domain] \(domain)")
-        appendLine("[viewport] \(viewportMode.rawValue)")
-        appendLine("[xhr] \(xhrCount) requests observed so far")
-        appendLine("[discover] checking likely agent/developer files")
+        appendLine("Viewport: \(viewportMode.rawValue)")
+        appendLine("XHR: \(xhrCount) requests observed")
+        appendLine("")
+        appendLoadingLine("Loading llms.txt...")
 
         let request = BotTerminalRequest(
             id: UUID(),
@@ -101,7 +106,6 @@ final class BotTerminalModel: ObservableObject {
 
         requests.removeAll { $0.status == "pending" }
         requests.append(request)
-        appendLine("[mcp] queued agent request \(request.id.uuidString)")
 
         discoveryTask = Task { [weak self] in
             guard let self else { return }
@@ -123,7 +127,9 @@ final class BotTerminalModel: ObservableObject {
         if trimmedSummary.isEmpty {
             appendLine("[agent] No summary was provided.")
         } else {
-            appendLine("[agent] \(trimmedSummary)")
+            appendLine("")
+            appendLine("Agent reply:")
+            appendLine(Self.wordLimited(trimmedSummary, limit: 80))
         }
 
         return true
@@ -137,14 +143,16 @@ final class BotTerminalModel: ObservableObject {
         for path in Self.resourcePaths {
             guard !Task.isCancelled else { return }
 
-            appendLine("[discover] checking \(path)")
+            updateLoadingLine("Loading \(Self.displayName(for: path))...")
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+
             let result = await Self.fetchResource(domain: domain, path: path)
             guard !Task.isCancelled else { return }
 
             if result.found {
                 let label = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 foundLabels.append(label)
-                appendLine("[discover] found \(path) (\(result.statusDescription))")
 
                 if path.contains("openapi") || path.contains("swagger") {
                     apiLine = "API: \(path)"
@@ -170,40 +178,40 @@ final class BotTerminalModel: ObservableObject {
                 if apiLine == nil, let apiHost = Self.apiHost(in: result.bodyPreview) {
                     apiLine = "API: \(apiHost)"
                 }
-            } else if let status = result.status {
-                appendLine("[discover] missing \(path) (\(status))")
-            } else if let error = result.error {
-                appendLine("[discover] error \(path): \(error)")
-            } else {
-                appendLine("[discover] missing \(path)")
             }
         }
 
         guard !Task.isCancelled else { return }
 
-        appendLine("[summary] Domain: \(domain)")
-        if foundLabels.isEmpty {
-            appendLine("[summary] Found: no common agent/developer files")
-        } else {
-            appendLine("[summary] Found: \(foundLabels.joined(separator: ", "))")
-        }
-        appendLine("[summary] \(apiLine ?? "API: no OpenAPI or API host found yet")")
-
-        if affordances.isEmpty {
-            appendLine("[summary] Agent affordance: basic browser, DOM, XHR, cookies, screenshot")
-        } else {
-            appendLine("[summary] Agent affordance: \(affordances.sorted().joined(separator: ", "))")
-        }
-
-        appendLine("[agent] waiting for attached MCP client response")
+        updateLoadingLine("Discovery complete.")
+        appendLine("")
+        appendLine("Summary:")
+        appendLine(Self.discoverySummary(domain: domain, foundLabels: foundLabels, apiLine: apiLine, affordances: affordances))
     }
 
     private func appendLine(_ line: String) {
-        if message.isEmpty {
-            message = line
-        } else {
-            message += "\n\(line)"
+        terminalLines.append(line)
+        renderMessage()
+    }
+
+    private func appendLoadingLine(_ line: String) {
+        terminalLines.append(line)
+        loadingLineIndex = terminalLines.indices.last
+        renderMessage()
+    }
+
+    private func updateLoadingLine(_ line: String) {
+        guard let loadingLineIndex, terminalLines.indices.contains(loadingLineIndex) else {
+            appendLoadingLine(line)
+            return
         }
+
+        terminalLines[loadingLineIndex] = line
+        renderMessage()
+    }
+
+    private func renderMessage() {
+        message = terminalLines.joined(separator: "\n")
     }
 
     private static let resourcePaths = [
@@ -306,6 +314,46 @@ final class BotTerminalModel: ObservableObject {
         }
 
         return values
+    }
+
+    nonisolated private static func displayName(for path: String) -> String {
+        path
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .replacingOccurrences(of: ".well-known/", with: "")
+    }
+
+    nonisolated private static func discoverySummary(domain: String, foundLabels: [String], apiLine: String?, affordances: Set<String>) -> String {
+        let foundText: String
+        if foundLabels.isEmpty {
+            foundText = "no common agent files"
+        } else {
+            foundText = foundLabels.prefix(6).joined(separator: ", ")
+        }
+
+        let apiText = apiLine?.replacingOccurrences(of: "API: ", with: "") ?? "no OpenAPI endpoint"
+        let affordanceText: String
+        if affordances.isEmpty {
+            affordanceText = "browser context, DOM, XHR, cookies, console, and screenshot inspection"
+        } else {
+            affordanceText = affordances.sorted().prefix(5).joined(separator: ", ")
+        }
+
+        return wordLimited(
+            "\(domain) exposes useful agent-facing context. wkdomains found \(foundText), with \(apiText) as the best API signal. The strongest affordances are \(affordanceText). A coding agent can combine these files with the current screenshot, DOM, XHR, cookies, and console state to understand what the page offers and what actions may be possible.",
+            limit: 80
+        )
+    }
+
+    nonisolated private static func wordLimited(_ text: String, limit: Int) -> String {
+        let words = text
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+
+        guard words.count > limit else {
+            return words.joined(separator: " ")
+        }
+
+        return words.prefix(limit).joined(separator: " ") + "..."
     }
 
 }
