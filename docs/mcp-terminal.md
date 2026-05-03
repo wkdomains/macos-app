@@ -88,8 +88,8 @@ with:
   - `/api/v1/console`
   - `/api/v1/resources`
   - `/api/v1/screenshot`
-  - `/api/v1/xhr/{host}`
-  - `/api/v1/cookies/{host}`
+  - `/api/v1/xhr`
+  - `/api/v1/cookies`
 
 The watcher agent can use those endpoints, reason over the context, and reply
 with `reply_to_human_request`.

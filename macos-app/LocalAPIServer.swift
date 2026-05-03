@@ -107,27 +107,25 @@ final class LocalAPIServer {
             return
         }
 
-        if request.path.hasPrefix("/api/v1/cookies/") {
-            let rawDomain = String(request.path.dropFirst("/api/v1/cookies/".count))
-            guard let domain = RequestedDomain(rawValue: rawDomain) else {
-                sendError(status: .badRequest, message: "Provide a valid domain.", on: connection)
-                return
-            }
-
-            dataReader.readStorage(for: domain) { [weak self] response in
-                self?.sendJSON(response, status: .ok, on: connection)
+        if request.path == "/api/v1/cookies" {
+            dataReader.readStorageForCurrentPage { [weak self] result in
+                switch result {
+                case .success(let response):
+                    self?.sendJSON(response, status: .ok, on: connection)
+                case .failure(let error):
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
             }
             return
         }
 
-        if request.path.hasPrefix("/api/v1/xhr/") {
-            let rawHostname = String(request.path.dropFirst("/api/v1/xhr/".count))
-            guard let domain = RequestedDomain(rawValue: rawHostname) else {
-                sendError(status: .badRequest, message: "Provide a valid hostname.", on: connection)
-                return
+        if request.path == "/api/v1/xhr" {
+            switch dataReader.readXHRRequestsForCurrentPage() {
+            case .success(let response):
+                sendJSON(response, status: .ok, on: connection)
+            case .failure(let error):
+                sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
             }
-
-            sendJSON(dataReader.readXHRRequests(for: domain), status: .ok, on: connection)
             return
         }
 
@@ -561,32 +559,18 @@ private struct HTTPRequest {
 }
 
 private struct RequestedDomain {
-    let rawValue: String
     let host: String
     let port: Int?
 
-    init?(rawValue: String) {
-        let decoded = (rawValue.removingPercentEncoding ?? rawValue)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !decoded.isEmpty,
-              decoded.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
-              !decoded.contains("/")
-        else {
-            return nil
-        }
-
-        let candidate = decoded.contains("://") ? decoded : "https://\(decoded)"
-        guard let components = URLComponents(string: candidate),
-              let host = components.host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")),
+    init?(url: URL) {
+        guard let host = url.host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")),
               !host.isEmpty
         else {
             return nil
         }
 
-        self.rawValue = decoded
         self.host = host
-        self.port = components.port
+        port = url.port
     }
 }
 
@@ -664,6 +648,17 @@ private final class WebsiteDataReader {
         }
     }
 
+    func readStorageForCurrentPage(completion: @escaping (Result<DomainStorageResponse, Error>) -> Void) {
+        do {
+            let domain = try currentPageDomain()
+            readStorage(for: domain) { response in
+                completion(.success(response))
+            }
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
     func readXHRRequests(for domain: RequestedDomain) -> XHRRequestsResponse {
         let requests = browser.xhrRequests(for: domain.host)
             .map(XHRRequestResponse.init(record:))
@@ -684,6 +679,14 @@ private final class WebsiteDataReader {
             activePageHost: browser.webView.url?.host,
             requests: requests
         )
+    }
+
+    func readXHRRequestsForCurrentPage() -> Result<XHRRequestsResponse, Error> {
+        do {
+            return .success(readXHRRequests(for: try currentPageDomain()))
+        } catch {
+            return .failure(error)
+        }
     }
 
     func readScreenshot(completion: @escaping (Result<Data, Error>) -> Void) {
@@ -783,6 +786,16 @@ private final class WebsiteDataReader {
         }
 
         return response
+    }
+
+    private func currentPageDomain() throws -> RequestedDomain {
+        guard let url = browser.webView.url,
+              let domain = RequestedDomain(url: url)
+        else {
+            throw InspectionError.noPageLoaded
+        }
+
+        return domain
     }
 
     private func evaluateJSONScript(_ script: String, completion: @escaping (Result<Any, Error>) -> Void) {

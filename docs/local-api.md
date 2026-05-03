@@ -122,12 +122,12 @@ Responses include status, content type, sampled byte count, and a short
 ## XHR and fetch calls
 
 ```sh
-curl http://localhost:9001/api/v1/xhr/app.netlify.com | jq .
+curl http://localhost:9001/api/v1/xhr | jq .
 ```
 
-Returns browser-observed XHR/fetch calls for the requested host. The key field is
-`jsonShape`, a compact map of the response body that helps identify useful API
-endpoints without dumping full JSON.
+Returns browser-observed XHR/fetch calls for the current page host. The key
+field is `jsonShape`, a compact map of the response body that helps identify
+useful API endpoints without dumping full JSON.
 
 Example shape:
 
@@ -153,10 +153,11 @@ Example shape:
 ## Cookies and browser storage
 
 ```sh
-curl http://localhost:9001/api/v1/cookies/app.netlify.com | jq .
+curl http://localhost:9001/api/v1/cookies | jq .
 ```
 
-Returns matching cookies, localStorage, and sessionStorage for the host.
+Returns matching cookies, localStorage, and sessionStorage for the current page
+host.
 
 This endpoint gives a coding tool the auth/session context needed to replay the
 same XHR endpoints and retrieve full JSON directly. Treat this output as
