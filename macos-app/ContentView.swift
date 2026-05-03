@@ -217,13 +217,6 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(
-                    isAddressFocused ? Color.accentColor.opacity(0.75) : Color(nsColor: .separatorColor).opacity(0.55),
-                    lineWidth: isAddressFocused ? 1.5 : 1
-                )
-        )
         .overlay(alignment: .topLeading) {
             if shouldShowSuggestions {
                 suggestionMenu
