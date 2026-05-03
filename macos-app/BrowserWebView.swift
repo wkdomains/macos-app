@@ -67,7 +67,6 @@ final class BrowserWKWebView: WKWebView {
 
     func focusFromBrowserChrome() {
         blocksProgrammaticFocus = false
-        window?.makeFirstResponder(self)
     }
 
     private func allowDirectUserFocus(_ action: () -> Void) {
