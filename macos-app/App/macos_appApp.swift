@@ -15,6 +15,7 @@ struct macos_appApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appModel = AppModel()
     @StateObject private var historyFaviconStore = HistoryFaviconStore()
+    @StateObject private var bookmarkFaviconStore = HistoryFaviconStore()
 
     var body: some Scene {
         Window("wkdomains", id: "main") {
@@ -23,6 +24,7 @@ struct macos_appApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             BrowserHistoryCommands(browser: appModel.browser, faviconStore: historyFaviconStore)
+            BrowserBookmarksCommands(browser: appModel.browser, faviconStore: bookmarkFaviconStore)
         }
     }
 }
@@ -53,7 +55,7 @@ private struct BrowserHistoryCommands: Commands {
         }
     }
 
-    private static func menuTitle(for rawURL: String) -> String {
+    fileprivate static func menuTitle(for rawURL: String) -> String {
         guard let url = URL(string: rawURL), let host = url.host else {
             return trimmed(rawURL)
         }
@@ -68,6 +70,32 @@ private struct BrowserHistoryCommands: Commands {
     private static func trimmed(_ value: String) -> String {
         guard value.count > 90 else { return value }
         return "\(value.prefix(87))..."
+    }
+}
+
+private struct BrowserBookmarksCommands: Commands {
+    @ObservedObject var browser: BrowserModel
+    @ObservedObject var faviconStore: HistoryFaviconStore
+
+    var body: some Commands {
+        CommandMenu("Bookmarks") {
+            if browser.bookmarkURLs.isEmpty {
+                Button("No Bookmarks") {}
+                    .disabled(true)
+            } else {
+                ForEach(browser.bookmarkURLs, id: \.absoluteString) { url in
+                    Button {
+                        browser.load(url)
+                    } label: {
+                        HistoryMenuItemLabel(
+                            title: BrowserHistoryCommands.menuTitle(for: url.absoluteString),
+                            favicon: faviconStore.image(for: url.absoluteString)
+                        )
+                    }
+                    .help(url.absoluteString)
+                }
+            }
+        }
     }
 }
 
