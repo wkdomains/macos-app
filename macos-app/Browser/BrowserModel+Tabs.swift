@@ -230,9 +230,7 @@ extension BrowserModel {
             )
         }
 
-        for tab in tabStates {
-            tab.webView.titlebarTabs = items
-        }
+        activeTab.webView.titlebarTabs = items
     }
 
 }

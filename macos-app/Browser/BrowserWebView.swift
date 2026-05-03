@@ -83,6 +83,8 @@ final class BrowserWKWebView: WKWebView {
     }
     var titlebarTabs: [BrowserTitlebarTab] = [] {
         didSet {
+            guard oldValue != titlebarTabs else { return }
+            guard window != nil || titlebarTabsAccessory != nil else { return }
             updateTitlebarTabsAccessory()
         }
     }

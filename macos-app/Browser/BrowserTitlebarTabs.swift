@@ -97,6 +97,7 @@ extension BrowserWKWebView {
 final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewController {
     var tabs: [BrowserTitlebarTab] = [] {
         didSet {
+            guard oldValue != tabs else { return }
             renderButtons()
         }
     }
@@ -444,21 +445,21 @@ private struct BrowserTitlebarTabDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        defer {
-            dragState.draggingTabID = nil
-            dragState.dropTargetTabID = nil
-        }
-
         guard let draggingTabID = dragState.draggingTabID else {
+            dragState.dropTargetTabID = nil
             return true
         }
-
         let targetTabID = dragState.dropTargetTabID ?? item.id
+        dragState.draggingTabID = nil
+        dragState.dropTargetTabID = nil
+
         guard draggingTabID != targetTabID else {
             return true
         }
 
-        moveTab(draggingTabID, targetTabID)
+        DispatchQueue.main.async {
+            moveTab(draggingTabID, targetTabID)
+        }
         return true
     }
 }
