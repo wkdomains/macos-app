@@ -198,7 +198,16 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     func requestLLMSSummary() {
-        botTerminal.startLLMsRequest(currentURL: webView.url)
+        botTerminal.open(
+            currentURL: webView.url,
+            pageTitle: webView.title,
+            viewportMode: viewportMode,
+            xhrCount: xhrRecords.count
+        )
+    }
+
+    func closeBotTerminal() {
+        botTerminal.close()
     }
 
     func pendingBotRequests() -> [BotTerminalRequest] {
@@ -574,6 +583,12 @@ extension BrowserModel: WKNavigationDelegate {
         estimatedProgress = 1
         syncAddress(from: webView)
         markScreenshotDirty(scheduleAfter: 0.25)
+        botTerminal.refreshIfOpen(
+            currentURL: webView.url,
+            pageTitle: webView.title,
+            viewportMode: viewportMode,
+            xhrCount: xhrRecords.count
+        )
 
         if let url = webView.url {
             AppSettingsStore.shared.updateLastVisitedURL(url)

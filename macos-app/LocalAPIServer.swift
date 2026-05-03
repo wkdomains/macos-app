@@ -835,11 +835,11 @@ private final class WebsiteDataReader {
             "/llms-full.txt",
             "/openapi.json",
             "/swagger.json",
-            "/sitemap.xml",
-            "/robots.txt",
             "/.well-known/openapi.json",
+            "/.well-known/ai-plugin.json",
             "/.well-known/agent-card.json",
-            "/.well-known/ai-plugin.json"
+            "/sitemap.xml",
+            "/robots.txt"
         ].compactMap { path in
             URL(string: "https://\(domain)\(path)")
         }

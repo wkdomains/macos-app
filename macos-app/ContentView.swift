@@ -203,6 +203,7 @@ struct ContentView: View {
             Button {
                 if isBotPanelVisible {
                     isBotPanelVisible = false
+                    browser.closeBotTerminal()
                 } else {
                     isBotPanelVisible = true
                     browser.requestLLMSSummary()
@@ -261,13 +262,21 @@ private struct BotTerminalPanel: View {
         ZStack(alignment: .topLeading) {
             Color.black
 
-            ScrollView {
-                Text(terminal.message)
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(red: 0.44, green: 1.0, blue: 0.52))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .padding(16)
+            ScrollViewReader { reader in
+                ScrollView {
+                    Text(terminal.message)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(red: 0.44, green: 1.0, blue: 0.52))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(16)
+                        .id("terminal-end")
+                }
+                .onChange(of: terminal.message) { _ in
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        reader.scrollTo("terminal-end", anchor: .bottom)
+                    }
+                }
             }
         }
         .accessibilityElement(children: .combine)
