@@ -655,15 +655,19 @@ extension BrowserModel {
             color-scheme: dark !important;
           }
           :root[${ROOT_ATTRIBUTE}],
-          :root[${ROOT_ATTRIBUTE}] body,
-          :root[${ROOT_ATTRIBUTE}] body :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path) {
+          :root[${ROOT_ATTRIBUTE}] body {
             background: ${toRGBA(DEFAULT_BACKGROUND)} !important;
+            color: ${toRGBA(DEFAULT_TEXT)} !important;
+          }
+          :root[${ROOT_ATTRIBUTE}]:not([${READY_ATTRIBUTE}]) body,
+          :root[${ROOT_ATTRIBUTE}]:not([${READY_ATTRIBUTE}]) body :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path) {
+            background-color: ${toRGBA(DEFAULT_BACKGROUND)} !important;
             color: ${toRGBA(DEFAULT_TEXT)} !important;
             border-color: ${toRGBA(DEFAULT_BORDER)} !important;
             transition-property: color, background-color, border-color, outline-color, box-shadow !important;
             transition-duration: 0s !important;
           }
-          :root[${ROOT_ATTRIBUTE}] a {
+          :root[${ROOT_ATTRIBUTE}]:not([${READY_ATTRIBUTE}]) a {
             color: ${toRGBA(DEFAULT_TEXT)} !important;
           }
           :root[${ROOT_ATTRIBUTE}] input,
@@ -682,18 +686,18 @@ extension BrowserModel {
       };
 
       const withFallbackDisabled = (action) => {
-        const style = document.getElementById(STYLE_ID);
-        const wasDisabled = style ? style.disabled : false;
+        const root = document.documentElement;
+        const hadReadyAttribute = root ? root.hasAttribute(READY_ATTRIBUTE) : false;
 
-        if (style) {
-          style.disabled = true;
+        if (root) {
+          root.setAttribute(READY_ATTRIBUTE, "true");
         }
 
         try {
           return action();
         } finally {
-          if (style) {
-            style.disabled = wasDisabled;
+          if (root && !hadReadyAttribute) {
+            root.removeAttribute(READY_ATTRIBUTE);
           }
         }
       };
