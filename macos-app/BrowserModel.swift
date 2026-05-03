@@ -80,10 +80,38 @@ final class BrowserModel: NSObject, ObservableObject {
     private static func makeWebView(dataStore: WKWebsiteDataStore, usesDarkMode: Bool) -> BrowserWKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
+        configuration.applicationNameForUserAgent = safariApplicationNameForUserAgent
 
         let webView = BrowserWKWebView(frame: .zero, configuration: configuration)
         webView.configureForcedDarkPageBackground(usesDarkMode)
         return webView
+    }
+
+    private static var safariApplicationNameForUserAgent: String {
+        "Version/\(installedSafariVersion ?? "18.0") Safari/605.1.15"
+    }
+
+    private static var installedSafariVersion: String? {
+        let appURLs = [
+            URL(fileURLWithPath: "/Applications/Safari.app"),
+            URL(fileURLWithPath: "/System/Applications/Safari.app")
+        ]
+
+        for appURL in appURLs {
+            guard let bundle = Bundle(url: appURL),
+                  let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            else {
+                continue
+            }
+
+            let components = version.split(separator: ".").prefix(2)
+            let normalizedVersion = components.joined(separator: ".")
+            if !normalizedVersion.isEmpty {
+                return normalizedVersion
+            }
+        }
+
+        return nil
     }
 
     private func configure(_ webView: BrowserWKWebView) {
