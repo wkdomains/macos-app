@@ -187,24 +187,10 @@ struct ContentView: View {
                 .contentShape(Rectangle())
                 .onTapGesture {
                     focusAddressBar(selectAll: true)
-                }
-                .accessibilityHidden(true)
+            }
+            .accessibilityHidden(true)
 
             addressTextField
-
-            if !addressDraft.isEmpty {
-                Button {
-                    addressDraft = ""
-                    hideSuggestions()
-                    focusAddressBar(selectAll: false, syncToCommittedURL: false)
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear address")
-            }
         }
         .padding(.horizontal, 10)
         .frame(height: 32)
