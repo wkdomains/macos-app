@@ -300,6 +300,25 @@ final class LocalAPIServer {
                 ]
             ],
             [
+                "name": "update_human_request_status",
+                "description": "Send a short progress update for a pending human request without completing it. Use this before longer API calls or investigations so the wkdomains terminal does not look stuck.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "requestId": [
+                            "type": "string",
+                            "description": "The pending request id."
+                        ],
+                        "status": [
+                            "type": "string",
+                            "description": "A short progress update to show in the terminal."
+                        ]
+                    ],
+                    "required": ["requestId", "status"],
+                    "additionalProperties": false
+                ]
+            ],
+            [
                 "name": "get_current_page",
                 "description": "Return the current browser URL and host.",
                 "inputSchema": [
@@ -345,6 +364,21 @@ final class LocalAPIServer {
             }
 
             guard dataReader.replyToBotRequest(id: uuid, summary: summary) else {
+                sendMCPError(id: id, code: -32602, message: "Request not found.", on: connection)
+                return
+            }
+
+            sendMCPToolResult(id: id, value: ["ok": true], on: connection)
+        case "update_human_request_status":
+            guard let requestId = arguments["requestId"] as? String,
+                  let uuid = UUID(uuidString: requestId),
+                  let status = arguments["status"] as? String
+            else {
+                sendMCPError(id: id, code: -32602, message: "Provide requestId and status.", on: connection)
+                return
+            }
+
+            guard dataReader.updateBotRequest(id: uuid, status: status) else {
                 sendMCPError(id: id, code: -32602, message: "Request not found.", on: connection)
                 return
             }
@@ -734,6 +768,10 @@ private final class WebsiteDataReader {
 
     func replyToBotRequest(id: UUID, summary: String) -> Bool {
         browser.replyToBotRequest(id: id, summary: summary)
+    }
+
+    func updateBotRequest(id: UUID, status: String) -> Bool {
+        browser.updateBotRequest(id: id, status: status)
     }
 
     func readCurrentPage() -> [String: Any] {

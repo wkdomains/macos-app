@@ -34,6 +34,11 @@ final class BotTerminalModel: ObservableObject {
     private var loadingLineIndex: Int?
     private var currentPageContext: PageContext?
     private var requestWaiters: [UUID: (_ requests: [BotTerminalRequest], _ timedOut: Bool) -> Void] = [:]
+    private var localAPIBaseURL = "http://localhost:9001"
+
+    func setLocalAPIBaseURL(_ baseURL: String) {
+        localAPIBaseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
 
     func open(currentURL: URL?, pageTitle: String?, viewportMode: BrowserViewportMode, xhrCount: Int) {
         isOpen = true
@@ -86,7 +91,8 @@ final class BotTerminalModel: ObservableObject {
             llmsURL: llmsURL,
             pageTitle: pageTitle,
             viewportMode: viewportMode.rawValue,
-            xhrCount: xhrCount
+            xhrCount: xhrCount,
+            localAPIBaseURL: localAPIBaseURL
         )
         appendLine("wkdomains agent view")
         appendLine("Domain: \(domain)")
@@ -98,29 +104,6 @@ final class BotTerminalModel: ObservableObject {
         appendLine("XHR: \(xhrCount) requests observed")
         appendLine("")
         appendLoadingLine("Loading llms.txt...")
-
-        let request = BotTerminalRequest(
-            id: UUID(),
-            createdAt: Date(),
-            currentURL: currentURL.absoluteString,
-            pageHost: host,
-            domain: domain,
-            llmsURL: llmsURL,
-            userAgent: Self.llmsUserAgent,
-            prompt: """
-            The human opened the wkdomains agent terminal for \(currentURL.absoluteString).
-
-            Use the current page context plus wkdomains local endpoints if available:
-            /api/v1/page, /api/v1/dom, /api/v1/links, /api/v1/console, /api/v1/resources, /api/v1/screenshot, /api/v1/xhr/{host}, and /api/v1/cookies/{host}.
-
-            Fetch \(llmsURL) with user-agent '\(Self.llmsUserAgent)' if useful. Explain what this domain offers to an agent, what machine-readable resources exist, and what actions or APIs seem possible. Reply with a concise terminal-ready summary.
-            """,
-            status: "pending"
-        )
-
-        requests.removeAll { $0.status == "pending" }
-        requests.append(request)
-        notifyRequestWaiters()
 
         discoveryTask = Task { [weak self] in
             guard let self else { return }
@@ -165,7 +148,7 @@ final class BotTerminalModel: ObservableObject {
         } else {
             if let loadingLineIndex,
                terminalLines.indices.contains(loadingLineIndex),
-               terminalLines[loadingLineIndex].hasPrefix("Agent: waiting")
+               terminalLines[loadingLineIndex].hasPrefix("Agent:")
             {
                 updateLoadingLine("Agent: reply received.")
             } else {
@@ -173,6 +156,29 @@ final class BotTerminalModel: ObservableObject {
             }
             appendLine("Agent reply:")
             appendLine(Self.wordLimited(trimmedSummary, limit: 80))
+        }
+
+        return true
+    }
+
+    func updateRequest(id: UUID, status: String) -> Bool {
+        guard requests.contains(where: { $0.id == id }) else {
+            return false
+        }
+
+        let trimmedStatus = status.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedStatus.isEmpty else {
+            return true
+        }
+
+        let line = "Agent: \(Self.wordLimited(trimmedStatus, limit: 32))"
+        if let loadingLineIndex,
+           terminalLines.indices.contains(loadingLineIndex),
+           terminalLines[loadingLineIndex].hasPrefix("Agent:")
+        {
+            updateLoadingLine(line)
+        } else {
+            appendLoadingLine(line)
         }
 
         return true
@@ -217,7 +223,14 @@ final class BotTerminalModel: ObservableObject {
             Observed XHR count: \(context.xhrCount)
 
             Use wkdomains local endpoints if available:
-            /api/v1/page, /api/v1/dom, /api/v1/links, /api/v1/console, /api/v1/resources, /api/v1/screenshot, /api/v1/xhr/{host}, and /api/v1/cookies/{host}.
+            \(context.localAPIBaseURL)/api/v1/page
+            \(context.localAPIBaseURL)/api/v1/dom
+            \(context.localAPIBaseURL)/api/v1/links
+            \(context.localAPIBaseURL)/api/v1/console
+            \(context.localAPIBaseURL)/api/v1/resources
+            \(context.localAPIBaseURL)/api/v1/screenshot
+            \(context.localAPIBaseURL)/api/v1/xhr/\(context.pageHost)
+            \(context.localAPIBaseURL)/api/v1/cookies/\(context.pageHost)
 
             Reply concisely for the terminal.
             """,
@@ -237,11 +250,18 @@ final class BotTerminalModel: ObservableObject {
         for path in Self.resourcePaths {
             guard !Task.isCancelled else { return }
 
-            updateLoadingLine("Loading \(Self.displayName(for: path))...")
+            let displayName = Self.displayName(for: path)
+            updateLoadingLine("Loading \(displayName)...")
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard !Task.isCancelled else { return }
 
+            let progressTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard !Task.isCancelled else { return }
+                self?.updateLoadingLine("Still loading \(displayName)...")
+            }
             let result = await Self.fetchResource(domain: domain, path: path)
+            progressTask.cancel()
             guard !Task.isCancelled else { return }
 
             if result.found {
@@ -475,6 +495,7 @@ private struct PageContext {
     let pageTitle: String?
     let viewportMode: String
     let xhrCount: Int
+    let localAPIBaseURL: String
 }
 
 private struct ResourceDiscoveryResult {

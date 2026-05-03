@@ -210,6 +210,10 @@ final class BrowserModel: NSObject, ObservableObject {
         botTerminal.close()
     }
 
+    func setLocalAPIBaseURL(_ baseURL: String) {
+        botTerminal.setLocalAPIBaseURL(baseURL)
+    }
+
     func pendingBotRequests() -> [BotTerminalRequest] {
         botTerminal.pendingRequests()
     }
@@ -220,6 +224,10 @@ final class BrowserModel: NSObject, ObservableObject {
 
     func replyToBotRequest(id: UUID, summary: String) -> Bool {
         botTerminal.completeRequest(id: id, summary: summary)
+    }
+
+    func updateBotRequest(id: UUID, status: String) -> Bool {
+        botTerminal.updateRequest(id: id, status: status)
     }
 
     func load(_ url: URL) {

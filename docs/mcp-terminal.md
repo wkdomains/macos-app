@@ -9,6 +9,8 @@ questions from the browser terminal.
 - `get_human_requests`: return pending browser-terminal requests.
 - `wait_for_human_request`: long-poll until a browser-terminal request appears
   or the timeout expires.
+- `update_human_request_status`: send a short progress update into the browser
+  terminal without completing the request.
 - `reply_to_human_request`: send a reply back into the wkdomains terminal.
 
 ## Why long-poll?
@@ -55,11 +57,17 @@ Then the human can type into wkdomains instead of returning to the main terminal
 
 ```text
 Human: What API powers this table?
+Agent: checking recent XHR...
+Agent: querying the candidate endpoint...
 Agent: This table appears to come from GET /teams/{slug}/sites...
 ```
 
 The main coding session stays free for normal work while the watcher session
 acts like the agent attached to the browser.
+
+For longer tasks, the watcher should call `update_human_request_status` before
+network calls or multi-step investigation. That keeps the browser terminal
+moving while the final answer is still being prepared.
 
 ## What the terminal sends
 
