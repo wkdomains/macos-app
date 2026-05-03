@@ -65,6 +65,7 @@ struct ContentView: View {
         .onAppear {
             isAddressFocused = true
             installAddressKeyMonitor()
+            selectAddressText()
         }
         .onDisappear {
             suggestionTask?.cancel()
@@ -78,6 +79,7 @@ struct ContentView: View {
         }
         .onChange(of: isAddressFocused) { _, isFocused in
             if isFocused {
+                selectAddressText()
                 scheduleSuggestions(for: browser.addressText)
             } else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
@@ -446,6 +448,18 @@ struct ContentView: View {
             default:
                 return event
             }
+        }
+    }
+
+    private func selectAddressText() {
+        DispatchQueue.main.async {
+            guard isAddressFocused,
+                  let fieldEditor = NSApp.keyWindow?.firstResponder as? NSTextView
+            else {
+                return
+            }
+
+            fieldEditor.selectAll(nil)
         }
     }
 
