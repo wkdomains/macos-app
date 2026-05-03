@@ -120,8 +120,6 @@ struct ContentView: View {
 
             addressBar
 
-            identityControls
-
             viewportControls
 
             botControls

@@ -82,51 +82,6 @@ extension ContentView {
         }
     }
 
-    var identityControls: some View {
-        Menu {
-            Button {
-                browser.createFreshSiteIdentityForCurrentSite()
-            } label: {
-                Label("Open Fresh Identity", systemImage: "person.crop.circle.badge.plus")
-            }
-            .disabled(browser.webView.url == nil)
-
-            Divider()
-
-            ForEach(browser.siteIdentityMenuItems) { identity in
-                Button {
-                    browser.switchToSiteIdentity(identity.id)
-                } label: {
-                    Label(identity.title, systemImage: identity.isCurrent ? "checkmark.circle.fill" : "circle")
-                }
-                .disabled(identity.isCurrent || browser.webView.url == nil)
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "person.crop.circle")
-                    .font(.system(size: 12, weight: .semibold))
-
-                Text(browser.currentIdentityName)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 9)
-            .frame(height: 28)
-            .frame(maxWidth: 140)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.72))
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize(horizontal: true, vertical: false)
-        .accessibilityLabel("Site identity")
-        .help("Site identity")
-    }
-
     var botControls: some View {
         HStack(spacing: 1) {
             Button {
