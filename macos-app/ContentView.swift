@@ -196,11 +196,6 @@ struct ContentView: View {
 
                     Text(addressCompletion.suffix)
                         .foregroundStyle(.primary)
-                        .padding(.horizontal, 2)
-                        .background(
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(Color.accentColor.opacity(0.18))
-                        )
                 }
                 .font(.system(size: 14))
                 .lineLimit(1)
