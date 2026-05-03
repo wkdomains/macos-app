@@ -202,7 +202,7 @@ final class BrowserModel: NSObject, ObservableObject {
         }
 
         activeIdentityID = identity.id
-        replaceWebView(using: identity.id, loading: currentURL)
+        replaceWebView(using: identity.id, loading: Self.siteBaseURL(for: currentURL))
         refreshSiteIdentityState()
     }
 
@@ -221,7 +221,7 @@ final class BrowserModel: NSObject, ObservableObject {
 
         settingsStore.setActiveIdentity(nextIdentityID, for: currentURL)
         activeIdentityID = nextIdentityID
-        replaceWebView(using: nextIdentityID, loading: currentURL)
+        replaceWebView(using: nextIdentityID, loading: Self.siteBaseURL(for: currentURL))
         refreshSiteIdentityState()
     }
 
@@ -494,6 +494,21 @@ final class BrowserModel: NSObject, ObservableObject {
 
     private static func normalizedHost(_ host: String) -> String {
         host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    }
+
+    private static func siteBaseURL(for url: URL) -> URL {
+        guard let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              let host = url.host?.lowercased()
+        else {
+            return url
+        }
+
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = host
+
+        return components.url ?? url
     }
 
     private static func host(_ host: String, matches requestedHost: String) -> Bool {
