@@ -272,7 +272,7 @@ private struct BotTerminalPanel: View {
                         .padding(16)
                         .id("terminal-end")
                 }
-                .onChange(of: terminal.message) { _ in
+                .onChange(of: terminal.message) { _, _ in
                     withAnimation(.easeOut(duration: 0.12)) {
                         reader.scrollTo("terminal-end", anchor: .bottom)
                     }
