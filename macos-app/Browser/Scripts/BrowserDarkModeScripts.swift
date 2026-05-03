@@ -91,6 +91,11 @@ extension BrowserModel {
       const ROOT_ATTRIBUTE = "data-wkdomains-forced-dark";
       const READY_ATTRIBUTE = "data-wkdomains-forced-dark-ready";
       const SAMPLING_ATTRIBUTE = "data-wkdomains-forced-dark-sampling";
+      const COLOR_ATTRIBUTE = "data-wkdomains-forced-dark-color";
+      const BACKGROUND_ATTRIBUTE = "data-wkdomains-forced-dark-bg";
+      const BACKGROUND_IMAGE_ATTRIBUTE = "data-wkdomains-forced-dark-bg-image";
+      const FILL_ATTRIBUTE = "data-wkdomains-forced-dark-fill";
+      const STROKE_ATTRIBUTE = "data-wkdomains-forced-dark-stroke";
       const DEFAULT_BACKGROUND = { r: 24, g: 26, b: 27, a: 1 };
       const DEFAULT_TEXT = { r: 232, g: 230, b: 227, a: 1 };
       const MUTED_TEXT = { r: 157, g: 148, b: 136, a: 1 };
@@ -104,9 +109,49 @@ extension BrowserModel {
         "ELLIPSE", "USE", "G", "DEFS", "CLIPPATH", "MASK", "FILTER",
         "SYMBOL", "STOP", "LINEARGRADIENT", "RADIALGRADIENT"
       ]);
-      const BORDER_PROPERTIES = [
-        "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor",
-        "outlineColor", "columnRuleColor", "textDecorationColor"
+      const BORDER_OVERRIDES = [
+        {
+          js: "borderTopColor",
+          css: "border-top-color",
+          attr: "data-wkdomains-forced-dark-border-top",
+          prop: "--wkdomains-forced-dark-border-top"
+        },
+        {
+          js: "borderRightColor",
+          css: "border-right-color",
+          attr: "data-wkdomains-forced-dark-border-right",
+          prop: "--wkdomains-forced-dark-border-right"
+        },
+        {
+          js: "borderBottomColor",
+          css: "border-bottom-color",
+          attr: "data-wkdomains-forced-dark-border-bottom",
+          prop: "--wkdomains-forced-dark-border-bottom"
+        },
+        {
+          js: "borderLeftColor",
+          css: "border-left-color",
+          attr: "data-wkdomains-forced-dark-border-left",
+          prop: "--wkdomains-forced-dark-border-left"
+        },
+        {
+          js: "outlineColor",
+          css: "outline-color",
+          attr: "data-wkdomains-forced-dark-outline",
+          prop: "--wkdomains-forced-dark-outline"
+        },
+        {
+          js: "columnRuleColor",
+          css: "column-rule-color",
+          attr: "data-wkdomains-forced-dark-column-rule",
+          prop: "--wkdomains-forced-dark-column-rule"
+        },
+        {
+          js: "textDecorationColor",
+          css: "text-decoration-color",
+          attr: "data-wkdomains-forced-dark-text-decoration",
+          prop: "--wkdomains-forced-dark-text-decoration"
+        }
       ];
 
       const currentHost = String(location.hostname || "").toLowerCase().replace(/^\\.+|\\.+$/g, "");
@@ -179,6 +224,17 @@ extension BrowserModel {
         return a >= 0.995
           ? `rgb(${r}, ${g}, ${b})`
           : `rgba(${r}, ${g}, ${b}, ${Math.round(a * 1000) / 1000})`;
+      };
+
+      const setOverride = (element, attribute, property, value) => {
+        if (!value) {
+          element.removeAttribute(attribute);
+          element.style.removeProperty(property);
+          return;
+        }
+
+        element.style.setProperty(property, value);
+        element.setAttribute(attribute, "");
       };
 
       const relativeLuminance = (color) => {
@@ -259,6 +315,17 @@ extension BrowserModel {
           return (visibleWidth * visibleHeight) / Math.max(1, innerWidth * innerHeight);
         } catch (_) {
           return 0;
+        }
+      };
+
+      const visibleRectFor = (element) => {
+        try {
+          const rect = element.getBoundingClientRect();
+          const width = clamp(Math.min(rect.right, innerWidth) - Math.max(rect.left, 0), 0, innerWidth);
+          const height = clamp(Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0), 0, innerHeight);
+          return { width, height, area: width * height };
+        } catch (_) {
+          return { width: 0, height: 0, area: 0 };
         }
       };
 
@@ -369,6 +436,91 @@ extension BrowserModel {
         return surface;
       };
 
+      const documentGeometryFor = (element) => {
+        try {
+          const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+          const pageWidth = Math.max(
+            scrollingElement ? scrollingElement.scrollWidth || 0 : 0,
+            document.documentElement ? document.documentElement.scrollWidth || 0 : 0,
+            document.body ? document.body.scrollWidth || 0 : 0,
+            innerWidth
+          );
+          const pageHeight = Math.max(
+            scrollingElement ? scrollingElement.scrollHeight || 0 : 0,
+            document.documentElement ? document.documentElement.scrollHeight || 0 : 0,
+            document.body ? document.body.scrollHeight || 0 : 0,
+            innerHeight
+          );
+          const rect = element.getBoundingClientRect();
+          const left = clamp(rect.left + scrollX, 0, pageWidth);
+          const right = clamp(rect.right + scrollX, 0, pageWidth);
+          const top = clamp(rect.top + scrollY, 0, pageHeight);
+          const bottom = clamp(rect.bottom + scrollY, 0, pageHeight);
+          const width = Math.max(0, right - left);
+          const height = Math.max(0, bottom - top);
+          const area = width * height;
+          const viewportArea = Math.max(1, innerWidth * innerHeight);
+          const documentArea = Math.max(1, pageWidth * pageHeight);
+
+          return {
+            area,
+            height,
+            viewportAreaShare: area / viewportArea,
+            documentAreaShare: area / documentArea,
+            widthShare: width / Math.max(1, pageWidth)
+          };
+        } catch (_) {
+          return null;
+        }
+      };
+
+      const hasLargeLightDocumentSurface = () => {
+        if (!document.documentElement || !document.body || innerWidth <= 0 || innerHeight <= 0) {
+          return false;
+        }
+
+        const candidates = new Set([
+          document.documentElement,
+          document.body,
+          ...document.querySelectorAll([
+            "main",
+            "section",
+            "article",
+            "aside",
+            "header",
+            "footer",
+            "[class*='bg']",
+            "[class*='section']",
+            "[class*='component']",
+            "[class*='container']",
+            "[class*='wrapper']"
+          ].join(","))
+        ]);
+
+        for (const element of candidates) {
+          if (!element || SKIP_TAGS.has(element.tagName.toUpperCase())) continue;
+
+          const style = getComputedStyle(element);
+          if (style.display === "none" || style.visibility === "hidden" || Number.parseFloat(style.opacity || "1") <= 0.02) {
+            continue;
+          }
+
+          const geometry = documentGeometryFor(element);
+          if (!geometry || geometry.area <= 0) continue;
+
+          const largeSurface = geometry.viewportAreaShare > 0.26
+            || geometry.documentAreaShare > 0.045
+            || (geometry.widthShare > 0.72 && geometry.height > 180);
+          if (!largeSurface) continue;
+
+          if (relativeLuminance(surfaceColorFor(element)) > 0.68) {
+            return true;
+          }
+        }
+
+        return false;
+      };
+
       const isPageAlreadyDark = () => {
         if (!document.documentElement || !document.body || innerWidth <= 0 || innerHeight <= 0) {
           return false;
@@ -400,7 +552,7 @@ extension BrowserModel {
         if (total === 0) return false;
         const average = luminanceSum / total;
         const darkShare = darkCount / total;
-        return darkShare >= 0.65 && average < 0.42;
+        return darkShare >= 0.65 && average < 0.42 && !hasLargeLightDocumentSurface();
       };
 
       const ensureBaseStyle = () => {
@@ -420,18 +572,27 @@ extension BrowserModel {
             background: ${toRGBA(DEFAULT_BACKGROUND)} !important;
             color: ${toRGBA(DEFAULT_TEXT)} !important;
           }
-          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body,
-          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path) {
-            background-color: ${toRGBA(DEFAULT_BACKGROUND)} !important;
-            color: ${toRGBA(DEFAULT_TEXT)} !important;
-            border-color: ${toRGBA(DEFAULT_BORDER)} !important;
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body * {
             transition-property: color, background-color, border-color, outline-color, box-shadow !important;
             transition-duration: 0s !important;
           }
-          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) a {
-            color: ${toRGBA(DEFAULT_TEXT)} !important;
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${COLOR_ATTRIBUTE}] {
+            color: var(--wkdomains-forced-dark-color) !important;
           }
-          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [bgcolor] :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path) {
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${BACKGROUND_ATTRIBUTE}] {
+            background-color: var(--wkdomains-forced-dark-bg) !important;
+          }
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${BACKGROUND_IMAGE_ATTRIBUTE}] {
+            background-image: var(--wkdomains-forced-dark-bg-image) !important;
+          }
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${FILL_ATTRIBUTE}] {
+            fill: var(--wkdomains-forced-dark-fill) !important;
+          }
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${STROKE_ATTRIBUTE}] {
+            stroke: var(--wkdomains-forced-dark-stroke) !important;
+          }
+          ${BORDER_OVERRIDES.map((override) => `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${override.attr}] { ${override.css}: var(${override.prop}) !important; }`).join("\\n          ")}
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [bgcolor] :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path):not([${BACKGROUND_ATTRIBUTE}]) {
             background-color: transparent !important;
           }
           :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input,
@@ -523,6 +684,46 @@ extension BrowserModel {
         return style.display === "none";
       };
 
+      const isVisibleMedia = (element) => {
+        if (!element) return false;
+        const style = getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden" || Number.parseFloat(style.opacity || "1") <= 0.02) {
+          return false;
+        }
+
+        const rect = visibleRectFor(element);
+        return rect.width >= 24 && rect.height >= 24 && rect.area > 0;
+      };
+
+      const hasMediaBackdrop = (element, style) => {
+        if (!element || !style) return false;
+
+        const backgroundImage = style.backgroundImage || "";
+        if (backgroundImage && backgroundImage !== "none" && !backgroundImage.includes("gradient")) {
+          return true;
+        }
+
+        if (element.tagName && ["A", "BUTTON", "INPUT", "TEXTAREA", "SELECT", "OPTION"].includes(element.tagName.toUpperCase())) {
+          return false;
+        }
+
+        const elementRect = visibleRectFor(element);
+        if (elementRect.area <= 0) return false;
+
+        for (const media of element.querySelectorAll("video,img,picture,canvas,iframe,object,embed")) {
+          if (!isVisibleMedia(media)) continue;
+
+          const mediaRect = visibleRectFor(media);
+          const elementCoverage = mediaRect.area / Math.max(1, elementRect.area);
+          const viewportCoverage = mediaRect.area / Math.max(1, innerWidth * innerHeight);
+          if (elementCoverage > 0.32 || viewportCoverage > 0.18) {
+            return true;
+          }
+        }
+
+        return false;
+      };
+
       const applyElement = (element) => {
         if (shouldSkipElement(element)) return;
 
@@ -530,40 +731,51 @@ extension BrowserModel {
         const tag = element.tagName.toUpperCase();
 
         if (tag === "HTML" || tag === "BODY") {
-          element.style.setProperty("background-color", toRGBA(DEFAULT_BACKGROUND), "important");
-          element.style.setProperty("color", toRGBA(DEFAULT_TEXT), "important");
+          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", toRGBA(DEFAULT_BACKGROUND));
+          setOverride(element, COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", toRGBA(DEFAULT_TEXT));
           return;
         }
 
         if (!SVG_TAGS.has(tag)) {
           const color = transformForeground(parseColor(style.color), element);
-          if (color) element.style.setProperty("color", color, "important");
+          setOverride(element, COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", color);
         }
 
         const background = parseColor(style.backgroundColor);
         const backgroundLuminance = background ? relativeLuminance(background) : 0;
-          const transformedBackground = transformBackground(background, element);
-        if (transformedBackground && background.a > 0.08) {
-          element.style.setProperty("background-color", transformedBackground, "important");
+        const mediaBackdrop = hasMediaBackdrop(element, style);
+        const transformedBackground = mediaBackdrop ? null : transformBackground(background, element);
+        if (mediaBackdrop) {
+          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", "transparent");
+        } else if (transformedBackground && background.a > 0.08) {
+          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", transformedBackground);
+        } else {
+          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", null);
         }
 
-        if (style.backgroundImage && style.backgroundImage.includes("gradient") && backgroundLuminance > 0.46) {
-          element.style.setProperty("background-image", "none", "important");
+        if (!mediaBackdrop && style.backgroundImage && style.backgroundImage.includes("gradient") && backgroundLuminance > 0.46) {
+          setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", "none");
+        } else {
+          setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", null);
         }
 
-        for (const property of BORDER_PROPERTIES) {
-          const border = transformBorder(parseColor(style[property]));
-          if (border) element.style.setProperty(property, border, "important");
+        for (const override of BORDER_OVERRIDES) {
+          const border = transformBorder(parseColor(style[override.js]));
+          setOverride(element, override.attr, override.prop, border);
         }
 
         if (SVG_TAGS.has(tag)) {
           const fill = parseColor(style.fill);
           const stroke = parseColor(style.stroke);
           if (fill && relativeLuminance(fill) < 0.52) {
-            element.style.setProperty("fill", transformForeground(fill, element), "important");
+            setOverride(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", transformForeground(fill, element));
+          } else {
+            setOverride(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", null);
           }
           if (stroke && relativeLuminance(stroke) < 0.52) {
-            element.style.setProperty("stroke", transformForeground(stroke, element), "important");
+            setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", transformForeground(stroke, element));
+          } else {
+            setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", null);
           }
         }
       };
