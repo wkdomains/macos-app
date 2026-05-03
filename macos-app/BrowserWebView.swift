@@ -40,6 +40,7 @@ final class BrowserWKWebView: WKWebView {
     var viewportSizeDidChange: (() -> Void)?
     private var lastReportedViewportSize = NSSize.zero
     private var isHandlingDirectUserFocus = false
+    private var contextMenuLinkURL: String?
 
     override var acceptsFirstResponder: Bool {
         !blocksProgrammaticFocus || isHandlingDirectUserFocus
@@ -99,8 +100,13 @@ final class BrowserWKWebView: WKWebView {
     }
 
     private func showBrowserContextMenu(with event: NSEvent) {
-        NSMenu.popUpContextMenu(browserContextMenu(), with: event, for: self)
-        window?.invalidateCursorRects(for: self)
+        resolveLinkURL(at: event) { [weak self, event] linkURL in
+            guard let self else { return }
+
+            contextMenuLinkURL = linkURL
+            NSMenu.popUpContextMenu(browserContextMenu(), with: event, for: self)
+            window?.invalidateCursorRects(for: self)
+        }
     }
 
     private func browserContextMenu() -> NSMenu {
@@ -124,7 +130,59 @@ final class BrowserWKWebView: WKWebView {
             menu.addItem(clearCookiesItem)
         }
 
+        let copyLinkItem = NSMenuItem(
+            title: "Copy Link",
+            action: #selector(copyLinkFromContextMenu(_:)),
+            keyEquivalent: ""
+        )
+        copyLinkItem.target = self
+        copyLinkItem.isEnabled = contextMenuLinkURL != nil
+        copyLinkItem.representedObject = contextMenuLinkURL
+        menu.addItem(copyLinkItem)
+
         return menu
+    }
+
+    private func resolveLinkURL(at event: NSEvent, completion: @escaping (String?) -> Void) {
+        let point = convert(event.locationInWindow, from: nil)
+        let x = max(0, min(bounds.width, point.x))
+        let y = max(0, min(bounds.height, isFlipped ? point.y : bounds.height - point.y))
+        let alternateY = max(0, min(bounds.height, isFlipped ? bounds.height - point.y : point.y))
+        let script = """
+        (() => {
+          const points = [
+            [\(Double(x)), \(Double(y))],
+            [\(Double(x)), \(Double(alternateY))]
+          ];
+
+          const linkAt = (x, y) => {
+            let element = document.elementFromPoint(x, y);
+
+            while (element && element.shadowRoot) {
+              const nested = element.shadowRoot.elementFromPoint(x, y);
+              if (!nested || nested === element) break;
+              element = nested;
+            }
+
+            const anchor = element && element.closest ? element.closest('a[href]') : null;
+            return anchor ? (anchor.href || anchor.getAttribute('href') || null) : null;
+          };
+
+          for (const [x, y] of points) {
+            const href = linkAt(x, y);
+            if (href) return href;
+          }
+
+          return null;
+        })()
+        """
+
+        evaluateJavaScript(script) { value, _ in
+            let linkURL = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            DispatchQueue.main.async {
+                completion(linkURL?.isEmpty == false ? linkURL : nil)
+            }
+        }
     }
 
     @objc private func reloadFromContextMenu() {
@@ -133,6 +191,15 @@ final class BrowserWKWebView: WKWebView {
 
     @objc private func clearCookiesFromContextMenu() {
         browserContextMenuDelegate?.clearCookiesForCurrentDomain()
+    }
+
+    @objc private func copyLinkFromContextMenu(_ sender: NSMenuItem) {
+        guard let linkURL = sender.representedObject as? String else { return }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(linkURL, forType: .string)
+        pasteboard.setString(linkURL, forType: .URL)
     }
 
     private func reportViewportSizeIfNeeded(_ size: NSSize) {
