@@ -32,6 +32,7 @@ final class BrowserModel: NSObject, ObservableObject {
     let botTerminal = BotTerminalModel()
 
     private var observations: [NSKeyValueObservation] = []
+    private let cookiePersistence: BrowserCookiePersistence
     private let settingsStore: AppSettingsStore
     private var activeIdentityID: UUID?
     private var activePageHost: String?
@@ -46,6 +47,8 @@ final class BrowserModel: NSObject, ObservableObject {
     private var screenshotRenderTask: Task<Void, Never>?
     private var screenshotWaiters: [UUID: (Result<Data, Error>) -> Void] = [:]
     private var navigationFallbacks: [URL] = []
+    private var isCookieStoreReady = false
+    private var pendingLoadRequest: (url: URL, fallbackURLs: [URL])?
 
     init(
         dataStore: WKWebsiteDataStore? = nil,
@@ -53,6 +56,7 @@ final class BrowserModel: NSObject, ObservableObject {
         settingsStore: AppSettingsStore = .shared
     ) {
         self.settingsStore = settingsStore
+        cookiePersistence = BrowserCookiePersistence(directoryURL: settingsStore.directoryURL)
         historyURLs = settingsStore.settings.historyURLs
         bookmarkURLs = settingsStore.bookmarkURLs
         self.activeIdentityID = activeIdentityID ?? settingsStore.activeIdentityID(for: settingsStore.startupURL)
@@ -67,6 +71,7 @@ final class BrowserModel: NSObject, ObservableObject {
 
         configure(webView)
         refreshSiteIdentityState()
+        attachCookiePersistence(to: webView, identityID: self.activeIdentityID)
     }
 
     private static func websiteDataStore(for identityID: UUID?) -> WKWebsiteDataStore {
@@ -211,6 +216,10 @@ final class BrowserModel: NSObject, ObservableObject {
     func stopLoading() {
         webView.stopLoading()
         isLoading = false
+    }
+
+    func saveCookiesNow() {
+        cookiePersistence.saveNow()
     }
 
     func clearCookiesForCurrentDomain() {
@@ -402,6 +411,17 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     private func load(_ url: URL, fallbackURLs: [URL]) {
+        prepareForLoad(url, fallbackURLs: fallbackURLs)
+
+        guard isCookieStoreReady else {
+            pendingLoadRequest = (url, fallbackURLs)
+            return
+        }
+
+        webView.load(URLRequest(url: url))
+    }
+
+    private func prepareForLoad(_ url: URL, fallbackURLs: [URL]) {
         hasAttemptedNavigation = true
         errorMessage = nil
         displayAddressText = url.absoluteString
@@ -409,8 +429,6 @@ final class BrowserModel: NSObject, ObservableObject {
         navigationFallbacks = fallbackURLs
         resetXHRTracking(for: url)
         refreshDarkModeState(for: url)
-
-        webView.load(URLRequest(url: url))
     }
 
     private func replaceWebView(using identityID: UUID?, loading url: URL) {
@@ -418,6 +436,8 @@ final class BrowserModel: NSObject, ObservableObject {
         oldWebView.stopLoading()
         detach(oldWebView)
         observations.removeAll()
+        pendingLoadRequest = nil
+        isCookieStoreReady = false
 
         resetScreenshotForNavigation()
         resetXHRTracking(for: url)
@@ -438,7 +458,44 @@ final class BrowserModel: NSObject, ObservableObject {
         configure(nextWebView)
         webView = nextWebView
         webViewID = UUID()
-        nextWebView.load(URLRequest(url: url))
+        attachCookiePersistence(to: nextWebView, identityID: identityID) { [weak self, weak nextWebView] in
+            guard let self,
+                  let nextWebView,
+                  self.webView === nextWebView
+            else {
+                return
+            }
+
+            nextWebView.load(URLRequest(url: url))
+        }
+    }
+
+    private func attachCookiePersistence(
+        to webView: BrowserWKWebView,
+        identityID: UUID?,
+        afterRestore: (() -> Void)? = nil
+    ) {
+        cookiePersistence.attach(to: webView.configuration.websiteDataStore, identityID: identityID) { [weak self, weak webView] in
+            DispatchQueue.main.async {
+                guard let self,
+                      let webView,
+                      self.webView === webView
+                else {
+                    return
+                }
+
+                self.isCookieStoreReady = true
+
+                if let afterRestore {
+                    afterRestore()
+                    return
+                }
+
+                guard let pendingLoadRequest = self.pendingLoadRequest else { return }
+                self.pendingLoadRequest = nil
+                self.load(pendingLoadRequest.url, fallbackURLs: pendingLoadRequest.fallbackURLs)
+            }
+        }
     }
 
     private func detach(_ webView: BrowserWKWebView) {
