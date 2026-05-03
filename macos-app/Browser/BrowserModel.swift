@@ -361,6 +361,72 @@ final class BrowserModel: NSObject, ObservableObject {
         }
     }
 
+    func sortedXHRRequests(for host: String) -> [XHRRequestRecord] {
+        xhrRequests(for: host).sorted { left, right in
+            let leftBytes = left.responseBytes ?? -1
+            let rightBytes = right.responseBytes ?? -1
+
+            if leftBytes == rightBytes {
+                return left.startedAt < right.startedAt
+            }
+
+            return leftBytes > rightBytes
+        }
+    }
+
+    var xhrContextMenuItems: [XHRContextMenuItem] {
+        guard let host = webView.url?.host else {
+            return []
+        }
+
+        return sortedXHRRequests(for: host)
+            .prefix(9)
+            .enumerated()
+            .map { offset, record in
+                XHRContextMenuItem(index: offset, title: Self.xhrMenuTitle(for: record, at: offset))
+            }
+    }
+
+    func openXHRFromContextMenu(at index: Int) {
+        guard let host = webView.url?.host else {
+            showAlert(message: "No Page Loaded", detail: InspectionError.noPageLoaded.localizedDescription)
+            return
+        }
+
+        let requests = sortedXHRRequests(for: host)
+        guard requests.indices.contains(index) else {
+            showAlert(message: "XHR Not Available", detail: InspectionError.xhrIndexOutOfRange(index).localizedDescription)
+            return
+        }
+
+        let record = requests[index]
+        guard let url = URL(string: record.url) else {
+            showAlert(message: "XHR Not Available", detail: InspectionError.invalidXHRURL.localizedDescription)
+            return
+        }
+
+        let xhr = XHRRequestResponse(record: record)
+        let dataStore = webView.configuration.websiteDataStore
+        dataStore.httpCookieStore.getAllCookies { [weak self] cookies in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+
+                let cookieHeader = WebsiteDataReader.cookieHeader(for: url, from: cookies)
+
+                do {
+                    let response = try await WebsiteDataReader.fetchXHRJSON(
+                        xhr: xhr,
+                        url: url,
+                        cookieHeader: cookieHeader
+                    )
+                    self.displayXHRJSON(response, from: url)
+                } catch {
+                    self.showAlert(message: "Could Not Open XHR", detail: error.localizedDescription)
+                }
+            }
+        }
+    }
+
     func consoleMessages() -> [ConsoleMessageRecord] {
         consoleRecords
     }
@@ -680,7 +746,7 @@ final class BrowserModel: NSObject, ObservableObject {
     private func fillSavedLoginForCurrentSite(reportsMissingLogin: Bool) {
         guard let entry = loginStore.login(for: webView.url, identityID: activeIdentityID) else {
             if reportsMissingLogin {
-                showLoginAlert(message: "No Saved Login", detail: "There is no saved login for this site yet.")
+                showAlert(message: "No Saved Login", detail: "There is no saved login for this site yet.")
             }
             return
         }
@@ -689,7 +755,7 @@ final class BrowserModel: NSObject, ObservableObject {
               let json = String(data: data, encoding: .utf8)
         else {
             if reportsMissingLogin {
-                showLoginAlert(message: "Could Not Fill Login", detail: "The saved login could not be encoded.")
+                showAlert(message: "Could Not Fill Login", detail: "The saved login could not be encoded.")
             }
             return
         }
@@ -700,7 +766,7 @@ final class BrowserModel: NSObject, ObservableObject {
                 if reportsMissingLogin,
                    let error
                 {
-                    self?.showLoginAlert(message: "Could Not Fill Login", detail: error.localizedDescription)
+                    self?.showAlert(message: "Could Not Fill Login", detail: error.localizedDescription)
                     return
                 }
 
@@ -708,7 +774,7 @@ final class BrowserModel: NSObject, ObservableObject {
                    let filled = Self.intValue(from: value),
                    filled == 0
                 {
-                    self?.showLoginAlert(
+                    self?.showAlert(
                         message: "Could Not Find Login Fields",
                         detail: "The saved fields were not found on this page."
                     )
@@ -717,7 +783,21 @@ final class BrowserModel: NSObject, ObservableObject {
         }
     }
 
-    private func showLoginAlert(message: String, detail: String) {
+    private func displayXHRJSON(_ response: XHRReplayResponse, from url: URL) {
+        let mimeType = response.contentType?
+            .split(separator: ";", maxSplits: 1)
+            .first
+            .map(String.init) ?? "application/json"
+
+        webView.load(
+            response.body,
+            mimeType: mimeType,
+            characterEncodingName: "utf-8",
+            baseURL: url
+        )
+    }
+
+    private func showAlert(message: String, detail: String) {
         guard let window = webView.window else { return }
 
         let alert = NSAlert()
@@ -747,6 +827,47 @@ final class BrowserModel: NSObject, ObservableObject {
 
     private func refreshDarkModeState(for url: URL?) {
         webView.configureForcedDarkPageBackground(settingsStore.usesDarkMode(for: url))
+    }
+
+    private static let xhrMenuByteFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useBytes, .useKB, .useMB]
+        return formatter
+    }()
+
+    private static func xhrMenuTitle(for record: XHRRequestRecord, at index: Int) -> String {
+        var title = "\(index + 1) \(record.method) \(xhrMenuURLTitle(record.url))"
+        var details: [String] = []
+
+        if let status = record.status {
+            details.append(String(status))
+        }
+
+        if let responseBytes = record.responseBytes {
+            details.append(xhrMenuByteFormatter.string(fromByteCount: Int64(responseBytes)))
+        }
+
+        if !details.isEmpty {
+            title += " [\(details.joined(separator: ", "))]"
+        }
+
+        guard title.count > 90 else { return title }
+        return "\(title.prefix(87))..."
+    }
+
+    private static func xhrMenuURLTitle(_ rawURL: String) -> String {
+        guard let url = URL(string: rawURL),
+              let host = url.host
+        else {
+            return rawURL
+        }
+
+        let displayHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        let path = url.path.isEmpty ? "/" : url.path
+        let query = url.query.map { "?\($0)" } ?? ""
+
+        return "\(displayHost)\(path)\(query)"
     }
 
     private static func normalizedHost(_ host: String) -> String {

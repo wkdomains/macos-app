@@ -21,7 +21,7 @@ final class WebsiteDataReader {
                 guard let self else { return }
 
                 let matchingCookies = cookies
-                    .filter { self.cookie($0, matches: domain.host) }
+                    .filter { Self.cookie($0, matches: domain.host) }
                     .map(CookieResponse.init(cookie:))
                     .sorted { left, right in
                         if left.domain == right.domain {
@@ -62,18 +62,8 @@ final class WebsiteDataReader {
     }
 
     func readXHRRequests(for domain: RequestedDomain) -> XHRRequestsResponse {
-        let requests = browser.xhrRequests(for: domain.host)
+        let requests = browser.sortedXHRRequests(for: domain.host)
             .map(XHRRequestResponse.init(record:))
-            .sorted { left, right in
-                let leftBytes = left.responseBytes ?? -1
-                let rightBytes = right.responseBytes ?? -1
-
-                if leftBytes == rightBytes {
-                    return left.startedAt < right.startedAt
-                }
-
-                return leftBytes > rightBytes
-            }
 
         return XHRRequestsResponse(
             hostname: domain.host,
@@ -109,11 +99,9 @@ final class WebsiteDataReader {
             }
 
             let dataStore = browser.webView.configuration.websiteDataStore
-            dataStore.httpCookieStore.getAllCookies { [weak self] cookies in
+            dataStore.httpCookieStore.getAllCookies { cookies in
                 Task { @MainActor in
-                    guard let self else { return }
-
-                    let cookieHeader = self.cookieHeader(for: url, from: cookies)
+                    let cookieHeader = Self.cookieHeader(for: url, from: cookies)
 
                     do {
                         let response = try await Self.fetchXHRJSON(
@@ -267,7 +255,7 @@ final class WebsiteDataReader {
         }
     }
 
-    private func cookie(_ cookie: HTTPCookie, matches host: String) -> Bool {
+    private static func cookie(_ cookie: HTTPCookie, matches host: String) -> Bool {
         let cookieDomain = cookie.domain
             .lowercased()
             .trimmingCharacters(in: CharacterSet(charactersIn: "."))
@@ -277,9 +265,9 @@ final class WebsiteDataReader {
             || host.hasSuffix(".\(cookieDomain)")
     }
 
-    private func cookieHeader(for url: URL, from cookies: [HTTPCookie]) -> String? {
+    static func cookieHeader(for url: URL, from cookies: [HTTPCookie]) -> String? {
         let matchingCookies = cookies.filter { cookie in
-            self.cookie(cookie, shouldBeSentTo: url)
+            Self.cookie(cookie, shouldBeSentTo: url)
         }
 
         guard !matchingCookies.isEmpty else {
@@ -298,7 +286,7 @@ final class WebsiteDataReader {
             .joined(separator: "; ")
     }
 
-    private func cookie(_ cookie: HTTPCookie, shouldBeSentTo url: URL) -> Bool {
+    private static func cookie(_ cookie: HTTPCookie, shouldBeSentTo url: URL) -> Bool {
         guard let host = url.host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) else {
             return false
         }
@@ -316,7 +304,7 @@ final class WebsiteDataReader {
             return false
         }
 
-        return self.cookie(cookie, matches: host)
+        return Self.cookie(cookie, matches: host)
     }
 
     private func readActiveSessionStorage(
@@ -466,7 +454,7 @@ final class WebsiteDataReader {
         }
     }
 
-    private static func fetchXHRJSON(
+    static func fetchXHRJSON(
         xhr: XHRRequestResponse,
         url: URL,
         cookieHeader: String?

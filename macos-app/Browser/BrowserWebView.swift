@@ -34,6 +34,11 @@ struct LoginFieldTarget: Codable, Equatable {
     }
 }
 
+struct XHRContextMenuItem: Equatable {
+    let index: Int
+    let title: String
+}
+
 struct BrowserWebView: NSViewRepresentable {
     let webView: BrowserWKWebView
     let blocksProgrammaticFocus: Bool
@@ -56,7 +61,9 @@ protocol BrowserContextMenuDelegate: AnyObject {
     func fillSavedLoginForCurrentSite()
     func toggleDarkThemeForCurrentSite()
     func toggleBookmarkForCurrentPage()
+    func openXHRFromContextMenu(at index: Int)
     var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] { get }
+    var xhrContextMenuItems: [XHRContextMenuItem] { get }
     var currentIdentityName: String { get }
     var canFillSavedLoginForCurrentSite: Bool { get }
     var canToggleDarkThemeForCurrentSite: Bool { get }
@@ -310,7 +317,38 @@ final class BrowserWKWebView: WKWebView {
         toggleBookmarkItem.state = browserContextMenuDelegate?.currentPageIsBookmarked == true ? .on : .off
         menu.addItem(toggleBookmarkItem)
 
+        menu.addItem(NSMenuItem.separator())
+
+        let xhrItem = NSMenuItem(title: "XHR", action: nil, keyEquivalent: "")
+        xhrItem.submenu = xhrSubmenu()
+        menu.addItem(xhrItem)
+
         return menu
+    }
+
+    private func xhrSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        let items = browserContextMenuDelegate?.xhrContextMenuItems ?? []
+
+        guard !items.isEmpty else {
+            let emptyItem = NSMenuItem(title: "No XHRs", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            submenu.addItem(emptyItem)
+            return submenu
+        }
+
+        for item in items {
+            let menuItem = NSMenuItem(
+                title: item.title,
+                action: #selector(openXHRFromContextMenu(_:)),
+                keyEquivalent: ""
+            )
+            menuItem.target = self
+            menuItem.representedObject = item.index
+            submenu.addItem(menuItem)
+        }
+
+        return submenu
     }
 
     private func identitySubmenu() -> NSMenu {
@@ -560,6 +598,11 @@ final class BrowserWKWebView: WKWebView {
 
     @objc private func toggleBookmarkFromContextMenu() {
         browserContextMenuDelegate?.toggleBookmarkForCurrentPage()
+    }
+
+    @objc private func openXHRFromContextMenu(_ sender: NSMenuItem) {
+        guard let index = sender.representedObject as? Int else { return }
+        browserContextMenuDelegate?.openXHRFromContextMenu(at: index)
     }
 
     @objc private func copyLinkFromContextMenu(_ sender: NSMenuItem) {
