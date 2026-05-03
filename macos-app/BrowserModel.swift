@@ -120,6 +120,9 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.openBookmark = { [weak self] url in
             self?.load(url)
         }
+        webView.moveBookmark = { [weak self] sourceURL, targetURL in
+            self?.moveBookmark(sourceURL, to: targetURL)
+        }
         syncBookmarkTitlebarState(for: webView)
         webView.viewportSizeDidChange = { [weak self] in
             self?.markScreenshotDirty(scheduleAfter: 0.25)
@@ -303,6 +306,11 @@ final class BrowserModel: NSObject, ObservableObject {
         syncBookmarkState()
     }
 
+    func moveBookmark(_ sourceURL: URL, to targetURL: URL) {
+        settingsStore.moveBookmark(sourceURL, to: targetURL)
+        syncBookmarkState()
+    }
+
     func xhrRequests(for host: String) -> [XHRRequestRecord] {
         let normalizedHost = Self.normalizedHost(host)
 
@@ -438,6 +446,7 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.uiDelegate = nil
         webView.browserContextMenuDelegate = nil
         webView.openBookmark = nil
+        webView.moveBookmark = nil
         webView.viewportSizeDidChange = nil
         webView.removeBookmarkTitlebarAccessory()
 

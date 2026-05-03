@@ -190,6 +190,27 @@ final class AppSettingsStore {
         write(cachedSettings)
     }
 
+    func moveBookmark(_ sourceURL: URL, to targetURL: URL) {
+        guard let sourceURL = Self.validURL(from: sourceURL.absoluteString),
+              let targetURL = Self.validURL(from: targetURL.absoluteString)
+        else {
+            return
+        }
+
+        var bookmarks = Self.normalizedBookmarkURLs(cachedSettings.bookmarks)
+        guard let sourceIndex = bookmarks.firstIndex(of: sourceURL.absoluteString),
+              let targetIndex = bookmarks.firstIndex(of: targetURL.absoluteString),
+              sourceIndex != targetIndex
+        else {
+            return
+        }
+
+        let movedBookmark = bookmarks.remove(at: sourceIndex)
+        bookmarks.insert(movedBookmark, at: targetIndex)
+        cachedSettings.bookmarks = bookmarks
+        write(cachedSettings)
+    }
+
     func activeIdentityID(for url: URL) -> UUID? {
         guard let siteKey = Self.siteKey(for: url),
               let identityID = cachedSettings.activeSiteIdentityIDs[siteKey],

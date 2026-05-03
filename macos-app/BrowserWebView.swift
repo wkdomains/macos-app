@@ -7,6 +7,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 struct BrowserWebView: NSViewRepresentable {
@@ -53,6 +54,7 @@ final class BrowserWKWebView: WKWebView {
         }
     }
     var openBookmark: ((URL) -> Void)?
+    var moveBookmark: ((URL, URL) -> Void)?
     var viewportSizeDidChange: (() -> Void)?
     private var lastReportedViewportSize = NSSize.zero
     private var isHandlingDirectUserFocus = false
@@ -410,6 +412,9 @@ final class BrowserWKWebView: WKWebView {
                 existingAccessory.openBookmark = { [weak self] url in
                     self?.openBookmark?(url)
                 }
+                existingAccessory.moveBookmark = { [weak self] sourceURL, targetURL in
+                    self?.moveBookmark?(sourceURL, targetURL)
+                }
                 window.addTitlebarAccessoryViewController(existingAccessory)
                 bookmarkTitlebarWindow = window
             }
@@ -420,6 +425,9 @@ final class BrowserWKWebView: WKWebView {
             accessory.openBookmark = { [weak self] url in
                 self?.openBookmark?(url)
             }
+            accessory.moveBookmark = { [weak self] sourceURL, targetURL in
+                self?.moveBookmark?(sourceURL, targetURL)
+            }
             bookmarkTitlebarAccessory = accessory
             window.addTitlebarAccessoryViewController(accessory)
             bookmarkTitlebarWindow = window
@@ -428,6 +436,9 @@ final class BrowserWKWebView: WKWebView {
         accessory.bookmarkURLs = bookmarkURLs
         accessory.openBookmark = { [weak self] url in
             self?.openBookmark?(url)
+        }
+        accessory.moveBookmark = { [weak self] sourceURL, targetURL in
+            self?.moveBookmark?(sourceURL, targetURL)
         }
     }
 
@@ -453,6 +464,7 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
     }
 
     var openBookmark: ((URL) -> Void)?
+    var moveBookmark: ((URL, URL) -> Void)?
 
     private var cachedFavicons: [String: NSImage] = [:]
     private var requestedFavicons = Set<String>()
@@ -463,10 +475,16 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
     private let accessoryHeight: CGFloat = 28
     private static let faviconPointSize: CGFloat = 16
     private static let faviconPixelSize = 32
-    private var hostingView: NSHostingView<BookmarkTitlebarView>?
+    private var hostingView: BookmarkTitlebarHostingView?
+    private let dragState = BookmarkTitlebarDragState()
 
     override func loadView() {
-        let hostingView = NSHostingView(rootView: BookmarkTitlebarView(items: [], openBookmark: { _ in }))
+        let hostingView = BookmarkTitlebarHostingView(rootView: BookmarkTitlebarView(
+            items: [],
+            dragState: dragState,
+            openBookmark: { _ in },
+            moveBookmark: { _, _ in }
+        ))
         hostingView.frame = NSRect(x: 0, y: 0, width: 0, height: accessoryHeight)
         hostingView.sizingOptions = []
         self.hostingView = hostingView
@@ -487,9 +505,16 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
             )
         }
 
-        hostingView?.rootView = BookmarkTitlebarView(items: items) { [weak self] url in
-            self?.openBookmark?(url)
-        }
+        hostingView?.rootView = BookmarkTitlebarView(
+            items: items,
+            dragState: dragState,
+            openBookmark: { [weak self] url in
+                self?.openBookmark?(url)
+            },
+            moveBookmark: { [weak self] sourceURL, targetURL in
+                self?.moveBookmark?(sourceURL, targetURL)
+            }
+        )
     }
 
     private func favicon(for url: URL) -> NSImage? {
@@ -649,9 +674,21 @@ private struct BookmarkTitlebarItem: Identifiable {
     }
 }
 
+private final class BookmarkTitlebarDragState {
+    var draggingBookmarkID: String?
+}
+
+private final class BookmarkTitlebarHostingView: NSHostingView<BookmarkTitlebarView> {
+    override var mouseDownCanMoveWindow: Bool {
+        false
+    }
+}
+
 private struct BookmarkTitlebarView: View {
     let items: [BookmarkTitlebarItem]
+    let dragState: BookmarkTitlebarDragState
     let openBookmark: (URL) -> Void
+    let moveBookmark: (URL, URL) -> Void
 
     var body: some View {
         HStack(spacing: 4) {
@@ -675,9 +712,47 @@ private struct BookmarkTitlebarView: View {
                 }
                 .buttonStyle(.plain)
                 .help(item.tooltip)
+                .onDrag {
+                    dragState.draggingBookmarkID = item.id
+                    return NSItemProvider(object: item.id as NSString)
+                }
+                .onDrop(
+                    of: [UTType.text],
+                    delegate: BookmarkTitlebarDropDelegate(
+                        item: item,
+                        dragState: dragState,
+                        moveBookmark: moveBookmark
+                    )
+                )
             }
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
+    }
+}
+
+private struct BookmarkTitlebarDropDelegate: DropDelegate {
+    let item: BookmarkTitlebarItem
+    let dragState: BookmarkTitlebarDragState
+    let moveBookmark: (URL, URL) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingBookmarkID = dragState.draggingBookmarkID,
+              draggingBookmarkID != item.id,
+              let sourceURL = URL(string: draggingBookmarkID)
+        else {
+            return
+        }
+
+        moveBookmark(sourceURL, item.url)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragState.draggingBookmarkID = nil
+        return true
     }
 }
