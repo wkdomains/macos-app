@@ -36,6 +36,12 @@ private struct AddressHistorySuggestionMatch {
     let suggestion: AddressSuggestion
 }
 
+private struct AddressCompletion {
+    let suggestion: AddressSuggestion
+    let typedText: String
+    let suffix: String
+}
+
 struct ContentView: View {
     @ObservedObject var browser: BrowserModel
     @FocusState private var isAddressFocused: Bool
@@ -142,15 +148,7 @@ struct ContentView: View {
                 .frame(width: 18)
                 .accessibilityHidden(true)
 
-            TextField("Search or enter a website", text: $browser.addressText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .disableAutocorrection(true)
-                .focused($isAddressFocused)
-                .onSubmit {
-                    submitAddressField()
-                }
-                .accessibilityLabel("Website address")
+            addressTextField
 
             if !browser.addressText.isEmpty {
                 Button {
@@ -187,6 +185,39 @@ struct ContentView: View {
             }
         }
         .zIndex(20)
+    }
+
+    private var addressTextField: some View {
+        ZStack(alignment: .leading) {
+            if let addressCompletion {
+                HStack(spacing: 0) {
+                    Text(addressCompletion.typedText)
+                        .foregroundStyle(.clear)
+
+                    Text(addressCompletion.suffix)
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(Color.accentColor.opacity(0.18))
+                        )
+                }
+                .font(.system(size: 14))
+                .lineLimit(1)
+                .allowsHitTesting(false)
+            }
+
+            TextField("Search or enter a website", text: $browser.addressText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .disableAutocorrection(true)
+                .focused($isAddressFocused)
+                .onSubmit {
+                    submitAddressField()
+                }
+                .accessibilityLabel("Website address")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var suggestionMenu: some View {
@@ -232,6 +263,32 @@ struct ContentView: View {
 
     private var shouldShowSuggestions: Bool {
         isAddressFocused && !suggestions.isEmpty
+    }
+
+    private var addressCompletion: AddressCompletion? {
+        guard isAddressFocused,
+              selectedSuggestionIndex == nil,
+              let suggestion = suggestions.first,
+              case .history = suggestion.kind
+        else {
+            return nil
+        }
+
+        let typedText = browser.addressText
+        let trimmedTypedText = typedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTypedText.isEmpty,
+              typedText == trimmedTypedText,
+              suggestion.title.lowercased().hasPrefix(typedText.lowercased()),
+              suggestion.title.count > typedText.count
+        else {
+            return nil
+        }
+
+        return AddressCompletion(
+            suggestion: suggestion,
+            typedText: typedText,
+            suffix: String(suggestion.title.dropFirst(typedText.count))
+        )
     }
 
     @ViewBuilder
@@ -328,6 +385,8 @@ struct ContentView: View {
            suggestions.indices.contains(selectedSuggestionIndex)
         {
             selectSuggestion(suggestions[selectedSuggestionIndex])
+        } else if let addressCompletion {
+            selectSuggestion(addressCompletion.suggestion)
         } else {
             hideSuggestions()
             browser.loadCurrentAddress()
