@@ -48,6 +48,7 @@ final class BrowserModel: NSObject, ObservableObject {
         configuration.websiteDataStore = dataStore
 
         webView = BrowserWKWebView(frame: .zero, configuration: configuration)
+        webView.configureForcedDarkPageBackground(settingsStore.settings.dark)
 
         super.init()
 

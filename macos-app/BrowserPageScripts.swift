@@ -340,6 +340,7 @@ extension BrowserModel {
       const STYLE_ID = "wkdomains-forced-dark-style";
       const ROOT_ATTRIBUTE = "data-wkdomains-forced-dark";
       const READY_ATTRIBUTE = "data-wkdomains-forced-dark-ready";
+      const SAMPLING_ATTRIBUTE = "data-wkdomains-forced-dark-sampling";
       const DEFAULT_BACKGROUND = { r: 24, g: 26, b: 27, a: 1 };
       const DEFAULT_TEXT = { r: 232, g: 230, b: 227, a: 1 };
       const MUTED_TEXT = { r: 157, g: 148, b: 136, a: 1 };
@@ -362,6 +363,11 @@ extension BrowserModel {
       let scheduled = false;
       let applying = false;
       let observer = null;
+      let readyFinalized = false;
+      let readyFallbackTimer = null;
+      const installedAt = (() => {
+        try { return performance.now(); } catch (_) { return Date.now(); }
+      })();
 
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -659,16 +665,19 @@ extension BrowserModel {
             background: ${toRGBA(DEFAULT_BACKGROUND)} !important;
             color: ${toRGBA(DEFAULT_TEXT)} !important;
           }
-          :root[${ROOT_ATTRIBUTE}]:not([${READY_ATTRIBUTE}]) body,
-          :root[${ROOT_ATTRIBUTE}]:not([${READY_ATTRIBUTE}]) body :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path) {
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body,
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path) {
             background-color: ${toRGBA(DEFAULT_BACKGROUND)} !important;
             color: ${toRGBA(DEFAULT_TEXT)} !important;
             border-color: ${toRGBA(DEFAULT_BORDER)} !important;
             transition-property: color, background-color, border-color, outline-color, box-shadow !important;
             transition-duration: 0s !important;
           }
-          :root[${ROOT_ATTRIBUTE}]:not([${READY_ATTRIBUTE}]) a {
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) a {
             color: ${toRGBA(DEFAULT_TEXT)} !important;
+          }
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [bgcolor] :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path) {
+            background-color: transparent !important;
           }
           :root[${ROOT_ATTRIBUTE}] input,
           :root[${ROOT_ATTRIBUTE}] textarea,
@@ -687,17 +696,17 @@ extension BrowserModel {
 
       const withFallbackDisabled = (action) => {
         const root = document.documentElement;
-        const hadReadyAttribute = root ? root.hasAttribute(READY_ATTRIBUTE) : false;
+        const hadSamplingAttribute = root ? root.hasAttribute(SAMPLING_ATTRIBUTE) : false;
 
         if (root) {
-          root.setAttribute(READY_ATTRIBUTE, "true");
+          root.setAttribute(SAMPLING_ATTRIBUTE, "true");
         }
 
         try {
           return action();
         } finally {
-          if (root && !hadReadyAttribute) {
-            root.removeAttribute(READY_ATTRIBUTE);
+          if (root && !hadSamplingAttribute) {
+            root.removeAttribute(SAMPLING_ATTRIBUTE);
           }
         }
       };
@@ -706,7 +715,51 @@ extension BrowserModel {
         if (!document.documentElement) return;
         document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
         document.documentElement.removeAttribute(READY_ATTRIBUTE);
+        document.documentElement.removeAttribute(SAMPLING_ATTRIBUTE);
         document.getElementById(STYLE_ID)?.remove();
+      };
+
+      const elapsedSinceInstall = () => {
+        try { return performance.now() - installedAt; } catch (_) { return Date.now() - installedAt; }
+      };
+
+      const hasUsefulRenderedContent = () => {
+        if (!document.body) return false;
+
+        const text = (document.body.innerText || document.body.textContent || "").trim();
+        if (text.length > 550) return true;
+
+        const usefulElementCount = document.body.querySelectorAll("article, main, h1, h2, h3, p, li, td, a").length;
+        if (usefulElementCount > 22) return true;
+
+        const bodyHeight = Math.max(
+          document.body.scrollHeight || 0,
+          document.documentElement ? document.documentElement.scrollHeight || 0 : 0
+        );
+
+        return usefulElementCount > 6 && bodyHeight > Math.max(900, innerHeight * 1.25);
+      };
+
+      const finalizeReadyWhenUseful = () => {
+        const root = document.documentElement;
+        if (!root || readyFinalized) return;
+
+        if (hasUsefulRenderedContent() || document.readyState !== "loading" || elapsedSinceInstall() > 650) {
+          root.setAttribute(READY_ATTRIBUTE, "true");
+          readyFinalized = true;
+          if (readyFallbackTimer) {
+            window.clearTimeout(readyFallbackTimer);
+            readyFallbackTimer = null;
+          }
+          return;
+        }
+
+        if (!readyFallbackTimer) {
+          readyFallbackTimer = window.setTimeout(() => {
+            readyFallbackTimer = null;
+            finalizeReadyWhenUseful();
+          }, 45);
+        }
       };
 
       const shouldSkipElement = (element) => {
@@ -789,7 +842,7 @@ extension BrowserModel {
         applying = true;
         ensureBaseStyle();
         withFallbackDisabled(() => applyRoot(document));
-        document.documentElement.setAttribute(READY_ATTRIBUTE, "true");
+        finalizeReadyWhenUseful();
         window.setTimeout(() => {
           applying = false;
         }, 0);
