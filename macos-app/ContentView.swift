@@ -21,9 +21,11 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             browserToolbar
+                .zIndex(10)
             progressBar
 
             browserWorkspace
+                .zIndex(0)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(minWidth: 720, minHeight: 520)
