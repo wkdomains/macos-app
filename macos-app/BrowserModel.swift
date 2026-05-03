@@ -33,9 +33,12 @@ final class BrowserModel: NSObject, ObservableObject {
 
     private var observations: [NSKeyValueObservation] = []
     private let cookiePersistence: BrowserCookiePersistence
+    private let loginStore: LoginStore
     private let settingsStore: AppSettingsStore
     private var activeIdentityID: UUID?
     private var activePageHost: String?
+    private var pendingLoginUsernameTarget: LoginFieldTarget?
+    private var pendingLoginPasswordTarget: LoginFieldTarget?
     private var consoleRecords: [ConsoleMessageRecord] = []
     private var xhrRecords: [XHRRequestRecord] = []
     private var xhrRecordIndexesByID: [String: Int] = [:]
@@ -56,6 +59,7 @@ final class BrowserModel: NSObject, ObservableObject {
         settingsStore: AppSettingsStore = .shared
     ) {
         self.settingsStore = settingsStore
+        loginStore = LoginStore(directoryURL: settingsStore.directoryURL)
         cookiePersistence = BrowserCookiePersistence(directoryURL: settingsStore.directoryURL)
         historyURLs = settingsStore.settings.historyURLs
         bookmarkURLs = settingsStore.bookmarkURLs
@@ -272,6 +276,31 @@ final class BrowserModel: NSObject, ObservableObject {
         activeIdentityID = nextIdentityID
         replaceWebView(using: nextIdentityID, loading: Self.siteBaseURL(for: currentURL))
         refreshSiteIdentityState()
+    }
+
+    var canFillSavedLoginForCurrentSite: Bool {
+        loginStore.hasLogin(for: webView.url)
+    }
+
+    func useLoginFieldFromContextMenu(_ role: LoginFieldRole, target: LoginFieldTarget) {
+        switch role {
+        case .username:
+            pendingLoginUsernameTarget = target
+        case .password:
+            pendingLoginPasswordTarget = target
+        }
+
+        guard let usernameTarget = pendingLoginUsernameTarget,
+              let passwordTarget = pendingLoginPasswordTarget
+        else {
+            return
+        }
+
+        presentSaveLoginSheet(usernameTarget: usernameTarget, passwordTarget: passwordTarget)
+    }
+
+    func fillSavedLoginForCurrentSite() {
+        fillSavedLoginForCurrentSite(reportsMissingLogin: true)
     }
 
     var canToggleDarkThemeForCurrentSite: Bool {
@@ -632,6 +661,129 @@ final class BrowserModel: NSObject, ObservableObject {
         refreshSiteIdentityState()
     }
 
+    private func presentSaveLoginSheet(
+        usernameTarget: LoginFieldTarget,
+        passwordTarget: LoginFieldTarget
+    ) {
+        guard let currentURL = webView.url,
+              let window = webView.window
+        else {
+            return
+        }
+
+        let existingLogin = loginStore.login(for: currentURL)
+
+        let alert = NSAlert()
+        alert.messageText = "Save Login"
+        alert.informativeText = "Save a plaintext login for \(currentURL.host ?? "this site"). wkdomains will fill the selected fields next time."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save Login")
+        alert.addButton(withTitle: "Cancel")
+
+        let usernameField = NSTextField(string: existingLogin?.username ?? usernameTarget.value ?? "")
+        usernameField.placeholderString = "Username"
+        usernameField.controlSize = .large
+        usernameField.translatesAutoresizingMaskIntoConstraints = false
+
+        let passwordField = NSSecureTextField(string: existingLogin?.password ?? passwordTarget.value ?? "")
+        passwordField.placeholderString = "Password"
+        passwordField.controlSize = .large
+        passwordField.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let usernameLabel = NSTextField(labelWithString: "Username")
+        usernameLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        let passwordLabel = NSTextField(labelWithString: "Password")
+        passwordLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+
+        for view in [usernameLabel, usernameField, passwordLabel, passwordField] {
+            stack.addArrangedSubview(view)
+        }
+
+        NSLayoutConstraint.activate([
+            usernameField.widthAnchor.constraint(equalToConstant: 320),
+            passwordField.widthAnchor.constraint(equalTo: usernameField.widthAnchor)
+        ])
+
+        alert.accessoryView = stack
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn,
+                  let self,
+                  let currentURL = self.webView.url
+            else {
+                return
+            }
+
+            self.loginStore.save(
+                username: usernameField.stringValue,
+                password: passwordField.stringValue,
+                usernameTarget: usernameTarget,
+                passwordTarget: passwordTarget,
+                for: currentURL
+            )
+            self.pendingLoginUsernameTarget = nil
+            self.pendingLoginPasswordTarget = nil
+            self.fillSavedLoginForCurrentSite(reportsMissingLogin: false)
+        }
+    }
+
+    private func fillSavedLoginForCurrentSite(reportsMissingLogin: Bool) {
+        guard let entry = loginStore.login(for: webView.url) else {
+            if reportsMissingLogin {
+                showLoginAlert(message: "No Saved Login", detail: "There is no saved login for this site yet.")
+            }
+            return
+        }
+
+        guard let data = try? JSONEncoder().encode(entry),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            if reportsMissingLogin {
+                showLoginAlert(message: "Could Not Fill Login", detail: "The saved login could not be encoded.")
+            }
+            return
+        }
+
+        let script = Self.loginFillScript(entryJSON: json)
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            DispatchQueue.main.async {
+                if reportsMissingLogin,
+                   let error
+                {
+                    self?.showLoginAlert(message: "Could Not Fill Login", detail: error.localizedDescription)
+                    return
+                }
+
+                if reportsMissingLogin,
+                   let filled = Self.intValue(from: value),
+                   filled == 0
+                {
+                    self?.showLoginAlert(
+                        message: "Could Not Find Login Fields",
+                        detail: "The saved fields were not found on this page."
+                    )
+                }
+            }
+        }
+    }
+
+    private func showLoginAlert(message: String, detail: String) {
+        guard let window = webView.window else { return }
+
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = detail
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window)
+    }
+
     private func refreshSiteIdentityState() {
         currentIdentityName = settingsStore.identityName(for: activeIdentityID)
         siteIdentityMenuItems = settingsStore.siteIdentityMenuItems(
@@ -690,6 +842,100 @@ final class BrowserModel: NSObject, ObservableObject {
         }
 
         return nil
+    }
+
+    private static func loginFillScript(entryJSON: String) -> String {
+        """
+        (() => {
+          const entry = \(entryJSON);
+          const escapeCSS = (value) => {
+            if (window.CSS && CSS.escape) return CSS.escape(value);
+            return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\\\$&");
+          };
+
+          const controlsIn = (root) => Array.from((root || document).querySelectorAll("input, textarea, select"));
+          const fieldMatches = (field, target) => {
+            if (!field || !target) return false;
+            const tag = field.tagName ? field.tagName.toLowerCase() : null;
+            const type = field.getAttribute ? field.getAttribute("type") : null;
+            const name = field.getAttribute ? field.getAttribute("name") : null;
+            if (target.tag && tag !== target.tag) return false;
+            if (target.name && name !== target.name) return false;
+            if (target.type && type !== target.type) return false;
+            return true;
+          };
+
+          const findBySelector = (target) => {
+            if (!target.cssPath) return null;
+            try {
+              const field = document.querySelector(target.cssPath);
+              return fieldMatches(field, target) ? field : null;
+            } catch (_) {
+              return null;
+            }
+          };
+
+          const findByID = (target) => {
+            if (!target.id) return null;
+            const matches = document.querySelectorAll(`#${escapeCSS(target.id)}`);
+            if (matches.length !== 1) return null;
+            return fieldMatches(matches[0], target) ? matches[0] : null;
+          };
+
+          const findByFormPosition = (target) => {
+            if (target.formIndex === null || target.formIndex === undefined) return null;
+            if (target.fieldIndex === null || target.fieldIndex === undefined) return null;
+            const form = document.querySelectorAll("form")[target.formIndex];
+            if (!form) return null;
+            const field = controlsIn(form)[target.fieldIndex];
+            return fieldMatches(field, target) ? field : null;
+          };
+
+          const findByName = (target) => {
+            if (!target.name) return null;
+            const selector = `[name="${escapeCSS(target.name)}"]`;
+            const root = target.formIndex === null || target.formIndex === undefined
+              ? document
+              : document.querySelectorAll("form")[target.formIndex] || document;
+            const matches = Array.from(root.querySelectorAll(selector));
+            return matches.find((field) => fieldMatches(field, target)) || null;
+          };
+
+          const findByGlobalPosition = (target) => {
+            if (target.fieldIndex === null || target.fieldIndex === undefined) return null;
+            const field = controlsIn(document)[target.fieldIndex];
+            return fieldMatches(field, target) ? field : null;
+          };
+
+          const findField = (target) => (
+            findBySelector(target)
+              || findByID(target)
+              || findByFormPosition(target)
+              || findByName(target)
+              || findByGlobalPosition(target)
+          );
+
+          const setValue = (field, value) => {
+            if (!field) return false;
+            field.focus({ preventScroll: true });
+            field.value = value;
+            field.dispatchEvent(new InputEvent("input", {
+              bubbles: true,
+              inputType: "insertReplacementText",
+              data: value
+            }));
+            field.dispatchEvent(new Event("change", { bubbles: true }));
+            return true;
+          };
+
+          const usernameField = findField(entry.usernameTarget);
+          const passwordField = findField(entry.passwordTarget);
+          let filled = 0;
+          if (setValue(usernameField, entry.username)) filled += 1;
+          if (setValue(passwordField, entry.password)) filled += 1;
+          return filled;
+        })()
+        """
     }
 
     private func installPageTrackingScripts(on userContentController: WKUserContentController) {
@@ -926,6 +1172,8 @@ extension BrowserModel: WKNavigationDelegate {
         if let url = webView.url {
             recordVisitedURL(url)
         }
+
+        fillSavedLoginForCurrentSite(reportsMissingLogin: false)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

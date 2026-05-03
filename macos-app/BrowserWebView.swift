@@ -10,6 +10,30 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum LoginFieldRole {
+    case username
+    case password
+}
+
+struct LoginFieldTarget: Codable, Equatable {
+    var cssPath: String?
+    var tag: String
+    var type: String?
+    var id: String?
+    var name: String?
+    var placeholder: String?
+    var ariaLabel: String?
+    var formIndex: Int?
+    var fieldIndex: Int?
+    var formAction: String?
+    var formMethod: String?
+    var value: String?
+
+    var isUsableLoginField: Bool {
+        ["input", "textarea", "select"].contains(tag.lowercased())
+    }
+}
+
 struct BrowserWebView: NSViewRepresentable {
     let webView: BrowserWKWebView
     let blocksProgrammaticFocus: Bool
@@ -28,10 +52,13 @@ protocol BrowserContextMenuDelegate: AnyObject {
     func clearCookiesForCurrentDomain()
     func createFreshSiteIdentityForCurrentSite()
     func switchToSiteIdentity(_ menuItemID: String)
+    func useLoginFieldFromContextMenu(_ role: LoginFieldRole, target: LoginFieldTarget)
+    func fillSavedLoginForCurrentSite()
     func toggleDarkThemeForCurrentSite()
     func toggleBookmarkForCurrentPage()
     var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] { get }
     var currentIdentityName: String { get }
+    var canFillSavedLoginForCurrentSite: Bool { get }
     var canToggleDarkThemeForCurrentSite: Bool { get }
     var currentSiteIsExcludedFromDarkTheme: Bool { get }
     var canBookmarkCurrentPage: Bool { get }
@@ -59,6 +86,7 @@ final class BrowserWKWebView: WKWebView {
     private var lastReportedViewportSize = NSSize.zero
     private var isHandlingDirectUserFocus = false
     private var contextMenuLinkURL: String?
+    private var contextMenuLoginField: LoginFieldTarget?
     private var usesForcedDarkPageBackground = false
     private var bookmarkTitlebarAccessory: BookmarkTitlebarAccessoryViewController?
     private weak var bookmarkTitlebarWindow: NSWindow?
@@ -163,10 +191,11 @@ final class BrowserWKWebView: WKWebView {
     }
 
     private func showBrowserContextMenu(with event: NSEvent) {
-        resolveLinkURL(at: event) { [weak self, event] linkURL in
+        resolveContextMenuTarget(at: event) { [weak self, event] linkURL, loginField in
             guard let self else { return }
 
             contextMenuLinkURL = linkURL
+            contextMenuLoginField = loginField
             NSMenu.popUpContextMenu(browserContextMenu(), with: event, for: self)
             window?.invalidateCursorRects(for: self)
         }
@@ -215,6 +244,37 @@ final class BrowserWKWebView: WKWebView {
             )
             clearCookiesItem.target = self
             menu.addItem(clearCookiesItem)
+
+            menu.addItem(NSMenuItem.separator())
+
+            if let contextMenuLoginField {
+                let usernameItem = NSMenuItem(
+                    title: "Use as Login Username",
+                    action: #selector(useLoginUsernameFromContextMenu),
+                    keyEquivalent: ""
+                )
+                usernameItem.target = self
+                usernameItem.isEnabled = contextMenuLoginField.isUsableLoginField
+                menu.addItem(usernameItem)
+
+                let passwordItem = NSMenuItem(
+                    title: "Use as Login Password",
+                    action: #selector(useLoginPasswordFromContextMenu),
+                    keyEquivalent: ""
+                )
+                passwordItem.target = self
+                passwordItem.isEnabled = contextMenuLoginField.isUsableLoginField
+                menu.addItem(passwordItem)
+            }
+
+            let fillLoginItem = NSMenuItem(
+                title: "Fill Saved Login",
+                action: #selector(fillSavedLoginFromContextMenu),
+                keyEquivalent: ""
+            )
+            fillLoginItem.target = self
+            fillLoginItem.isEnabled = browserContextMenuDelegate?.canFillSavedLoginForCurrentSite == true
+            menu.addItem(fillLoginItem)
         }
 
         if let contextMenuLinkURL {
@@ -307,19 +367,27 @@ final class BrowserWKWebView: WKWebView {
         return "\(displayHost)\(path)\(query)\(fragment)"
     }
 
-    private func resolveLinkURL(at event: NSEvent, completion: @escaping (String?) -> Void) {
+    private func resolveContextMenuTarget(
+        at event: NSEvent,
+        completion: @escaping (_ linkURL: String?, _ loginField: LoginFieldTarget?) -> Void
+    ) {
         let point = convert(event.locationInWindow, from: nil)
         let x = max(0, min(bounds.width, point.x))
         let y = max(0, min(bounds.height, isFlipped ? point.y : bounds.height - point.y))
         let alternateY = max(0, min(bounds.height, isFlipped ? bounds.height - point.y : point.y))
         let script = """
         (() => {
+          const escapeCSS = (value) => {
+            if (window.CSS && CSS.escape) return CSS.escape(value);
+            return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\\\$&");
+          };
+
           const points = [
             [\(Double(x)), \(Double(y))],
             [\(Double(x)), \(Double(alternateY))]
           ];
 
-          const linkAt = (x, y) => {
+          const elementAt = (x, y) => {
             let element = document.elementFromPoint(x, y);
 
             while (element && element.shadowRoot) {
@@ -328,25 +396,131 @@ final class BrowserWKWebView: WKWebView {
               element = nested;
             }
 
+            return element;
+          };
+
+          const cssPathFor = (element) => {
+            if (!element || !element.tagName) return null;
+            if (element.id) {
+              const selector = `#${escapeCSS(element.id)}`;
+              if (document.querySelectorAll(selector).length === 1) return selector;
+            }
+
+            const parts = [];
+            let current = element;
+            while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.documentElement) {
+              let part = current.tagName.toLowerCase();
+              const name = current.getAttribute("name");
+              const type = current.getAttribute("type");
+              if (name) part += `[name="${escapeCSS(name)}"]`;
+              if (type && current.tagName.toLowerCase() === "input") part += `[type="${escapeCSS(type)}"]`;
+
+              const parent = current.parentElement;
+              if (parent) {
+                const sameTagSiblings = Array.from(parent.children)
+                  .filter((child) => child.tagName === current.tagName);
+                if (sameTagSiblings.length > 1) {
+                  part += `:nth-of-type(${sameTagSiblings.indexOf(current) + 1})`;
+                }
+              }
+
+              parts.unshift(part);
+              const selector = parts.join(" > ");
+              if (document.querySelectorAll(selector).length === 1) return selector;
+              current = parent;
+            }
+
+            return parts.join(" > ") || null;
+          };
+
+          const fieldTargetFor = (element) => {
+            const field = element && element.closest
+              ? element.closest("input, textarea, select")
+              : null;
+            if (!field) return null;
+
+            const form = field.form || field.closest("form");
+            const formFields = form
+              ? Array.from(form.querySelectorAll("input, textarea, select"))
+              : Array.from(document.querySelectorAll("input, textarea, select"));
+
+            return {
+              cssPath: cssPathFor(field),
+              tag: field.tagName.toLowerCase(),
+              type: field.getAttribute("type") || null,
+              id: field.getAttribute("id") || null,
+              name: field.getAttribute("name") || null,
+              placeholder: field.getAttribute("placeholder") || null,
+              ariaLabel: field.getAttribute("aria-label") || null,
+              formIndex: form ? Array.from(document.querySelectorAll("form")).indexOf(form) : null,
+              fieldIndex: formFields.indexOf(field),
+              formAction: form ? (form.action || null) : null,
+              formMethod: form ? (form.method || "get").toUpperCase() : null,
+              value: field.value || null
+            };
+          };
+
+          const resultFor = (x, y) => {
+            const element = elementAt(x, y);
             const anchor = element && element.closest ? element.closest('a[href]') : null;
-            return anchor ? (anchor.href || anchor.getAttribute('href') || null) : null;
+            return {
+              linkURL: anchor ? (anchor.href || anchor.getAttribute('href') || null) : null,
+              field: fieldTargetFor(element)
+            };
           };
 
           for (const [x, y] of points) {
-            const href = linkAt(x, y);
-            if (href) return href;
+            const result = resultFor(x, y);
+            if (result.linkURL || result.field) return result;
           }
 
-          return null;
+          return { linkURL: null, field: null };
         })()
         """
 
         evaluateJavaScript(script) { value, _ in
-            let linkURL = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = value as? [String: Any]
+            let linkURL = (result?["linkURL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let loginField = Self.loginFieldTarget(from: result?["field"])
             DispatchQueue.main.async {
-                completion(linkURL?.isEmpty == false ? linkURL : nil)
+                completion(linkURL?.isEmpty == false ? linkURL : nil, loginField)
             }
         }
+    }
+
+    private static func loginFieldTarget(from value: Any?) -> LoginFieldTarget? {
+        guard let dictionary = value as? [String: Any],
+              let tag = dictionary["tag"] as? String
+        else {
+            return nil
+        }
+
+        return LoginFieldTarget(
+            cssPath: dictionary["cssPath"] as? String,
+            tag: tag,
+            type: dictionary["type"] as? String,
+            id: dictionary["id"] as? String,
+            name: dictionary["name"] as? String,
+            placeholder: dictionary["placeholder"] as? String,
+            ariaLabel: dictionary["ariaLabel"] as? String,
+            formIndex: Self.intValue(from: dictionary["formIndex"]),
+            fieldIndex: Self.intValue(from: dictionary["fieldIndex"]),
+            formAction: dictionary["formAction"] as? String,
+            formMethod: dictionary["formMethod"] as? String,
+            value: dictionary["value"] as? String
+        )
+    }
+
+    private static func intValue(from value: Any?) -> Int? {
+        if let value = value as? Int {
+            return value
+        }
+
+        if let value = value as? NSNumber {
+            return value.intValue
+        }
+
+        return nil
     }
 
     @objc private func reloadFromContextMenu() {
@@ -364,6 +538,20 @@ final class BrowserWKWebView: WKWebView {
     @objc private func switchIdentityFromContextMenu(_ sender: NSMenuItem) {
         guard let menuItemID = sender.representedObject as? String else { return }
         browserContextMenuDelegate?.switchToSiteIdentity(menuItemID)
+    }
+
+    @objc private func useLoginUsernameFromContextMenu() {
+        guard let contextMenuLoginField else { return }
+        browserContextMenuDelegate?.useLoginFieldFromContextMenu(.username, target: contextMenuLoginField)
+    }
+
+    @objc private func useLoginPasswordFromContextMenu() {
+        guard let contextMenuLoginField else { return }
+        browserContextMenuDelegate?.useLoginFieldFromContextMenu(.password, target: contextMenuLoginField)
+    }
+
+    @objc private func fillSavedLoginFromContextMenu() {
+        browserContextMenuDelegate?.fillSavedLoginForCurrentSite()
     }
 
     @objc private func toggleDarkFromContextMenu() {
