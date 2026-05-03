@@ -165,6 +165,8 @@ extension BrowserModel {
       let observer = null;
       let readyFinalized = false;
       let readyFallbackTimer = null;
+      let sourceStylesPrimed = false;
+      const sourceStyleCache = new WeakMap();
       const installedAt = (() => {
         try { return performance.now(); } catch (_) { return Date.now(); }
       })();
@@ -337,6 +339,10 @@ extension BrowserModel {
         const hsl = rgbToHSL(color);
         const neutral = hsl.s < 0.16 || (hsl.l > 0.76 && hsl.h > 35 && hsl.h < 90) || (hsl.l > 0.82 && hsl.h > 200 && hsl.h < 280);
         const largeSurface = element && viewportShare(element) > 0.24;
+
+        if (!neutral && hsl.s > 0.55 && luminance < 0.42 && hsl.l < 0.58) {
+          return toRGBA(color);
+        }
 
         if (neutral && (largeSurface || luminance > 0.74)) {
           return toRGBA({ ...DEFAULT_BACKGROUND, a: color.a });
@@ -585,6 +591,30 @@ extension BrowserModel {
           :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${BACKGROUND_IMAGE_ATTRIBUTE}] {
             background-image: var(--wkdomains-forced-dark-bg-image) !important;
           }
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) header,
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) nav,
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="banner"],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) #site-header,
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) .header-bg,
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) .main_sub-navigation,
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [class*="site-header" i],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [class*="main-nav" i]:not(a):not(button):not(li):not(span),
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [class*="sub-navigation" i],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [class*="navigation" i]:not(a):not(button):not(li):not(span) {
+            background-color: ${toRGBA(DEFAULT_BACKGROUND)} !important;
+          }
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) header [${BACKGROUND_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) nav [${BACKGROUND_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="banner"] [${BACKGROUND_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) #site-header [${BACKGROUND_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) .header-bg [${BACKGROUND_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) .main_sub-navigation [${BACKGROUND_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [class*="site-header" i] [${BACKGROUND_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [class*="main-nav" i] [${BACKGROUND_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [class*="sub-navigation" i] [${BACKGROUND_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [class*="navigation" i] [${BACKGROUND_ATTRIBUTE}] {
+            background-color: var(--wkdomains-forced-dark-bg) !important;
+          }
           :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${FILL_ATTRIBUTE}] {
             fill: var(--wkdomains-forced-dark-fill) !important;
           }
@@ -724,10 +754,46 @@ extension BrowserModel {
         return false;
       };
 
+      const captureSourceStyle = (element) => {
+        if (!element || sourceStyleCache.has(element)) {
+          return sourceStyleCache.get(element) || null;
+        }
+
+        const style = getComputedStyle(element);
+        const source = {
+          color: style.color,
+          backgroundColor: style.backgroundColor,
+          backgroundImage: style.backgroundImage,
+          fill: style.fill,
+          stroke: style.stroke
+        };
+
+        for (const override of BORDER_OVERRIDES) {
+          source[override.js] = style[override.js];
+        }
+
+        sourceStyleCache.set(element, source);
+        return source;
+      };
+
+      const primeSourceStyles = (root) => {
+        if (!root || !root.querySelectorAll) return;
+
+        if (root.nodeType === Node.DOCUMENT_NODE) {
+          if (document.documentElement) captureSourceStyle(document.documentElement);
+          if (document.body) captureSourceStyle(document.body);
+        }
+
+        for (const element of root.querySelectorAll("*")) {
+          captureSourceStyle(element);
+          if (element.shadowRoot) primeSourceStyles(element.shadowRoot);
+        }
+      };
+
       const applyElement = (element) => {
         if (shouldSkipElement(element)) return;
 
-        const style = getComputedStyle(element);
+        const style = captureSourceStyle(element) || getComputedStyle(element);
         const tag = element.tagName.toUpperCase();
 
         if (tag === "HTML" || tag === "BODY") {
@@ -808,8 +874,12 @@ extension BrowserModel {
         }
 
         applying = true;
+        if (!sourceStylesPrimed) {
+          withFallbackDisabled(() => primeSourceStyles(document));
+          sourceStylesPrimed = true;
+        }
         ensureBaseStyle();
-        withFallbackDisabled(() => applyRoot(document));
+        applyRoot(document);
         finalizeReadyWhenUseful();
         window.setTimeout(() => {
           applying = false;
@@ -835,8 +905,7 @@ extension BrowserModel {
         }
 
         observer = new MutationObserver(() => {
-          const nextDelay = forced === null ? 0 : 35;
-          if (!applying) schedule(nextDelay);
+          if (!applying) schedule(0);
         });
         observer.observe(document.documentElement, {
           attributes: true,
@@ -852,7 +921,6 @@ extension BrowserModel {
       window.addEventListener("load", () => schedule(40), { passive: true });
       window.addEventListener("pageshow", () => schedule(40), { passive: true });
 
-      ensureBaseStyle();
       observe();
       if (document.readyState === "loading") {
         schedule(0);
