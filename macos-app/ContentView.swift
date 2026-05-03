@@ -184,6 +184,10 @@ struct ContentView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(browser.isSecurePage ? .green : .secondary)
                 .frame(width: 18)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    focusAddressBar(selectAll: true)
+                }
                 .accessibilityHidden(true)
 
             addressTextField
@@ -205,6 +209,10 @@ struct ContentView: View {
         .padding(.horizontal, 12)
         .frame(height: 38)
         .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            focusAddressBar(selectAll: true, syncToCommittedURL: false)
+        }
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor))
@@ -251,10 +259,10 @@ struct ContentView: View {
                 onAcceptCompletion: acceptInlineCompletion,
                 shouldPreserveFocus: shouldPreserveAddressFocus
             )
-            .frame(height: 20)
-                .accessibilityLabel("Website address")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityLabel("Website address")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     private var suggestionMenu: some View {
