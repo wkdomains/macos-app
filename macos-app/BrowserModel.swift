@@ -17,6 +17,7 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var estimatedProgress = 0.0
     @Published private(set) var hasAttemptedNavigation = false
+    @Published private(set) var historyURLs: [String]
     @Published private(set) var isLoading = false
     @Published private(set) var isSecurePage = false
     @Published private(set) var viewportMode: BrowserViewportMode = .desktop
@@ -25,6 +26,7 @@ final class BrowserModel: NSObject, ObservableObject {
     let botTerminal = BotTerminalModel()
 
     private var observations: [NSKeyValueObservation] = []
+    private let settingsStore: AppSettingsStore
     private var activePageHost: String?
     private var consoleRecords: [ConsoleMessageRecord] = []
     private var xhrRecords: [XHRRequestRecord] = []
@@ -37,7 +39,10 @@ final class BrowserModel: NSObject, ObservableObject {
     private var screenshotRenderTask: Task<Void, Never>?
     private var screenshotWaiters: [UUID: (Result<Data, Error>) -> Void] = [:]
 
-    init(dataStore: WKWebsiteDataStore = .default()) {
+    init(dataStore: WKWebsiteDataStore = .default(), settingsStore: AppSettingsStore = .shared) {
+        self.settingsStore = settingsStore
+        historyURLs = settingsStore.settings.historyURLs
+
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
 
@@ -341,6 +346,11 @@ final class BrowserModel: NSObject, ObservableObject {
         isLoading = webView.isLoading
     }
 
+    private func recordVisitedURL(_ url: URL) {
+        settingsStore.updateLastVisitedURL(url)
+        historyURLs = settingsStore.settings.historyURLs
+    }
+
     private static func normalizedURL(from rawValue: String) -> URL? {
         guard !rawValue.isEmpty else { return nil }
         guard rawValue.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
@@ -586,7 +596,7 @@ extension BrowserModel: WKNavigationDelegate {
         syncAddress(from: webView)
 
         if let url = webView.url {
-            AppSettingsStore.shared.updateLastVisitedURL(url)
+            recordVisitedURL(url)
         }
     }
 
@@ -603,7 +613,7 @@ extension BrowserModel: WKNavigationDelegate {
         )
 
         if let url = webView.url {
-            AppSettingsStore.shared.updateLastVisitedURL(url)
+            recordVisitedURL(url)
         }
     }
 

@@ -11,17 +11,38 @@ import Foundation
 struct AppSettings: Codable {
     static let defaultPort: UInt16 = 9001
     static let defaultURL = "https://wkdomains.com"
+    static let maxHistoryCount = 30
 
     var port: UInt16
     var lastURL: String
     var lastDomain: String
+    var historyURLs: [String]
 
     static var defaults: AppSettings {
         AppSettings(
             port: defaultPort,
             lastURL: defaultURL,
-            lastDomain: URL(string: defaultURL)?.host ?? "wkdomains.com"
+            lastDomain: URL(string: defaultURL)?.host ?? "wkdomains.com",
+            historyURLs: [defaultURL]
         )
+    }
+
+    init(port: UInt16, lastURL: String, lastDomain: String, historyURLs: [String]) {
+        self.port = port
+        self.lastURL = lastURL
+        self.lastDomain = lastDomain
+        self.historyURLs = historyURLs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        port = try container.decodeIfPresent(UInt16.self, forKey: .port) ?? Self.defaultPort
+        lastURL = try container.decodeIfPresent(String.self, forKey: .lastURL) ?? Self.defaultURL
+        lastDomain = try container.decodeIfPresent(String.self, forKey: .lastDomain)
+            ?? URL(string: Self.defaultURL)?.host
+            ?? "wkdomains.com"
+        historyURLs = try container.decodeIfPresent([String].self, forKey: .historyURLs) ?? []
     }
 }
 
@@ -58,23 +79,31 @@ final class AppSettingsStore {
     }
 
     var startupURL: URL {
-        validURL(from: cachedSettings.lastURL) ?? URL(string: AppSettings.defaultURL)!
+        Self.validURL(from: cachedSettings.lastURL) ?? URL(string: AppSettings.defaultURL)!
     }
 
     func updateLastVisitedURL(_ url: URL) {
-        guard let normalizedURL = validURL(from: url.absoluteString),
-              let host = normalizedURL.host,
-              cachedSettings.lastURL != normalizedURL.absoluteString || cachedSettings.lastDomain != host
+        guard let normalizedURL = Self.validURL(from: url.absoluteString),
+              let host = normalizedURL.host
         else {
             return
         }
 
+        let normalizedURLString = normalizedURL.absoluteString
+        let history = Self.historyByPrepending(normalizedURLString, to: cachedSettings.historyURLs)
+        let hasChanged = cachedSettings.lastURL != normalizedURLString
+            || cachedSettings.lastDomain != host
+            || cachedSettings.historyURLs != history
+
+        guard hasChanged else { return }
+
         cachedSettings.lastURL = normalizedURL.absoluteString
         cachedSettings.lastDomain = host
+        cachedSettings.historyURLs = history
         write(cachedSettings)
     }
 
-    private func validURL(from value: String) -> URL? {
+    private static func validURL(from value: String) -> URL? {
         guard let components = URLComponents(string: value),
               let scheme = components.scheme?.lowercased(),
               ["http", "https"].contains(scheme),
@@ -85,6 +114,27 @@ final class AppSettingsStore {
         }
 
         return url
+    }
+
+    private static func historyByPrepending(_ urlString: String, to history: [String]) -> [String] {
+        var seen = Set<String>()
+        var urls: [String] = []
+
+        for value in [urlString] + history {
+            guard let url = validURL(from: value) else { continue }
+
+            let normalizedURLString = url.absoluteString
+            guard !seen.contains(normalizedURLString) else { continue }
+
+            seen.insert(normalizedURLString)
+            urls.append(normalizedURLString)
+
+            if urls.count == AppSettings.maxHistoryCount {
+                break
+            }
+        }
+
+        return urls
     }
 
     private func write(_ settings: AppSettings) {
@@ -112,11 +162,18 @@ final class AppSettingsStore {
             settings.port = AppSettings.defaultPort
         }
 
-        if URL(string: settings.lastURL)?.host == nil {
-            settings.lastURL = AppSettings.defaultURL
-            settings.lastDomain = URL(string: AppSettings.defaultURL)?.host ?? "wkdomains.com"
+        if let lastURL = validURL(from: settings.lastURL),
+           let host = lastURL.host
+        {
+            settings.lastURL = lastURL.absoluteString
+            settings.lastDomain = host
+        } else {
+            let defaultURL = URL(string: AppSettings.defaultURL)!
+            settings.lastURL = defaultURL.absoluteString
+            settings.lastDomain = defaultURL.host ?? "wkdomains.com"
         }
 
+        settings.historyURLs = historyByPrepending(settings.lastURL, to: settings.historyURLs)
         return settings
     }
 

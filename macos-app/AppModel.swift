@@ -18,7 +18,7 @@ final class AppModel: ObservableObject {
         let dataStore = WKWebsiteDataStore.default()
         let settingsStore = AppSettingsStore.shared
 
-        browser = BrowserModel(dataStore: dataStore)
+        browser = BrowserModel(dataStore: dataStore, settingsStore: settingsStore)
         browser.setLocalAPIBaseURL("http://localhost:\(settingsStore.settings.port)")
         apiServer = LocalAPIServer(browser: browser, settings: settingsStore.settings)
         apiServer.start()
