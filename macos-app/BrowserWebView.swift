@@ -457,46 +457,38 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
     private var cachedFavicons: [String: NSImage] = [:]
     private var requestedFavicons = Set<String>()
     private var failedFavicons = Set<String>()
-    private let iconSize: CGFloat = 20
     private let buttonSize: CGFloat = 24
     private let buttonSpacing: CGFloat = 4
     private let horizontalInset: CGFloat = 8
     private let accessoryHeight: CGFloat = 28
+    private static let faviconPointSize: CGFloat = 16
+    private static let faviconPixelSize = 32
+    private var hostingView: NSHostingView<BookmarkTitlebarView>?
 
     override func loadView() {
-        view = NSView(frame: NSRect(x: 0, y: 0, width: 0, height: accessoryHeight))
+        let hostingView = NSHostingView(rootView: BookmarkTitlebarView(items: [], openBookmark: { _ in }))
+        hostingView.frame = NSRect(x: 0, y: 0, width: 0, height: accessoryHeight)
+        hostingView.sizingOptions = []
+        self.hostingView = hostingView
+        view = hostingView
     }
 
     private func renderButtons() {
         loadViewIfNeeded()
 
-        for subview in view.subviews {
-            subview.removeFromSuperview()
-        }
-
         let width = accessoryWidth(for: bookmarkURLs.count)
         view.setFrameSize(NSSize(width: width, height: accessoryHeight))
 
-        for (index, url) in bookmarkURLs.enumerated() {
-            let button = NSButton(
-                frame: NSRect(
-                    x: horizontalInset + (CGFloat(index) * (buttonSize + buttonSpacing)),
-                    y: (accessoryHeight - buttonSize) / 2,
-                    width: buttonSize,
-                    height: buttonSize
-                )
+        let items = bookmarkURLs.map { url in
+            BookmarkTitlebarItem(
+                url: url,
+                image: favicon(for: url) ?? placeholderImage(),
+                tooltip: titlebarTooltip(for: url)
             )
-            button.bezelStyle = .texturedRounded
-            button.isBordered = false
-            button.imagePosition = .imageOnly
-            button.imageScaling = .scaleProportionallyDown
-            button.image = preparedImage(favicon(for: url) ?? placeholderImage())
-            button.target = self
-            button.action = #selector(openBookmarkFromTitlebar(_:))
-            button.tag = index
-            button.toolTip = titlebarTooltip(for: url)
+        }
 
-            view.addSubview(button)
+        hostingView?.rootView = BookmarkTitlebarView(items: items) { [weak self] url in
+            self?.openBookmark?(url)
         }
     }
 
@@ -514,16 +506,31 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
         let rawURL = url.absoluteString
         guard !failedFavicons.contains(rawURL),
               requestedFavicons.insert(rawURL).inserted,
-              let faviconURL = Self.faviconURL(for: url)
+              !Self.faviconURLs(for: url).isEmpty
         else {
             return
         }
 
         Task {
-            let imageData = try? await Self.fetchData(from: faviconURL)
+            var loadedImageData: Data?
+
+            for faviconURL in Self.faviconURLs(for: url) {
+                guard let imageData = try? await Self.fetchData(from: faviconURL) else {
+                    continue
+                }
+
+                let isUsableImage = await MainActor.run {
+                    Self.faviconImage(from: imageData) != nil
+                }
+
+                if isUsableImage {
+                    loadedImageData = imageData
+                    break
+                }
+            }
 
             await MainActor.run {
-                if let imageData, let image = NSImage(data: imageData) {
+                if let loadedImageData, let image = Self.faviconImage(from: loadedImageData) {
                     cachedFavicons[rawURL] = image
                 } else {
                     failedFavicons.insert(rawURL)
@@ -538,13 +545,6 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
         NSImage(systemSymbolName: "globe", accessibilityDescription: "Bookmark")
     }
 
-    private func preparedImage(_ image: NSImage?) -> NSImage? {
-        guard let image else { return nil }
-
-        image.size = NSSize(width: iconSize, height: iconSize)
-        return image
-    }
-
     private func titlebarTooltip(for url: URL) -> String {
         guard let host = url.host else {
             return url.absoluteString
@@ -556,32 +556,128 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
         return "\(host)\(path)\(query)\(fragment)"
     }
 
-    @objc private func openBookmarkFromTitlebar(_ sender: NSButton) {
-        guard bookmarkURLs.indices.contains(sender.tag) else { return }
-        openBookmark?(bookmarkURLs[sender.tag])
-    }
-
     private static func fetchData(from url: URL) async throws -> Data {
-        let (data, _) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.shared.data(from: url)
+
+        if let response = response as? HTTPURLResponse,
+           !(200..<300).contains(response.statusCode) {
+            throw URLError(.badServerResponse)
+        }
+
         return data
     }
 
-    private static func faviconURL(for url: URL) -> URL? {
+    private static func faviconURLs(for url: URL) -> [URL] {
+        [rootFaviconURL(for: url), googleFaviconURL(for: url)].compactMap { $0 }
+    }
+
+    private static func rootFaviconURL(for url: URL) -> URL? {
+        guard let scheme = url.scheme,
+              let host = url.host
+        else {
+            return nil
+        }
+
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = host
+        components.port = url.port
+        components.path = "/favicon.ico"
+        return components.url
+    }
+
+    private static func googleFaviconURL(for url: URL) -> URL? {
         guard var components = URLComponents(string: "https://www.google.com/s2/favicons") else {
             return nil
         }
 
         components.queryItems = [
             URLQueryItem(name: "domain_url", value: url.absoluteString),
-            URLQueryItem(name: "sz", value: "32")
+            URLQueryItem(name: "sz", value: String(faviconPixelSize))
         ]
 
         return components.url
+    }
+
+    private static func faviconImage(from data: Data) -> NSImage? {
+        guard let image = NSImage(data: data) else { return nil }
+
+        let preferredPixels = faviconPixelSize
+        let bestRepresentation = image.representations
+            .filter { $0.pixelsWide > 0 && $0.pixelsHigh > 0 }
+            .min { first, second in
+                representationScore(first, preferredPixels: preferredPixels)
+                    < representationScore(second, preferredPixels: preferredPixels)
+            }
+
+        guard let bestRepresentation,
+              let preparedRepresentation = bestRepresentation.copy() as? NSImageRep
+        else {
+            let preparedImage = (image.copy() as? NSImage) ?? image
+            preparedImage.size = NSSize(width: faviconPointSize, height: faviconPointSize)
+            return preparedImage
+        }
+
+        preparedRepresentation.size = NSSize(width: faviconPointSize, height: faviconPointSize)
+
+        let preparedImage = NSImage(size: NSSize(width: faviconPointSize, height: faviconPointSize))
+        preparedImage.addRepresentation(preparedRepresentation)
+        preparedImage.isTemplate = image.isTemplate
+        return preparedImage
+    }
+
+    private static func representationScore(_ representation: NSImageRep, preferredPixels: Int) -> Int {
+        let pixels = max(representation.pixelsWide, representation.pixelsHigh)
+        let undersizedPenalty = pixels < preferredPixels ? preferredPixels : 0
+        return undersizedPenalty + abs(pixels - preferredPixels)
     }
 
     private func accessoryWidth(for bookmarkCount: Int) -> CGFloat {
         guard bookmarkCount > 0 else { return 0 }
         let spacing = CGFloat(max(0, bookmarkCount - 1)) * buttonSpacing
         return (horizontalInset * 2) + (CGFloat(bookmarkCount) * buttonSize) + spacing
+    }
+}
+
+private struct BookmarkTitlebarItem: Identifiable {
+    let url: URL
+    let image: NSImage?
+    let tooltip: String
+
+    var id: String {
+        url.absoluteString
+    }
+}
+
+private struct BookmarkTitlebarView: View {
+    let items: [BookmarkTitlebarItem]
+    let openBookmark: (URL) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(items) { item in
+                Button {
+                    openBookmark(item.url)
+                } label: {
+                    Group {
+                        if let image = item.image {
+                            Image(nsImage: image)
+                                .resizable()
+                                .interpolation(.high)
+                                .frame(width: 16, height: 16)
+                        } else {
+                            Image(systemName: "globe")
+                                .font(.system(size: 15, weight: .regular))
+                        }
+                    }
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(item.tooltip)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
     }
 }
