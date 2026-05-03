@@ -17,21 +17,24 @@ struct AppSettings: Codable {
     var lastURL: String
     var lastDomain: String
     var historyURLs: [String]
+    var dark: Bool
 
     static var defaults: AppSettings {
         AppSettings(
             port: defaultPort,
             lastURL: defaultURL,
             lastDomain: URL(string: defaultURL)?.host ?? "wkdomains.com",
-            historyURLs: [defaultURL]
+            historyURLs: [defaultURL],
+            dark: true
         )
     }
 
-    init(port: UInt16, lastURL: String, lastDomain: String, historyURLs: [String]) {
+    init(port: UInt16, lastURL: String, lastDomain: String, historyURLs: [String], dark: Bool) {
         self.port = port
         self.lastURL = lastURL
         self.lastDomain = lastDomain
         self.historyURLs = historyURLs
+        self.dark = dark
     }
 
     init(from decoder: Decoder) throws {
@@ -43,6 +46,7 @@ struct AppSettings: Codable {
             ?? URL(string: Self.defaultURL)?.host
             ?? "wkdomains.com"
         historyURLs = try container.decodeIfPresent([String].self, forKey: .historyURLs) ?? []
+        dark = try container.decodeIfPresent(Bool.self, forKey: .dark) ?? true
     }
 }
 

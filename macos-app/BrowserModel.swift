@@ -422,6 +422,15 @@ final class BrowserModel: NSObject, ObservableObject {
                 forMainFrameOnly: false
             )
         )
+        if settingsStore.settings.dark {
+            userContentController.addUserScript(
+                WKUserScript(
+                    source: Self.forcedDarkModeScript,
+                    injectionTime: .atDocumentStart,
+                    forMainFrameOnly: false
+                )
+            )
+        }
         userContentController.addUserScript(
             WKUserScript(
                 source: Self.consoleTrackingScript,
