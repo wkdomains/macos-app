@@ -11,8 +11,9 @@ import SwiftUI
 
 private struct AddressSuggestion: Identifiable {
     enum Kind {
+        case visit(AddressResolution)
         case history(URL)
-        case search
+        case search(String)
     }
 
     let id: String
@@ -22,10 +23,25 @@ private struct AddressSuggestion: Identifiable {
 
     var accessibilityLabel: String {
         switch kind {
+        case .visit:
+            "Visit \(title)"
         case .history:
             "Open \(title)"
+        case .search(let query):
+            "Search \(query)"
+        }
+    }
+
+    var completionText: String {
+        title
+    }
+
+    var canInlineComplete: Bool {
+        switch kind {
+        case .visit, .history:
+            true
         case .search:
-            "Search \(title)"
+            false
         }
     }
 }
@@ -44,12 +60,13 @@ private struct AddressCompletion {
 
 struct ContentView: View {
     @ObservedObject var browser: BrowserModel
-    @FocusState private var isAddressFocused: Bool
+    @State private var addressDraft = ""
+    @State private var isAddressFocused = false
     @State private var isBotPanelVisible = false
     @State private var selectedSuggestionIndex: Int?
+    @State private var shouldSelectAddressText = false
     @State private var suggestionTask: Task<Void, Never>?
     @State private var suggestions: [AddressSuggestion] = []
-    @State private var keyDownMonitor: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,29 +79,45 @@ struct ContentView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(minWidth: 720, minHeight: 520)
+        .overlay(alignment: .topLeading) {
+            Button {
+                focusAddressBar(selectAll: true)
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut("l", modifiers: .command)
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .accessibilityHidden(true)
+        }
         .onAppear {
-            isAddressFocused = true
-            installAddressKeyMonitor()
-            selectAddressText()
+            addressDraft = browser.displayAddressText
+            focusAddressBar(selectAll: true)
         }
         .onDisappear {
             suggestionTask?.cancel()
-            removeAddressKeyMonitor()
         }
-        .onChange(of: browser.addressText) { _, value in
+        .onChange(of: addressDraft) { _, value in
             scheduleSuggestions(for: value)
         }
+        .onChange(of: browser.displayAddressText) { _, value in
+            guard !isAddressFocused else { return }
+            addressDraft = value
+        }
         .onChange(of: browser.historyURLs) { _, _ in
-            scheduleSuggestions(for: browser.addressText)
+            scheduleSuggestions(for: addressDraft)
         }
         .onChange(of: isAddressFocused) { _, isFocused in
+            browser.webView.blocksProgrammaticFocus = isFocused
+
             if isFocused {
                 hideSuggestions()
-                selectAddressText()
+                scheduleSuggestions(for: addressDraft)
             } else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     guard !isAddressFocused else { return }
                     hideSuggestions()
+                    addressDraft = browser.displayAddressText
                 }
             }
         }
@@ -126,10 +159,7 @@ struct ContentView: View {
             botControls
 
             Button {
-                hideSuggestions()
-                isAddressFocused = false
-                browser.loadCurrentAddress()
-                focusBrowserContent()
+                submitAddressField()
             } label: {
                 Image(systemName: "arrow.right")
                     .font(.system(size: 14, weight: .semibold))
@@ -137,7 +167,7 @@ struct ContentView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
-            .disabled(browser.addressText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(addressDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .accessibilityLabel("Go")
         }
         .padding(.horizontal, 14)
@@ -155,11 +185,11 @@ struct ContentView: View {
 
             addressTextField
 
-            if !browser.addressText.isEmpty {
+            if !addressDraft.isEmpty {
                 Button {
-                    browser.addressText = ""
+                    addressDraft = ""
                     hideSuggestions()
-                    isAddressFocused = true
+                    focusAddressBar(selectAll: false, syncToCommittedURL: false)
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 13, weight: .medium))
@@ -207,14 +237,17 @@ struct ContentView: View {
                 .allowsHitTesting(false)
             }
 
-            TextField("Search or enter a website", text: $browser.addressText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .disableAutocorrection(true)
-                .focused($isAddressFocused)
-                .onSubmit {
-                    submitAddressField()
-                }
+            AddressBarTextField(
+                text: $addressDraft,
+                isFocused: $isAddressFocused,
+                selectAllOnFocus: $shouldSelectAddressText,
+                placeholder: "Search or enter a website",
+                onSubmit: submitAddressField,
+                onCancel: cancelAddressEditing,
+                onMoveSelection: moveSuggestionSelection,
+                onAcceptCompletion: acceptInlineCompletion
+            )
+            .frame(height: 20)
                 .accessibilityLabel("Website address")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -269,17 +302,18 @@ struct ContentView: View {
         guard isAddressFocused,
               selectedSuggestionIndex == nil,
               let suggestion = suggestions.first,
-              case .history = suggestion.kind
+              suggestion.canInlineComplete
         else {
             return nil
         }
 
-        let typedText = browser.addressText
+        let typedText = addressDraft
         let trimmedTypedText = typedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let completionText = suggestion.completionText
         guard !trimmedTypedText.isEmpty,
               typedText == trimmedTypedText,
-              suggestion.title.lowercased().hasPrefix(typedText.lowercased()),
-              suggestion.title.count > typedText.count
+              completionText.lowercased().hasPrefix(typedText.lowercased()),
+              completionText.count > typedText.count
         else {
             return nil
         }
@@ -287,13 +321,18 @@ struct ContentView: View {
         return AddressCompletion(
             suggestion: suggestion,
             typedText: typedText,
-            suffix: String(suggestion.title.dropFirst(typedText.count))
+            suffix: String(completionText.dropFirst(typedText.count))
         )
     }
 
     @ViewBuilder
     private func suggestionIcon(for suggestion: AddressSuggestion) -> some View {
         switch suggestion.kind {
+        case .visit:
+            Image(systemName: "globe")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
         case .history:
             if let faviconURL = suggestion.faviconURL {
                 AsyncImage(url: faviconURL) { phase in
@@ -335,41 +374,39 @@ struct ContentView: View {
         }
 
         let historyURLs = browser.historyURLs
+        let localSuggestions = Self.localSuggestions(for: query, historyURLs: historyURLs)
+        suggestions = localSuggestions
 
         suggestionTask = Task { [query, historyURLs] in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
 
-            let historySuggestions = Self.historySuggestions(for: query, historyURLs: historyURLs)
-
-            await MainActor.run {
-                guard !Task.isCancelled,
-                      isAddressFocused,
-                      browser.addressText.trimmingCharacters(in: .whitespacesAndNewlines) == query
-                else {
-                    return
-                }
-
-                suggestions = historySuggestions
-                selectedSuggestionIndex = nil
-            }
-
             let fetchedSuggestions = await Self.fetchSuggestions(for: query)
+            let localSuggestions = Self.localSuggestions(for: query, historyURLs: historyURLs)
             let combinedSuggestions = Self.combinedSuggestions(
-                historySuggestions: historySuggestions,
+                localSuggestions: localSuggestions,
                 searchSuggestions: fetchedSuggestions
             )
 
             await MainActor.run {
                 guard !Task.isCancelled,
                       isAddressFocused,
-                      browser.addressText.trimmingCharacters(in: .whitespacesAndNewlines) == query
+                      addressDraft.trimmingCharacters(in: .whitespacesAndNewlines) == query
                 else {
                     return
                 }
 
+                let selectedID = selectedSuggestionIndex.flatMap { index in
+                    suggestions.indices.contains(index) ? suggestions[index].id : nil
+                }
+
                 suggestions = combinedSuggestions
-                selectedSuggestionIndex = nil
+
+                if let selectedID,
+                   let index = combinedSuggestions.firstIndex(where: { $0.id == selectedID })
+                {
+                    selectedSuggestionIndex = index
+                }
             }
         }
     }
@@ -385,13 +422,16 @@ struct ContentView: View {
            suggestions.indices.contains(selectedSuggestionIndex)
         {
             selectSuggestion(suggestions[selectedSuggestionIndex])
-        } else if let addressCompletion {
-            selectSuggestion(addressCompletion.suggestion)
         } else {
             hideSuggestions()
             isAddressFocused = false
-            browser.loadCurrentAddress()
-            focusBrowserContent()
+
+            if browser.loadAddress(addressDraft) {
+                addressDraft = browser.displayAddressText
+                focusBrowserContent()
+            } else {
+                isAddressFocused = true
+            }
         }
     }
 
@@ -400,12 +440,28 @@ struct ContentView: View {
         isAddressFocused = false
 
         switch suggestion.kind {
+        case .visit(let resolution):
+            browser.load(resolution)
         case .history(let url):
             browser.load(url)
-        case .search:
-            browser.searchGoogle(for: suggestion.title)
+        case .search(let query):
+            browser.searchGoogle(for: query)
         }
+
+        addressDraft = browser.displayAddressText
         focusBrowserContent()
+    }
+
+    private func moveSuggestionSelection(_ delta: Int) -> Bool {
+        guard shouldShowSuggestions else { return false }
+
+        if delta > 0 {
+            selectNextSuggestion()
+        } else {
+            selectPreviousSuggestion()
+        }
+
+        return true
     }
 
     private func selectPreviousSuggestion() {
@@ -432,56 +488,38 @@ struct ContentView: View {
         }
     }
 
-    private func installAddressKeyMonitor() {
-        guard keyDownMonitor == nil else { return }
-
-        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard isAddressFocused, shouldShowSuggestions else { return event }
-
-            switch event.keyCode {
-            case 36, 76:
-                submitAddressField()
-                return nil
-            case 53:
-                hideSuggestions()
-                return nil
-            case 125:
-                selectNextSuggestion()
-                return nil
-            case 126:
-                selectPreviousSuggestion()
-                return nil
-            default:
-                return event
-            }
+    private func acceptInlineCompletion() -> Bool {
+        guard selectedSuggestionIndex == nil,
+              let addressCompletion
+        else {
+            return false
         }
+
+        addressDraft = addressCompletion.suggestion.completionText
+        return true
     }
 
-    private func selectAddressText() {
-        for delay in [0.0, 0.06, 0.16] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard isAddressFocused,
-                      let fieldEditor = NSApp.keyWindow?.firstResponder as? NSTextView
-                else {
-                    return
-                }
+    private func cancelAddressEditing() {
+        hideSuggestions()
+        addressDraft = browser.displayAddressText
+        isAddressFocused = false
+        focusBrowserContent()
+    }
 
-                fieldEditor.selectAll(nil)
-            }
+    private func focusAddressBar(selectAll: Bool, syncToCommittedURL: Bool = true) {
+        if syncToCommittedURL {
+            addressDraft = browser.displayAddressText
         }
+
+        shouldSelectAddressText = selectAll
+        browser.webView.blocksProgrammaticFocus = true
+        isAddressFocused = true
     }
 
     private func focusBrowserContent() {
         DispatchQueue.main.async {
-            browser.webView.window?.makeFirstResponder(browser.webView)
+            browser.webView.focusFromBrowserChrome()
         }
-    }
-
-    private func removeAddressKeyMonitor() {
-        guard let keyDownMonitor else { return }
-
-        NSEvent.removeMonitor(keyDownMonitor)
-        self.keyDownMonitor = nil
     }
 
     private static func fetchSuggestions(for query: String) async -> [String] {
@@ -509,6 +547,38 @@ struct ContentView: View {
         } catch {
             return []
         }
+    }
+
+    private static func localSuggestions(for query: String, historyURLs: [String]) -> [AddressSuggestion] {
+        var suggestions: [AddressSuggestion] = []
+
+        if let resolution = AddressResolver.resolve(query) {
+            switch resolution.kind {
+            case .webpage:
+                let title = resolution.didAppendDotCom ? query : resolution.displayTitle
+                suggestions.append(
+                    AddressSuggestion(
+                        id: "visit-\(resolution.primaryURL.absoluteString)",
+                        title: title,
+                        kind: .visit(resolution),
+                        faviconURL: faviconURL(for: resolution.primaryURL)
+                    )
+                )
+            case .search:
+                let searchQuery = resolution.searchQuery ?? query
+                suggestions.append(
+                    AddressSuggestion(
+                        id: "search-current-\(searchQuery)",
+                        title: searchQuery,
+                        kind: .search(searchQuery),
+                        faviconURL: nil
+                    )
+                )
+            }
+        }
+
+        let historySuggestions = historySuggestions(for: query, historyURLs: historyURLs)
+        return deduplicatedSuggestions(suggestions + historySuggestions)
     }
 
     private static func historySuggestions(for query: String, historyURLs: [String]) -> [AddressSuggestion] {
@@ -550,11 +620,11 @@ struct ContentView: View {
     }
 
     private static func combinedSuggestions(
-        historySuggestions: [AddressSuggestion],
+        localSuggestions: [AddressSuggestion],
         searchSuggestions: [String]
     ) -> [AddressSuggestion] {
-        var seenTitles = Set(historySuggestions.map { $0.title.lowercased() })
-        var combinedSuggestions = historySuggestions
+        var seenTitles = Set(localSuggestions.map { $0.title.lowercased() })
+        var combinedSuggestions = localSuggestions
 
         for suggestion in searchSuggestions {
             let normalizedSuggestion = suggestion.lowercased()
@@ -565,13 +635,28 @@ struct ContentView: View {
                 AddressSuggestion(
                     id: "search-\(suggestion)",
                     title: suggestion,
-                    kind: .search,
+                    kind: .search(suggestion),
                     faviconURL: nil
                 )
             )
         }
 
         return combinedSuggestions
+    }
+
+    private static func deduplicatedSuggestions(_ suggestions: [AddressSuggestion]) -> [AddressSuggestion] {
+        var seenTitles = Set<String>()
+        var result: [AddressSuggestion] = []
+
+        for suggestion in suggestions {
+            let normalizedTitle = suggestion.title.lowercased()
+            guard !seenTitles.contains(normalizedTitle) else { continue }
+
+            seenTitles.insert(normalizedTitle)
+            result.append(suggestion)
+        }
+
+        return result
     }
 
     private static func historyRank(for url: URL, normalizedQuery: String) -> Int? {
@@ -655,7 +740,10 @@ struct ContentView: View {
             Color(nsColor: browser.viewportMode == .desktop ? .textBackgroundColor : .windowBackgroundColor)
 
             ZStack {
-                BrowserWebView(webView: browser.webView)
+                BrowserWebView(
+                    webView: browser.webView,
+                    blocksProgrammaticFocus: isAddressFocused
+                )
                     .opacity(browser.hasAttemptedNavigation ? 1 : 0)
 
                 if !browser.hasAttemptedNavigation {

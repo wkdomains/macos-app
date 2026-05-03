@@ -11,9 +11,9 @@ import Foundation
 import WebKit
 
 final class BrowserModel: NSObject, ObservableObject {
-    @Published var addressText = ""
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
+    @Published private(set) var displayAddressText = ""
     @Published private(set) var errorMessage: String?
     @Published private(set) var estimatedProgress = 0.0
     @Published private(set) var hasAttemptedNavigation = false
@@ -38,6 +38,7 @@ final class BrowserModel: NSObject, ObservableObject {
     private var screenshotIsRendering = false
     private var screenshotRenderTask: Task<Void, Never>?
     private var screenshotWaiters: [UUID: (Result<Data, Error>) -> Void] = [:]
+    private var navigationFallbacks: [URL] = []
 
     init(dataStore: WKWebsiteDataStore = .default(), settingsStore: AppSettingsStore = .shared) {
         self.settingsStore = settingsStore
@@ -82,50 +83,39 @@ final class BrowserModel: NSObject, ObservableObject {
             },
             webView.observe(\.url, options: [.new]) { [weak self] webView, _ in
                 DispatchQueue.main.async {
-                    self?.syncAddress(from: webView)
+                    self?.syncPageState(from: webView)
                 }
             }
         ]
     }
 
-    func loadCurrentAddress() {
-        let enteredAddress = addressText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let url = Self.normalizedURL(from: enteredAddress) else {
+    @discardableResult
+    func loadAddress(_ rawValue: String) -> Bool {
+        guard let resolution = AddressResolver.resolve(rawValue) else {
             errorMessage = "Enter a valid http or https address."
-            return
+            return false
         }
 
-        hasAttemptedNavigation = true
-        errorMessage = nil
-        addressText = url.absoluteString
-        isSecurePage = url.scheme?.lowercased() == "https"
-
-        webView.load(URLRequest(url: url))
+        load(resolution)
+        return true
     }
 
     func searchGoogle(for query: String) {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuery.isEmpty else { return }
-
-        var components = URLComponents(string: "https://www.google.com/search")
-        components?.queryItems = [
-            URLQueryItem(name: "q", value: trimmedQuery)
-        ]
-
-        guard let url = components?.url else { return }
+        guard let url = AddressResolver.googleSearchURL(for: query) else { return }
         load(url)
     }
 
     func goBack() {
         guard webView.canGoBack else { return }
         errorMessage = nil
+        navigationFallbacks = []
         webView.goBack()
     }
 
     func goForward() {
         guard webView.canGoForward else { return }
         errorMessage = nil
+        navigationFallbacks = []
         webView.goForward()
     }
 
@@ -133,8 +123,10 @@ final class BrowserModel: NSObject, ObservableObject {
         guard hasAttemptedNavigation else { return }
         errorMessage = nil
 
+        navigationFallbacks = []
+
         if webView.url == nil {
-            loadCurrentAddress()
+            loadAddress(displayAddressText)
         } else {
             webView.reload()
         }
@@ -249,10 +241,19 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     func load(_ url: URL) {
+        load(url, fallbackURLs: [])
+    }
+
+    func load(_ resolution: AddressResolution) {
+        load(resolution.primaryURL, fallbackURLs: resolution.fallbackURLs)
+    }
+
+    private func load(_ url: URL, fallbackURLs: [URL]) {
         hasAttemptedNavigation = true
         errorMessage = nil
-        addressText = url.absoluteString
+        displayAddressText = url.absoluteString
         isSecurePage = url.scheme?.lowercased() == "https"
+        navigationFallbacks = fallbackURLs
         resetXHRTracking(for: url)
 
         webView.load(URLRequest(url: url))
@@ -348,11 +349,12 @@ final class BrowserModel: NSObject, ObservableObject {
         markScreenshotDirty(scheduleAfter: 0.45)
     }
 
-    private func syncAddress(from webView: WKWebView) {
-        guard let url = webView.url else { return }
+    private func syncPageState(from webView: WKWebView) {
+        if let url = webView.url {
+            displayAddressText = url.absoluteString
+            isSecurePage = url.scheme?.lowercased() == "https"
+        }
 
-        addressText = url.absoluteString
-        isSecurePage = url.scheme?.lowercased() == "https"
         canGoBack = webView.canGoBack
         canGoForward = webView.canGoForward
         estimatedProgress = webView.estimatedProgress
@@ -362,33 +364,6 @@ final class BrowserModel: NSObject, ObservableObject {
     private func recordVisitedURL(_ url: URL) {
         settingsStore.updateLastVisitedURL(url)
         historyURLs = settingsStore.settings.historyURLs
-    }
-
-    private static func normalizedURL(from rawValue: String) -> URL? {
-        guard !rawValue.isEmpty else { return nil }
-        guard rawValue.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return nil }
-
-        var value = rawValue
-
-        if !value.contains("://") {
-            let lowercaseValue = value.lowercased()
-            let isLocalHost = lowercaseValue == "localhost"
-                || lowercaseValue.hasPrefix("localhost:")
-                || lowercaseValue.hasPrefix("127.0.0.1")
-                || lowercaseValue.hasPrefix("[::1]")
-            value = "\(isLocalHost ? "http" : "https")://\(value)"
-        }
-
-        guard let components = URLComponents(string: value),
-              let scheme = components.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              components.host != nil,
-              let url = components.url
-        else {
-            return nil
-        }
-
-        return url
     }
 
     private static func normalizedHost(_ host: String) -> String {
@@ -601,12 +576,13 @@ extension BrowserModel: WKNavigationDelegate {
         estimatedProgress = max(0.08, webView.estimatedProgress)
         resetScreenshotForNavigation()
         resetXHRTracking(for: webView.url)
-        syncAddress(from: webView)
+        syncPageState(from: webView)
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         errorMessage = nil
-        syncAddress(from: webView)
+        navigationFallbacks = []
+        syncPageState(from: webView)
 
         if let url = webView.url {
             recordVisitedURL(url)
@@ -616,7 +592,7 @@ extension BrowserModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         errorMessage = nil
         estimatedProgress = 1
-        syncAddress(from: webView)
+        syncPageState(from: webView)
         markScreenshotDirty(scheduleAfter: 0.25)
         botTerminal.refreshIfOpen(
             currentURL: webView.url,
@@ -635,6 +611,10 @@ extension BrowserModel: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if loadNextFallback(after: error) {
+            return
+        }
+
         handleNavigationError(error)
     }
 
@@ -657,10 +637,28 @@ extension BrowserModel: WKNavigationDelegate {
         let nsError = error as NSError
         guard nsError.code != NSURLErrorCancelled else { return }
 
+        navigationFallbacks = []
         isLoading = false
         estimatedProgress = 0
         errorMessage = error.localizedDescription
         finishScreenshotWaiters(with: .failure(error))
+    }
+
+    private func loadNextFallback(after error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.code != NSURLErrorCancelled,
+              !navigationFallbacks.isEmpty
+        else {
+            return false
+        }
+
+        let nextURL = navigationFallbacks.removeFirst()
+        errorMessage = nil
+        displayAddressText = nextURL.absoluteString
+        isSecurePage = nextURL.scheme?.lowercased() == "https"
+        resetXHRTracking(for: nextURL)
+        webView.load(URLRequest(url: nextURL))
+        return true
     }
 }
 

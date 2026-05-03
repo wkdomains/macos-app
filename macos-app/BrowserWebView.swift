@@ -11,12 +11,16 @@ import WebKit
 
 struct BrowserWebView: NSViewRepresentable {
     let webView: BrowserWKWebView
+    let blocksProgrammaticFocus: Bool
 
     func makeNSView(context: Context) -> BrowserWKWebView {
-        webView
+        webView.blocksProgrammaticFocus = blocksProgrammaticFocus
+        return webView
     }
 
-    func updateNSView(_ nsView: BrowserWKWebView, context: Context) {}
+    func updateNSView(_ nsView: BrowserWKWebView, context: Context) {
+        nsView.blocksProgrammaticFocus = blocksProgrammaticFocus
+    }
 }
 
 protocol BrowserContextMenuDelegate: AnyObject {
@@ -25,8 +29,22 @@ protocol BrowserContextMenuDelegate: AnyObject {
 
 final class BrowserWKWebView: WKWebView {
     weak var browserContextMenuDelegate: BrowserContextMenuDelegate?
+    var blocksProgrammaticFocus = false
     var viewportSizeDidChange: (() -> Void)?
     private var lastReportedViewportSize = NSSize.zero
+    private var isHandlingDirectUserFocus = false
+
+    override var acceptsFirstResponder: Bool {
+        !blocksProgrammaticFocus || isHandlingDirectUserFocus
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        guard !blocksProgrammaticFocus || isHandlingDirectUserFocus else {
+            return false
+        }
+
+        return super.becomeFirstResponder()
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
@@ -41,8 +59,21 @@ final class BrowserWKWebView: WKWebView {
         if event.modifierFlags.contains(.control) {
             showBrowserContextMenu(with: event)
         } else {
-            super.mouseDown(with: event)
+            allowDirectUserFocus {
+                super.mouseDown(with: event)
+            }
         }
+    }
+
+    func focusFromBrowserChrome() {
+        blocksProgrammaticFocus = false
+        window?.makeFirstResponder(self)
+    }
+
+    private func allowDirectUserFocus(_ action: () -> Void) {
+        isHandlingDirectUserFocus = true
+        action()
+        isHandlingDirectUserFocus = false
     }
 
     private func showBrowserContextMenu(with event: NSEvent) {
