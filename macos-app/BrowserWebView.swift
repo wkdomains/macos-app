@@ -28,8 +28,15 @@ protocol BrowserContextMenuDelegate: AnyObject {
 }
 
 final class BrowserWKWebView: WKWebView {
+    static let defaultWindowTitle = "wkdomains"
+
     weak var browserContextMenuDelegate: BrowserContextMenuDelegate?
     var blocksProgrammaticFocus = false
+    var browserWindowTitle = BrowserWKWebView.defaultWindowTitle {
+        didSet {
+            window?.title = browserWindowTitle
+        }
+    }
     var viewportSizeDidChange: (() -> Void)?
     private var lastReportedViewportSize = NSSize.zero
     private var isHandlingDirectUserFocus = false
@@ -44,6 +51,11 @@ final class BrowserWKWebView: WKWebView {
         }
 
         return super.becomeFirstResponder()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.title = browserWindowTitle
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -67,7 +79,17 @@ final class BrowserWKWebView: WKWebView {
 
     func focusFromBrowserChrome() {
         blocksProgrammaticFocus = false
+        guard !isLoading else {
+            resignBrowserChromeFocus()
+            return
+        }
+
+        guard window?.firstResponder !== self else { return }
         window?.makeFirstResponder(self)
+    }
+
+    func resignBrowserChromeFocus() {
+        blocksProgrammaticFocus = false
     }
 
     private func allowDirectUserFocus(_ action: () -> Void) {

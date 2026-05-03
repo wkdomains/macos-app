@@ -85,6 +85,11 @@ final class BrowserModel: NSObject, ObservableObject {
                 DispatchQueue.main.async {
                     self?.syncPageState(from: webView)
                 }
+            },
+            webView.observe(\.title, options: [.initial, .new]) { [weak self] webView, _ in
+                DispatchQueue.main.async {
+                    self?.syncWindowTitle(from: webView)
+                }
             }
         ]
     }
@@ -359,6 +364,15 @@ final class BrowserModel: NSObject, ObservableObject {
         canGoForward = webView.canGoForward
         estimatedProgress = webView.estimatedProgress
         isLoading = webView.isLoading
+    }
+
+    private func syncWindowTitle(from webView: WKWebView) {
+        let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let title, !title.isEmpty {
+            self.webView.browserWindowTitle = title
+        } else {
+            self.webView.browserWindowTitle = BrowserWKWebView.defaultWindowTitle
+        }
     }
 
     private func recordVisitedURL(_ url: URL) {

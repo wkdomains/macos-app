@@ -51,17 +51,22 @@ struct AddressBarTextField: NSViewRepresentable {
             nsView.stringValue = text
         }
 
-        guard isFocused else { return }
+        guard isFocused else {
+            nsView.hideFieldEditorInsertionPoint()
+            return
+        }
 
         DispatchQueue.main.async {
             guard nsView.window != nil,
                   nsView.window?.firstResponder !== nsView.currentEditor()
             else {
+                nsView.restoreFieldEditorInsertionPoint()
                 context.coordinator.selectAllIfNeeded(in: nsView)
                 return
             }
 
             nsView.window?.makeFirstResponder(nsView)
+            nsView.restoreFieldEditorInsertionPoint()
             context.coordinator.selectAllIfNeeded(in: nsView)
         }
     }
@@ -74,6 +79,10 @@ struct AddressBarTextField: NSViewRepresentable {
         }
 
         func controlTextDidBeginEditing(_ notification: Notification) {
+            if let textField = notification.object as? BrowserAddressNSTextField {
+                textField.restoreFieldEditorInsertionPoint()
+            }
+
             if !parent.isFocused {
                 parent.selectAllOnFocus = true
             }
@@ -97,6 +106,10 @@ struct AddressBarTextField: NSViewRepresentable {
         }
 
         func controlTextDidEndEditing(_ notification: Notification) {
+            if let textField = notification.object as? BrowserAddressNSTextField {
+                textField.restoreFieldEditorInsertionPoint()
+            }
+
             if parent.shouldPreserveFocus(),
                let textField = notification.object as? BrowserAddressNSTextField
             {
@@ -187,6 +200,40 @@ struct AddressBarTextField: NSViewRepresentable {
 
 final class BrowserAddressNSTextField: NSTextField {
     var onKeyDown: ((NSEvent) -> Bool)?
+    private var fieldEditorInsertionPointColor: NSColor?
+    private var fieldEditorWasEditable: Bool?
+
+    func hideFieldEditorInsertionPoint() {
+        guard let editor = currentEditor() as? NSTextView else { return }
+
+        if fieldEditorInsertionPointColor == nil {
+            fieldEditorInsertionPointColor = editor.insertionPointColor
+        }
+
+        if fieldEditorWasEditable == nil {
+            fieldEditorWasEditable = editor.isEditable
+        }
+
+        editor.insertionPointColor = .clear
+        editor.isEditable = false
+        editor.needsDisplay = true
+    }
+
+    func restoreFieldEditorInsertionPoint() {
+        guard let editor = currentEditor() as? NSTextView else { return }
+
+        if let fieldEditorInsertionPointColor {
+            editor.insertionPointColor = fieldEditorInsertionPointColor
+            self.fieldEditorInsertionPointColor = nil
+        }
+
+        if let fieldEditorWasEditable {
+            editor.isEditable = fieldEditorWasEditable
+            self.fieldEditorWasEditable = nil
+        }
+
+        editor.needsDisplay = true
+    }
 
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)

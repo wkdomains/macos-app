@@ -66,6 +66,7 @@ struct ContentView: View {
     @State private var isBotPanelVisible = false
     @State private var selectedSuggestionIndex: Int?
     @State private var shouldSelectAddressText = false
+    @State private var shouldFocusBrowserAfterLoad = false
     @State private var suggestionTask: Task<Void, Never>?
     @State private var suggestions: [AddressSuggestion] = []
 
@@ -96,6 +97,7 @@ struct ContentView: View {
             isAddressEditing = false
             isAddressFocused = false
             shouldSelectAddressText = false
+            shouldFocusBrowserAfterLoad = false
             hideSuggestions()
             focusBrowserContentWhenReady()
         }
@@ -112,10 +114,15 @@ struct ContentView: View {
         .onChange(of: browser.historyURLs) { _, _ in
             scheduleSuggestions(for: addressDraft)
         }
+        .onChange(of: browser.isLoading) { _, isLoading in
+            guard shouldFocusBrowserAfterLoad, !isLoading else { return }
+            focusPendingBrowserContent()
+        }
         .onChange(of: isAddressFocused) { _, isFocused in
             browser.webView.blocksProgrammaticFocus = isFocused
 
             if isFocused {
+                shouldFocusBrowserAfterLoad = false
                 hideSuggestions()
                 scheduleSuggestions(for: addressDraft)
             } else {
@@ -432,7 +439,7 @@ struct ContentView: View {
 
             if browser.loadAddress(addressDraft) {
                 addressDraft = browser.displayAddressText
-                focusBrowserContent()
+                focusBrowserContentAfterLoad()
             } else {
                 isAddressEditing = true
                 isAddressFocused = true
@@ -455,7 +462,7 @@ struct ContentView: View {
         }
 
         addressDraft = browser.displayAddressText
-        focusBrowserContent()
+        focusBrowserContentAfterLoad()
     }
 
     private func moveSuggestionSelection(_ delta: Int) -> Bool {
@@ -519,6 +526,7 @@ struct ContentView: View {
         }
 
         shouldSelectAddressText = selectAll
+        shouldFocusBrowserAfterLoad = false
         browser.webView.blocksProgrammaticFocus = true
         isAddressEditing = true
         isAddressFocused = true
@@ -539,6 +547,21 @@ struct ContentView: View {
         DispatchQueue.main.async {
             browser.webView.focusFromBrowserChrome()
         }
+    }
+
+    private func focusBrowserContentAfterLoad() {
+        shouldFocusBrowserAfterLoad = true
+        browser.webView.resignBrowserChromeFocus()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            focusPendingBrowserContent()
+        }
+    }
+
+    private func focusPendingBrowserContent() {
+        guard shouldFocusBrowserAfterLoad, !browser.isLoading else { return }
+        shouldFocusBrowserAfterLoad = false
+        focusBrowserContent()
     }
 
     private func focusBrowserContentWhenReady() {
