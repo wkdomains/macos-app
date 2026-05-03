@@ -296,7 +296,7 @@ final class BrowserModel: NSObject, ObservableObject {
             return
         }
 
-        presentSaveLoginSheet(usernameTarget: usernameTarget, passwordTarget: passwordTarget)
+        armLoginCapture(usernameTarget: usernameTarget, passwordTarget: passwordTarget)
     }
 
     func fillSavedLoginForCurrentSite() {
@@ -540,6 +540,7 @@ final class BrowserModel: NSObject, ObservableObject {
         userContentController.removeScriptMessageHandler(forName: "wkdomainsXHR")
         userContentController.removeScriptMessageHandler(forName: "wkdomainsRender")
         userContentController.removeScriptMessageHandler(forName: "wkdomainsConsole")
+        userContentController.removeScriptMessageHandler(forName: "wkdomainsLogin")
     }
 
     private func resetXHRTracking(for url: URL?) {
@@ -661,76 +662,43 @@ final class BrowserModel: NSObject, ObservableObject {
         refreshSiteIdentityState()
     }
 
-    private func presentSaveLoginSheet(
+    private func armLoginCapture(
         usernameTarget: LoginFieldTarget,
         passwordTarget: LoginFieldTarget
     ) {
-        guard let currentURL = webView.url,
-              let window = webView.window
+        guard let data = try? JSONEncoder().encode([
+            "usernameTarget": usernameTarget,
+            "passwordTarget": passwordTarget
+        ]),
+              let json = String(data: data, encoding: .utf8)
         else {
             return
         }
 
-        let existingLogin = loginStore.login(for: currentURL)
+        webView.evaluateJavaScript(Self.loginCaptureScript(targetsJSON: json))
+    }
 
-        let alert = NSAlert()
-        alert.messageText = "Save Login"
-        alert.informativeText = "Save a plaintext login for \(currentURL.host ?? "this site"). wkdomains will fill the selected fields next time."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Save Login")
-        alert.addButton(withTitle: "Cancel")
-
-        let usernameField = NSTextField(string: existingLogin?.username ?? usernameTarget.value ?? "")
-        usernameField.placeholderString = "Username"
-        usernameField.controlSize = .large
-        usernameField.translatesAutoresizingMaskIntoConstraints = false
-
-        let passwordField = NSSecureTextField(string: existingLogin?.password ?? passwordTarget.value ?? "")
-        passwordField.placeholderString = "Password"
-        passwordField.controlSize = .large
-        passwordField.translatesAutoresizingMaskIntoConstraints = false
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.spacing = 8
-        stack.alignment = .leading
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        let usernameLabel = NSTextField(labelWithString: "Username")
-        usernameLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
-        let passwordLabel = NSTextField(labelWithString: "Password")
-        passwordLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
-
-        for view in [usernameLabel, usernameField, passwordLabel, passwordField] {
-            stack.addArrangedSubview(view)
+    private func saveCapturedLogin(_ message: [String: Any]) {
+        guard let currentURL = (message["pageURL"] as? String).flatMap(URL.init(string:)) ?? webView.url,
+              let usernameTarget = pendingLoginUsernameTarget,
+              let passwordTarget = pendingLoginPasswordTarget,
+              let username = message["username"] as? String,
+              let password = message["password"] as? String,
+              !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !password.isEmpty
+        else {
+            return
         }
 
-        NSLayoutConstraint.activate([
-            usernameField.widthAnchor.constraint(equalToConstant: 320),
-            passwordField.widthAnchor.constraint(equalTo: usernameField.widthAnchor)
-        ])
-
-        alert.accessoryView = stack
-
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn,
-                  let self,
-                  let currentURL = self.webView.url
-            else {
-                return
-            }
-
-            self.loginStore.save(
-                username: usernameField.stringValue,
-                password: passwordField.stringValue,
-                usernameTarget: usernameTarget,
-                passwordTarget: passwordTarget,
-                for: currentURL
-            )
-            self.pendingLoginUsernameTarget = nil
-            self.pendingLoginPasswordTarget = nil
-            self.fillSavedLoginForCurrentSite(reportsMissingLogin: false)
-        }
+        loginStore.save(
+            username: username,
+            password: password,
+            usernameTarget: usernameTarget,
+            passwordTarget: passwordTarget,
+            for: currentURL
+        )
+        pendingLoginUsernameTarget = nil
+        pendingLoginPasswordTarget = nil
     }
 
     private func fillSavedLoginForCurrentSite(reportsMissingLogin: Bool) {
@@ -844,6 +812,117 @@ final class BrowserModel: NSObject, ObservableObject {
         return nil
     }
 
+    private static func loginCaptureScript(targetsJSON: String) -> String {
+        """
+        (() => {
+          const targets = \(targetsJSON);
+          window.__wkdomainsLoginCapture = targets;
+
+          const escapeCSS = (value) => {
+            if (window.CSS && CSS.escape) return CSS.escape(value);
+            return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\\\$&");
+          };
+
+          const controlsIn = (root) => Array.from((root || document).querySelectorAll("input, textarea, select"));
+          const fieldMatches = (field, target) => {
+            if (!field || !target) return false;
+            const tag = field.tagName ? field.tagName.toLowerCase() : null;
+            const type = field.getAttribute ? field.getAttribute("type") : null;
+            const name = field.getAttribute ? field.getAttribute("name") : null;
+            if (target.tag && tag !== target.tag) return false;
+            if (target.name && name !== target.name) return false;
+            if (target.type && type !== target.type) return false;
+            return true;
+          };
+
+          const findBySelector = (target) => {
+            if (!target.cssPath) return null;
+            try {
+              const field = document.querySelector(target.cssPath);
+              return fieldMatches(field, target) ? field : null;
+            } catch (_) {
+              return null;
+            }
+          };
+
+          const findByID = (target) => {
+            if (!target.id) return null;
+            const matches = document.querySelectorAll(`#${escapeCSS(target.id)}`);
+            if (matches.length !== 1) return null;
+            return fieldMatches(matches[0], target) ? matches[0] : null;
+          };
+
+          const findByFormPosition = (target) => {
+            if (target.formIndex === null || target.formIndex === undefined) return null;
+            if (target.fieldIndex === null || target.fieldIndex === undefined) return null;
+            const form = document.querySelectorAll("form")[target.formIndex];
+            if (!form) return null;
+            const field = controlsIn(form)[target.fieldIndex];
+            return fieldMatches(field, target) ? field : null;
+          };
+
+          const findByName = (target) => {
+            if (!target.name) return null;
+            const selector = `[name="${escapeCSS(target.name)}"]`;
+            const root = target.formIndex === null || target.formIndex === undefined
+              ? document
+              : document.querySelectorAll("form")[target.formIndex] || document;
+            const matches = Array.from(root.querySelectorAll(selector));
+            return matches.find((field) => fieldMatches(field, target)) || null;
+          };
+
+          const findByGlobalPosition = (target) => {
+            if (target.fieldIndex === null || target.fieldIndex === undefined) return null;
+            const field = controlsIn(document)[target.fieldIndex];
+            return fieldMatches(field, target) ? field : null;
+          };
+
+          const findField = (target) => (
+            findBySelector(target)
+              || findByID(target)
+              || findByFormPosition(target)
+              || findByName(target)
+              || findByGlobalPosition(target)
+          );
+
+          const capture = () => {
+            const currentTargets = window.__wkdomainsLoginCapture;
+            if (!currentTargets) return;
+
+            const usernameField = findField(currentTargets.usernameTarget);
+            const passwordField = findField(currentTargets.passwordTarget);
+            const username = usernameField ? usernameField.value || "" : "";
+            const password = passwordField ? passwordField.value || "" : "";
+            if (!username.trim() || !password) return;
+
+            window.webkit.messageHandlers.wkdomainsLogin.postMessage({
+              pageURL: location.href,
+              username,
+              password
+            });
+          };
+
+          if (!window.__wkdomainsLoginCaptureInstalled) {
+            window.__wkdomainsLoginCaptureInstalled = true;
+            document.addEventListener("submit", capture, true);
+            document.addEventListener("click", (event) => {
+              const element = event.target && event.target.closest
+                ? event.target.closest("button, input[type='submit'], input[type='button']")
+                : null;
+              if (element) capture();
+            }, true);
+            document.addEventListener("keydown", (event) => {
+              if (event.key === "Enter") capture();
+            }, true);
+            window.addEventListener("beforeunload", capture);
+          }
+
+          capture();
+          return true;
+        })()
+        """
+    }
+
     private static func loginFillScript(entryJSON: String) -> String {
         """
         (() => {
@@ -942,6 +1021,7 @@ final class BrowserModel: NSObject, ObservableObject {
         userContentController.add(self, name: "wkdomainsXHR")
         userContentController.add(self, name: "wkdomainsRender")
         userContentController.add(self, name: "wkdomainsConsole")
+        userContentController.add(self, name: "wkdomainsLogin")
         installPageTrackingUserScripts(on: userContentController)
     }
 
@@ -1130,6 +1210,8 @@ extension BrowserModel: WKScriptMessageHandler {
             markScreenshotDirty(scheduleAfter: 0.35)
         case "wkdomainsConsole":
             recordConsoleMessage(body)
+        case "wkdomainsLogin":
+            saveCapturedLogin(body)
         default:
             return
         }
