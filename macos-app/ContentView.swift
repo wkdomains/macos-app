@@ -126,7 +126,10 @@ struct ContentView: View {
             botControls
 
             Button {
+                hideSuggestions()
+                isAddressFocused = false
                 browser.loadCurrentAddress()
+                focusBrowserContent()
             } label: {
                 Image(systemName: "arrow.right")
                     .font(.system(size: 14, weight: .semibold))
@@ -386,7 +389,9 @@ struct ContentView: View {
             selectSuggestion(addressCompletion.suggestion)
         } else {
             hideSuggestions()
+            isAddressFocused = false
             browser.loadCurrentAddress()
+            focusBrowserContent()
         }
     }
 
@@ -400,6 +405,7 @@ struct ContentView: View {
         case .search:
             browser.searchGoogle(for: suggestion.title)
         }
+        focusBrowserContent()
     }
 
     private func selectPreviousSuggestion() {
@@ -462,6 +468,12 @@ struct ContentView: View {
 
                 fieldEditor.selectAll(nil)
             }
+        }
+    }
+
+    private func focusBrowserContent() {
+        DispatchQueue.main.async {
+            browser.webView.window?.makeFirstResponder(browser.webView)
         }
     }
 
