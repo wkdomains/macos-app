@@ -184,6 +184,14 @@ struct AddressBarTextField: NSViewRepresentable {
 final class BrowserAddressNSTextField: NSTextField {
     var onKeyDown: ((NSEvent) -> Bool)?
 
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+
+        DispatchQueue.main.async { [weak self] in
+            self?.currentEditor()?.selectAll(nil)
+        }
+    }
+
     override func keyDown(with event: NSEvent) {
         if onKeyDown?(event) == true {
             return
