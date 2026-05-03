@@ -104,6 +104,19 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.load(URLRequest(url: url))
     }
 
+    func searchGoogle(for query: String) {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return }
+
+        var components = URLComponents(string: "https://www.google.com/search")
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: trimmedQuery)
+        ]
+
+        guard let url = components?.url else { return }
+        load(url)
+    }
+
     func goBack() {
         guard webView.canGoBack else { return }
         errorMessage = nil
