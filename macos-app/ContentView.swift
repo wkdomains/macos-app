@@ -30,6 +30,12 @@ private struct AddressSuggestion: Identifiable {
     }
 }
 
+private struct AddressHistorySuggestionMatch {
+    let rank: Int
+    let offset: Int
+    let suggestion: AddressSuggestion
+}
+
 struct ContentView: View {
     @ObservedObject var browser: BrowserModel
     @FocusState private var isAddressFocused: Bool
@@ -425,27 +431,31 @@ struct ContentView: View {
 
     private static func historySuggestions(for query: String, historyURLs: [String]) -> [AddressSuggestion] {
         let normalizedQuery = query.lowercased()
+        var matches: [AddressHistorySuggestionMatch] = []
 
-        return historyURLs.enumerated().compactMap { offset, rawURL in
+        for (offset, rawURL) in historyURLs.enumerated() {
             guard let url = URL(string: rawURL),
                   let rank = historyRank(for: url, normalizedQuery: normalizedQuery)
             else {
-                return nil
+                continue
             }
 
             let title = historyTitle(for: url)
-            return (
-                rank: rank,
-                offset: offset,
-                suggestion: AddressSuggestion(
-                    id: "history-\(url.absoluteString)",
-                    title: title,
-                    kind: .history(url),
-                    faviconURL: faviconURL(for: url)
+            matches.append(
+                AddressHistorySuggestionMatch(
+                    rank: rank,
+                    offset: offset,
+                    suggestion: AddressSuggestion(
+                        id: "history-\(url.absoluteString)",
+                        title: title,
+                        kind: .history(url),
+                        faviconURL: faviconURL(for: url)
+                    )
                 )
             )
         }
-        .sorted { lhs, rhs in
+
+        return matches.sorted { lhs, rhs in
             if lhs.rank != rhs.rank {
                 return lhs.rank < rhs.rank
             }
