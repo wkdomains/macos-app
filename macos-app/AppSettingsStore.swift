@@ -35,6 +35,7 @@ struct AppSettings: Codable {
     var lastDomain: String
     var historyURLs: [String]
     var dark: Bool
+    var darkDisabledSites: [String]
     var siteIdentities: [String: [SiteIdentity]]
     var activeSiteIdentityIDs: [String: UUID]
 
@@ -45,6 +46,7 @@ struct AppSettings: Codable {
             lastDomain: URL(string: defaultURL)?.host ?? "wkdomains.com",
             historyURLs: [defaultURL],
             dark: true,
+            darkDisabledSites: [],
             siteIdentities: [:],
             activeSiteIdentityIDs: [:]
         )
@@ -56,6 +58,7 @@ struct AppSettings: Codable {
         lastDomain: String,
         historyURLs: [String],
         dark: Bool,
+        darkDisabledSites: [String],
         siteIdentities: [String: [SiteIdentity]],
         activeSiteIdentityIDs: [String: UUID]
     ) {
@@ -64,6 +67,7 @@ struct AppSettings: Codable {
         self.lastDomain = lastDomain
         self.historyURLs = historyURLs
         self.dark = dark
+        self.darkDisabledSites = darkDisabledSites
         self.siteIdentities = siteIdentities
         self.activeSiteIdentityIDs = activeSiteIdentityIDs
     }
@@ -78,6 +82,7 @@ struct AppSettings: Codable {
             ?? "wkdomains.com"
         historyURLs = try container.decodeIfPresent([String].self, forKey: .historyURLs) ?? []
         dark = try container.decodeIfPresent(Bool.self, forKey: .dark) ?? true
+        darkDisabledSites = try container.decodeIfPresent([String].self, forKey: .darkDisabledSites) ?? []
         siteIdentities = try container.decodeIfPresent([String: [SiteIdentity]].self, forKey: .siteIdentities) ?? [:]
         activeSiteIdentityIDs = try container.decodeIfPresent([String: UUID].self, forKey: .activeSiteIdentityIDs) ?? [:]
     }
@@ -119,6 +124,37 @@ final class AppSettingsStore {
 
     var startupURL: URL {
         Self.validURL(from: cachedSettings.lastURL) ?? URL(string: AppSettings.defaultURL)!
+    }
+
+    var darkDisabledSites: [String] {
+        cachedSettings.darkDisabledSites
+    }
+
+    var isGlobalDarkModeEnabled: Bool {
+        cachedSettings.dark
+    }
+
+    func usesDarkMode(for url: URL?) -> Bool {
+        cachedSettings.dark && !isDarkModeDisabled(for: url)
+    }
+
+    func isDarkModeDisabled(for url: URL?) -> Bool {
+        guard let host = url.flatMap(Self.normalizedHost(for:)) else { return false }
+        return Set(cachedSettings.darkDisabledSites).contains(host)
+    }
+
+    func toggleDarkModeDisabled(for url: URL) {
+        guard let host = Self.normalizedHost(for: url) else { return }
+
+        var disabledSites = Set(cachedSettings.darkDisabledSites)
+        if disabledSites.contains(host) {
+            disabledSites.remove(host)
+        } else {
+            disabledSites.insert(host)
+        }
+
+        cachedSettings.darkDisabledSites = disabledSites.sorted()
+        write(cachedSettings)
     }
 
     func activeIdentityID(for url: URL) -> UUID? {
@@ -331,7 +367,11 @@ final class AppSettingsStore {
 
     nonisolated private static func siteKey(for url: URL) -> String? {
         guard let host = url.host?.lowercased() else { return nil }
-        return DomainUtilities.registrableDomain(from: host)
+        return siteKey(forHost: host)
+    }
+
+    nonisolated private static func siteKey(forHost host: String) -> String {
+        DomainUtilities.registrableDomain(from: host)
     }
 
     private func write(_ settings: AppSettings) {
@@ -371,11 +411,52 @@ final class AppSettingsStore {
         }
 
         settings.historyURLs = historyByPrepending(settings.lastURL, to: settings.historyURLs)
+        settings.darkDisabledSites = normalizedHosts(settings.darkDisabledSites)
         settings.siteIdentities = normalizedSiteIdentities(settings.siteIdentities)
         settings.activeSiteIdentityIDs = settings.activeSiteIdentityIDs.filter { siteKey, identityID in
             settings.siteIdentities[siteKey]?.contains(where: { $0.id == identityID }) == true
         }
         return settings
+    }
+
+    private static func normalizedHosts(_ values: [String]) -> [String] {
+        Array(Set(values.compactMap(normalizedHost))).sorted()
+    }
+
+    private static func normalizedHost(from value: String) -> String? {
+        var trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return nil }
+
+        if let url = URL(string: trimmed),
+           let host = url.host
+        {
+            return normalizedHost(host)
+        }
+
+        if trimmed.hasPrefix("*.") {
+            trimmed.removeFirst(2)
+        }
+
+        if let slashIndex = trimmed.firstIndex(of: "/") {
+            trimmed = String(trimmed[..<slashIndex])
+        }
+
+        if let colonIndex = trimmed.firstIndex(of: ":") {
+            trimmed = String(trimmed[..<colonIndex])
+        }
+
+        trimmed = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !trimmed.isEmpty else { return nil }
+        return normalizedHost(trimmed)
+    }
+
+    private static func normalizedHost(for url: URL) -> String? {
+        guard let host = url.host else { return nil }
+        return normalizedHost(host)
+    }
+
+    private static func normalizedHost(_ host: String) -> String {
+        host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
     }
 
     private static func normalizedSiteIdentities(_ identitiesBySite: [String: [SiteIdentity]]) -> [String: [SiteIdentity]] {

@@ -5,6 +5,8 @@
 //  Created by aa on 5/2/26.
 //
 
+import Foundation
+
 extension BrowserModel {
     static let xhrTrackingScript = """
     (() => {
@@ -332,11 +334,24 @@ extension BrowserModel {
     })();
     """
 
-    static let forcedDarkModeScript = """
+    private static func javaScriptStringLiteral(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+        return "\"\(escaped)\""
+    }
+
+    static func forcedDarkModeScript(disabledSites: [String]) -> String {
+        let disabledSiteList = disabledSites.map(javaScriptStringLiteral).joined(separator: ", ")
+
+        return """
     (() => {
       if (window.__wkdomainsDarkModeInstalled) return;
       window.__wkdomainsDarkModeInstalled = true;
 
+      const DISABLED_SITES = new Set([\(disabledSiteList)]);
       const STYLE_ID = "wkdomains-forced-dark-style";
       const ROOT_ATTRIBUTE = "data-wkdomains-forced-dark";
       const READY_ATTRIBUTE = "data-wkdomains-forced-dark-ready";
@@ -358,6 +373,11 @@ extension BrowserModel {
         "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor",
         "outlineColor", "columnRuleColor", "textDecorationColor"
       ];
+
+      const currentHost = String(location.hostname || "").toLowerCase().replace(/^\\.+|\\.+$/g, "");
+      if (DISABLED_SITES.has(currentHost)) {
+        return;
+      }
 
       let forced = null;
       let scheduled = false;
@@ -886,6 +906,7 @@ extension BrowserModel {
       }
     })();
     """
+    }
 
     static let consoleTrackingScript = """
     (() => {

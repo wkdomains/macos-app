@@ -56,7 +56,10 @@ final class BrowserModel: NSObject, ObservableObject {
         self.activeIdentityID = activeIdentityID ?? settingsStore.activeIdentityID(for: settingsStore.startupURL)
 
         let initialDataStore = dataStore ?? Self.websiteDataStore(for: self.activeIdentityID)
-        webView = Self.makeWebView(dataStore: initialDataStore, usesDarkMode: settingsStore.settings.dark)
+        webView = Self.makeWebView(
+            dataStore: initialDataStore,
+            usesDarkMode: settingsStore.usesDarkMode(for: settingsStore.startupURL)
+        )
 
         super.init()
 
@@ -225,6 +228,27 @@ final class BrowserModel: NSObject, ObservableObject {
         refreshSiteIdentityState()
     }
 
+    var canToggleDarkThemeForCurrentSite: Bool {
+        settingsStore.isGlobalDarkModeEnabled && webView.url?.host != nil
+    }
+
+    var currentSiteUsesDarkTheme: Bool {
+        settingsStore.usesDarkMode(for: webView.url)
+    }
+
+    func toggleDarkThemeForCurrentSite() {
+        guard settingsStore.isGlobalDarkModeEnabled,
+              let currentURL = webView.url
+        else {
+            return
+        }
+
+        settingsStore.toggleDarkModeDisabled(for: currentURL)
+        refreshDarkModeState(for: currentURL)
+        reinstallPageTrackingUserScripts()
+        webView.reload()
+    }
+
     func xhrRequests(for host: String) -> [XHRRequestRecord] {
         let normalizedHost = Self.normalizedHost(host)
 
@@ -322,6 +346,7 @@ final class BrowserModel: NSObject, ObservableObject {
         isSecurePage = url.scheme?.lowercased() == "https"
         navigationFallbacks = fallbackURLs
         resetXHRTracking(for: url)
+        refreshDarkModeState(for: url)
 
         webView.load(URLRequest(url: url))
     }
@@ -346,7 +371,7 @@ final class BrowserModel: NSObject, ObservableObject {
 
         let nextWebView = Self.makeWebView(
             dataStore: Self.websiteDataStore(for: identityID),
-            usesDarkMode: settingsStore.settings.dark
+            usesDarkMode: settingsStore.usesDarkMode(for: url)
         )
         configure(nextWebView)
         webView = nextWebView
@@ -460,6 +485,7 @@ final class BrowserModel: NSObject, ObservableObject {
         if let url = webView.url {
             displayAddressText = url.absoluteString
             isSecurePage = url.scheme?.lowercased() == "https"
+            refreshDarkModeState(for: url)
         }
 
         canGoBack = webView.canGoBack
@@ -490,6 +516,10 @@ final class BrowserModel: NSObject, ObservableObject {
             for: webView.url,
             activeIdentityID: activeIdentityID
         )
+    }
+
+    private func refreshDarkModeState(for url: URL?) {
+        webView.configureForcedDarkPageBackground(settingsStore.usesDarkMode(for: url))
     }
 
     private static func normalizedHost(_ host: String) -> String {
@@ -535,6 +565,16 @@ final class BrowserModel: NSObject, ObservableObject {
         userContentController.add(self, name: "wkdomainsXHR")
         userContentController.add(self, name: "wkdomainsRender")
         userContentController.add(self, name: "wkdomainsConsole")
+        installPageTrackingUserScripts(on: userContentController)
+    }
+
+    private func reinstallPageTrackingUserScripts() {
+        let userContentController = webView.configuration.userContentController
+        userContentController.removeAllUserScripts()
+        installPageTrackingUserScripts(on: userContentController)
+    }
+
+    private func installPageTrackingUserScripts(on userContentController: WKUserContentController) {
         userContentController.addUserScript(
             WKUserScript(
                 source: Self.xhrTrackingScript,
@@ -552,7 +592,7 @@ final class BrowserModel: NSObject, ObservableObject {
         if settingsStore.settings.dark {
             userContentController.addUserScript(
                 WKUserScript(
-                    source: Self.forcedDarkModeScript,
+                    source: Self.forcedDarkModeScript(disabledSites: settingsStore.darkDisabledSites),
                     injectionTime: .atDocumentStart,
                     forMainFrameOnly: true
                 )
@@ -780,6 +820,7 @@ extension BrowserModel: WKNavigationDelegate {
             return
         }
 
+        refreshDarkModeState(for: url)
         decisionHandler(.allow)
     }
 

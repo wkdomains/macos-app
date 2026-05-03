@@ -27,8 +27,11 @@ protocol BrowserContextMenuDelegate: AnyObject {
     func clearCookiesForCurrentDomain()
     func createFreshSiteIdentityForCurrentSite()
     func switchToSiteIdentity(_ menuItemID: String)
+    func toggleDarkThemeForCurrentSite()
     var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] { get }
     var currentIdentityName: String { get }
+    var canToggleDarkThemeForCurrentSite: Bool { get }
+    var currentSiteUsesDarkTheme: Bool { get }
 }
 
 final class BrowserWKWebView: WKWebView {
@@ -204,6 +207,18 @@ final class BrowserWKWebView: WKWebView {
             menu.addItem(copyLinkItem)
         }
 
+        menu.addItem(NSMenuItem.separator())
+
+        let toggleDarkItem = NSMenuItem(
+            title: "Toggle Dark",
+            action: #selector(toggleDarkFromContextMenu),
+            keyEquivalent: ""
+        )
+        toggleDarkItem.target = self
+        toggleDarkItem.isEnabled = browserContextMenuDelegate?.canToggleDarkThemeForCurrentSite == true
+        toggleDarkItem.state = browserContextMenuDelegate?.currentSiteUsesDarkTheme == true ? .on : .off
+        menu.addItem(toggleDarkItem)
+
         return menu
     }
 
@@ -318,6 +333,10 @@ final class BrowserWKWebView: WKWebView {
     @objc private func switchIdentityFromContextMenu(_ sender: NSMenuItem) {
         guard let menuItemID = sender.representedObject as? String else { return }
         browserContextMenuDelegate?.switchToSiteIdentity(menuItemID)
+    }
+
+    @objc private func toggleDarkFromContextMenu() {
+        browserContextMenuDelegate?.toggleDarkThemeForCurrentSite()
     }
 
     @objc private func copyLinkFromContextMenu(_ sender: NSMenuItem) {
