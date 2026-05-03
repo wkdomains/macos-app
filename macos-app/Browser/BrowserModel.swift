@@ -363,8 +363,8 @@ final class BrowserModel: NSObject, ObservableObject {
 
     func sortedXHRRequests(for host: String) -> [XHRRequestRecord] {
         xhrRequests(for: host).sorted { left, right in
-            let leftBytes = left.responseBytes ?? -1
-            let rightBytes = right.responseBytes ?? -1
+            let leftBytes = Self.xhrResponseByteSortKey(left)
+            let rightBytes = Self.xhrResponseByteSortKey(right)
 
             if leftBytes == rightBytes {
                 return left.startedAt < right.startedAt
@@ -827,6 +827,10 @@ final class BrowserModel: NSObject, ObservableObject {
 
     private func refreshDarkModeState(for url: URL?) {
         webView.configureForcedDarkPageBackground(settingsStore.usesDarkMode(for: url))
+    }
+
+    private static func xhrResponseByteSortKey(_ record: XHRRequestRecord) -> Int {
+        record.responseBytes ?? -1
     }
 
     private static let xhrMenuByteFormatter: ByteCountFormatter = {
