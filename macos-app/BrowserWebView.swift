@@ -406,12 +406,20 @@ final class BrowserWKWebView: WKWebView {
             accessory = existingAccessory
             if bookmarkTitlebarWindow !== window {
                 removeBookmarkTitlebarAccessory(existingAccessory, from: bookmarkTitlebarWindow)
+                existingAccessory.bookmarkURLs = bookmarkURLs
+                existingAccessory.openBookmark = { [weak self] url in
+                    self?.openBookmark?(url)
+                }
                 window.addTitlebarAccessoryViewController(existingAccessory)
                 bookmarkTitlebarWindow = window
             }
         } else {
             accessory = BookmarkTitlebarAccessoryViewController()
             accessory.layoutAttribute = .left
+            accessory.bookmarkURLs = bookmarkURLs
+            accessory.openBookmark = { [weak self] url in
+                self?.openBookmark?(url)
+            }
             bookmarkTitlebarAccessory = accessory
             window.addTitlebarAccessoryViewController(accessory)
             bookmarkTitlebarWindow = window
@@ -446,60 +454,49 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
 
     var openBookmark: ((URL) -> Void)?
 
-    private let stackView = NSStackView()
     private var cachedFavicons: [String: NSImage] = [:]
     private var requestedFavicons = Set<String>()
     private var failedFavicons = Set<String>()
+    private let iconSize: CGFloat = 20
+    private let buttonSize: CGFloat = 24
+    private let buttonSpacing: CGFloat = 4
+    private let horizontalInset: CGFloat = 8
+    private let accessoryHeight: CGFloat = 28
 
     override func loadView() {
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-
-        stackView.orientation = .horizontal
-        stackView.alignment = .centerY
-        stackView.spacing = 4
-        stackView.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-
-        container.addSubview(stackView)
-        NSLayoutConstraint.activate([
-            stackView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            stackView.topAnchor.constraint(equalTo: container.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            stackView.heightAnchor.constraint(greaterThanOrEqualToConstant: 28)
-        ])
-
-        view = container
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 0, height: accessoryHeight))
     }
 
     private func renderButtons() {
         loadViewIfNeeded()
 
-        for view in stackView.arrangedSubviews {
-            stackView.removeArrangedSubview(view)
-            view.removeFromSuperview()
+        for subview in view.subviews {
+            subview.removeFromSuperview()
         }
 
+        let width = accessoryWidth(for: bookmarkURLs.count)
+        view.setFrameSize(NSSize(width: width, height: accessoryHeight))
+
         for (index, url) in bookmarkURLs.enumerated() {
-            let button = NSButton(frame: .zero)
+            let button = NSButton(
+                frame: NSRect(
+                    x: horizontalInset + (CGFloat(index) * (buttonSize + buttonSpacing)),
+                    y: (accessoryHeight - buttonSize) / 2,
+                    width: buttonSize,
+                    height: buttonSize
+                )
+            )
             button.bezelStyle = .texturedRounded
             button.isBordered = false
             button.imagePosition = .imageOnly
             button.imageScaling = .scaleProportionallyDown
-            button.image = favicon(for: url) ?? placeholderImage()
+            button.image = preparedImage(favicon(for: url) ?? placeholderImage())
             button.target = self
             button.action = #selector(openBookmarkFromTitlebar(_:))
             button.tag = index
             button.toolTip = titlebarTooltip(for: url)
-            button.translatesAutoresizingMaskIntoConstraints = false
 
-            NSLayoutConstraint.activate([
-                button.widthAnchor.constraint(equalToConstant: 24),
-                button.heightAnchor.constraint(equalToConstant: 24)
-            ])
-
-            stackView.addArrangedSubview(button)
+            view.addSubview(button)
         }
     }
 
@@ -541,6 +538,13 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
         NSImage(systemSymbolName: "globe", accessibilityDescription: "Bookmark")
     }
 
+    private func preparedImage(_ image: NSImage?) -> NSImage? {
+        guard let image else { return nil }
+
+        image.size = NSSize(width: iconSize, height: iconSize)
+        return image
+    }
+
     private func titlebarTooltip(for url: URL) -> String {
         guard let host = url.host else {
             return url.absoluteString
@@ -573,5 +577,11 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
         ]
 
         return components.url
+    }
+
+    private func accessoryWidth(for bookmarkCount: Int) -> CGFloat {
+        guard bookmarkCount > 0 else { return 0 }
+        let spacing = CGFloat(max(0, bookmarkCount - 1)) * buttonSpacing
+        return (horizontalInset * 2) + (CGFloat(bookmarkCount) * buttonSize) + spacing
     }
 }
