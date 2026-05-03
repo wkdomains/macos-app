@@ -61,6 +61,7 @@ private struct AddressCompletion {
 struct ContentView: View {
     @ObservedObject var browser: BrowserModel
     @State private var addressDraft = ""
+    @State private var isAddressEditing = false
     @State private var isAddressFocused = false
     @State private var isBotPanelVisible = false
     @State private var selectedSuggestionIndex: Int?
@@ -92,6 +93,7 @@ struct ContentView: View {
         }
         .onAppear {
             addressDraft = browser.displayAddressText
+            isAddressEditing = false
             isAddressFocused = false
             shouldSelectAddressText = false
             hideSuggestions()
@@ -118,7 +120,7 @@ struct ContentView: View {
                 scheduleSuggestions(for: addressDraft)
             } else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                    guard !isAddressFocused else { return }
+                    guard !isAddressFocused, !isAddressEditing else { return }
                     hideSuggestions()
                     addressDraft = browser.displayAddressText
                 }
@@ -127,7 +129,7 @@ struct ContentView: View {
     }
 
     private var browserToolbar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             BrowserToolbarButton(
                 systemName: "chevron.left",
                 accessibilityLabel: "Back",
@@ -160,30 +162,18 @@ struct ContentView: View {
             viewportControls
 
             botControls
-
-            Button {
-                submitAddressField()
-            } label: {
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .disabled(addressDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityLabel("Go")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
         .background(.bar)
     }
 
     private var addressBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             Image(systemName: browser.isSecurePage ? "lock.fill" : "magnifyingglass")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(browser.isSecurePage ? .green : .secondary)
-                .frame(width: 18)
+                .frame(width: 16)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     focusAddressBar(selectAll: true)
@@ -199,15 +189,15 @@ struct ContentView: View {
                     focusAddressBar(selectAll: false, syncToCommittedURL: false)
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Clear address")
             }
         }
-        .padding(.horizontal, 12)
-        .frame(height: 38)
+        .padding(.horizontal, 10)
+        .frame(height: 32)
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -227,7 +217,7 @@ struct ContentView: View {
         .overlay(alignment: .topLeading) {
             if shouldShowSuggestions {
                 suggestionMenu
-                    .offset(y: 44)
+                    .offset(y: 38)
             }
         }
         .zIndex(20)
@@ -250,6 +240,7 @@ struct ContentView: View {
 
             AddressBarTextField(
                 text: $addressDraft,
+                isEditing: $isAddressEditing,
                 isFocused: $isAddressFocused,
                 selectAllOnFocus: $shouldSelectAddressText,
                 placeholder: "Search or enter a website",
@@ -307,11 +298,11 @@ struct ContentView: View {
     }
 
     private var shouldShowSuggestions: Bool {
-        isAddressFocused && !suggestions.isEmpty
+        isAddressEditing && !suggestions.isEmpty
     }
 
     private var addressCompletion: AddressCompletion? {
-        guard isAddressFocused,
+        guard isAddressEditing,
               selectedSuggestionIndex == nil,
               let suggestion = suggestions.first,
               suggestion.canInlineComplete
@@ -380,7 +371,7 @@ struct ContentView: View {
         selectedSuggestionIndex = nil
 
         let query = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isAddressFocused, !query.isEmpty else {
+        guard isAddressEditing, !query.isEmpty else {
             suggestions = []
             return
         }
@@ -402,7 +393,7 @@ struct ContentView: View {
 
             await MainActor.run {
                 guard !Task.isCancelled,
-                      isAddressFocused,
+                      isAddressEditing,
                       addressDraft.trimmingCharacters(in: .whitespacesAndNewlines) == query
                 else {
                     return
@@ -436,12 +427,14 @@ struct ContentView: View {
             selectSuggestion(suggestions[selectedSuggestionIndex])
         } else {
             hideSuggestions()
+            isAddressEditing = false
             isAddressFocused = false
 
             if browser.loadAddress(addressDraft) {
                 addressDraft = browser.displayAddressText
                 focusBrowserContent()
             } else {
+                isAddressEditing = true
                 isAddressFocused = true
             }
         }
@@ -449,6 +442,7 @@ struct ContentView: View {
 
     private func selectSuggestion(_ suggestion: AddressSuggestion) {
         hideSuggestions()
+        isAddressEditing = false
         isAddressFocused = false
 
         switch suggestion.kind {
@@ -514,6 +508,7 @@ struct ContentView: View {
     private func cancelAddressEditing() {
         hideSuggestions()
         addressDraft = browser.displayAddressText
+        isAddressEditing = false
         isAddressFocused = false
         focusBrowserContent()
     }
@@ -525,11 +520,12 @@ struct ContentView: View {
 
         shouldSelectAddressText = selectAll
         browser.webView.blocksProgrammaticFocus = true
+        isAddressEditing = true
         isAddressFocused = true
     }
 
     private func shouldPreserveAddressFocus() -> Bool {
-        guard isAddressFocused, NSApp.isActive else { return false }
+        guard isAddressEditing, NSApp.isActive else { return false }
 
         switch NSApp.currentEvent?.type {
         case .leftMouseDown?, .rightMouseDown?, .otherMouseDown?:
@@ -799,39 +795,30 @@ struct ContentView: View {
     }
 
     private var viewportControls: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 1) {
             ForEach(BrowserViewportMode.allCases) { mode in
                 Button {
                     browser.setViewportMode(mode)
                 } label: {
                     Image(systemName: mode.systemName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 30, height: 30)
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(browser.viewportMode == mode ? Color.accentColor : .secondary)
                 .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .fill(browser.viewportMode == mode ? Color.accentColor.opacity(0.14) : Color.clear)
                 )
                 .accessibilityLabel(mode.accessibilityLabel)
                 .help(mode.helpText)
             }
         }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
-        )
     }
 
     private var botControls: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 1) {
             Button {
                 if isBotPanelVisible {
                     isBotPanelVisible = false
@@ -842,28 +829,19 @@ struct ContentView: View {
                 }
             } label: {
                 Image(systemName: "memorychip")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 30, height: 30)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(isBotPanelVisible ? Color.accentColor : .secondary)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .fill(isBotPanelVisible ? Color.accentColor.opacity(0.14) : Color.clear)
             )
             .accessibilityLabel("Bot panel")
             .help("Bot panel")
         }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
-        )
     }
 
     private var progressBar: some View {
@@ -971,20 +949,12 @@ private struct BrowserToolbarButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 30, height: 30)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(isDisabled ? .tertiary : .primary)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(isDisabled ? 0.45 : 1))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
-        )
         .disabled(isDisabled)
         .accessibilityLabel(accessibilityLabel)
     }

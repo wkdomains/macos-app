@@ -10,6 +10,7 @@ import SwiftUI
 
 struct AddressBarTextField: NSViewRepresentable {
     @Binding var text: String
+    @Binding var isEditing: Bool
     @Binding var isFocused: Bool
     @Binding var selectAllOnFocus: Bool
 
@@ -77,6 +78,7 @@ struct AddressBarTextField: NSViewRepresentable {
                 parent.selectAllOnFocus = true
             }
 
+            parent.isEditing = true
             parent.isFocused = true
 
             if let textField = notification.object as? BrowserAddressNSTextField {
@@ -90,6 +92,7 @@ struct AddressBarTextField: NSViewRepresentable {
             guard let textField = notification.object as? NSTextField else { return }
 
             parent.selectAllOnFocus = false
+            parent.isEditing = true
             parent.text = textField.stringValue
         }
 
@@ -110,6 +113,7 @@ struct AddressBarTextField: NSViewRepresentable {
                 return
             }
 
+            parent.isEditing = false
             parent.isFocused = false
         }
 
