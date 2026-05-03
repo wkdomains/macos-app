@@ -10,74 +10,38 @@ import Combine
 import Foundation
 import WebKit
 
-struct BrowserTabItem: Identifiable, Equatable {
-    var id: UUID
-    var title: String
-    var url: URL?
-    var isActive: Bool
-    var isLoading: Bool
-    var hasAttemptedNavigation: Bool
-}
-
-private final class BrowserTabState {
-    let id: UUID
-    var webView: BrowserWKWebView
-    let cookiePersistence: BrowserCookiePersistence
-    var identityID: UUID?
-    var observations: [NSKeyValueObservation] = []
-    var isCookieStoreReady = false
-    var pendingLoadRequest: (url: URL, fallbackURLs: [URL])?
-    var hasAttemptedNavigation = false
-    var displayAddressText = ""
-    var errorMessage: String?
-    var navigationFallbacks: [URL] = []
-    var title = BrowserWKWebView.defaultWindowTitle
-
-    init(
-        id: UUID = UUID(),
-        webView: BrowserWKWebView,
-        cookiePersistence: BrowserCookiePersistence,
-        identityID: UUID?
-    ) {
-        self.id = id
-        self.webView = webView
-        self.cookiePersistence = cookiePersistence
-        self.identityID = identityID
-    }
-}
-
 final class BrowserModel: NSObject, ObservableObject {
-    @Published private(set) var canGoBack = false
-    @Published private(set) var canGoForward = false
-    @Published private(set) var displayAddressText = ""
-    @Published private(set) var errorMessage: String?
-    @Published private(set) var estimatedProgress = 0.0
-    @Published private(set) var hasAttemptedNavigation = false
-    @Published private(set) var historyURLs: [String]
-    @Published private(set) var bookmarkURLs: [URL]
-    @Published private(set) var tabs: [BrowserTabItem] = []
-    @Published private(set) var activeTabID: UUID
-    @Published private(set) var isLoading = false
-    @Published private(set) var isSecurePage = false
-    @Published private(set) var currentIdentityName = "Default"
-    @Published private(set) var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] = [
+    @Published var canGoBack = false
+    @Published var canGoForward = false
+    @Published var displayAddressText = ""
+    @Published var errorMessage: String?
+    @Published var estimatedProgress = 0.0
+    @Published var hasAttemptedNavigation = false
+    @Published var historyURLs: [String]
+    @Published var bookmarkURLs: [URL]
+    @Published var tabs: [BrowserTabItem] = []
+    @Published var activeTabID: UUID
+    @Published var isLoading = false
+    @Published var isSecurePage = false
+    @Published var currentIdentityName = "Default"
+    @Published var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] = [
         BrowserSiteIdentityMenuItem(id: BrowserSiteIdentityMenuItem.defaultID, title: "Default", isCurrent: true)
     ]
-    @Published private(set) var viewportMode: BrowserViewportMode = .desktop
-    @Published private(set) var webViewID = UUID()
+    @Published var viewportMode: BrowserViewportMode = .desktop
+    @Published var webViewID = UUID()
 
-    @Published private(set) var webView: BrowserWKWebView
+    @Published var webView: BrowserWKWebView
     let botTerminal = BotTerminalModel()
 
-    private var tabStates: [BrowserTabState]
+    var tabStates: [BrowserTabState]
     private let loginStore: LoginStore
     let settingsStore: AppSettingsStore
     private var activePageHost: String?
     private var pendingLoginUsernameTarget: LoginFieldTarget?
     private var pendingLoginPasswordTarget: LoginFieldTarget?
-    private var consoleRecords: [ConsoleMessageRecord] = []
-    private var xhrRecords: [XHRRequestRecord] = []
-    private var xhrRecordIndexesByID: [String: Int] = [:]
+    var consoleRecords: [ConsoleMessageRecord] = []
+    var xhrRecords: [XHRRequestRecord] = []
+    var xhrRecordIndexesByID: [String: Int] = [:]
     var screenshotPNG: Data?
     var screenshotCapturedVersion = -1
     var screenshotDirtyVersion = 0
@@ -85,7 +49,7 @@ final class BrowserModel: NSObject, ObservableObject {
     var screenshotIsRendering = false
     var screenshotRenderTask: Task<Void, Never>?
     var screenshotWaiters: [UUID: (Result<Data, Error>) -> Void] = [:]
-    private var navigationFallbacks: [URL] = []
+    var navigationFallbacks: [URL] = []
 
     init(
         dataStore: WKWebsiteDataStore? = nil,
@@ -120,7 +84,7 @@ final class BrowserModel: NSObject, ObservableObject {
         attachCookiePersistence(to: initialTab)
     }
 
-    private static func websiteDataStore(for identityID: UUID?) -> WKWebsiteDataStore {
+    static func websiteDataStore(for identityID: UUID?) -> WKWebsiteDataStore {
         guard let identityID else {
             return .default()
         }
@@ -128,7 +92,7 @@ final class BrowserModel: NSObject, ObservableObject {
         return WKWebsiteDataStore(forIdentifier: identityID)
     }
 
-    private static func makeWebView(dataStore: WKWebsiteDataStore, usesDarkMode: Bool) -> BrowserWKWebView {
+    static func makeWebView(dataStore: WKWebsiteDataStore, usesDarkMode: Bool) -> BrowserWKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         configuration.applicationNameForUserAgent = safariApplicationNameForUserAgent
@@ -165,15 +129,7 @@ final class BrowserModel: NSObject, ObservableObject {
         return nil
     }
 
-    private var activeTab: BrowserTabState {
-        tabStates.first { $0.id == activeTabID } ?? tabStates[0]
-    }
-
-    private func tab(for webView: WKWebView) -> BrowserTabState? {
-        tabStates.first { $0.webView === webView }
-    }
-
-    private func configure(_ tab: BrowserTabState) {
+    func configure(_ tab: BrowserTabState) {
         let webView = tab.webView
         webView.allowsBackForwardNavigationGestures = true
         webView.browserContextMenuDelegate = self
@@ -407,88 +363,6 @@ final class BrowserModel: NSObject, ObservableObject {
         syncBookmarkState()
     }
 
-    func xhrRequests(for host: String) -> [XHRRequestRecord] {
-        let normalizedHost = Self.normalizedHost(host)
-
-        return xhrRecords.filter { record in
-            guard let recordHost = record.host ?? URL(string: record.url)?.host else {
-                return false
-            }
-
-            return Self.host(recordHost, matches: normalizedHost)
-        }
-    }
-
-    func sortedXHRRequests(for host: String) -> [XHRRequestRecord] {
-        xhrRequests(for: host).sorted { left, right in
-            let leftBytes = Self.xhrResponseByteSortKey(left)
-            let rightBytes = Self.xhrResponseByteSortKey(right)
-
-            if leftBytes == rightBytes {
-                return left.startedAt < right.startedAt
-            }
-
-            return leftBytes > rightBytes
-        }
-    }
-
-    var xhrContextMenuItems: [XHRContextMenuItem] {
-        guard let host = webView.url?.host else {
-            return []
-        }
-
-        return sortedXHRRequests(for: host)
-            .prefix(9)
-            .enumerated()
-            .map { offset, record in
-                XHRContextMenuItem(index: offset, title: Self.xhrMenuTitle(for: record, at: offset))
-            }
-    }
-
-    func openXHRFromContextMenu(at index: Int) {
-        guard let host = webView.url?.host else {
-            showAlert(message: "No Page Loaded", detail: InspectionError.noPageLoaded.localizedDescription)
-            return
-        }
-
-        let requests = sortedXHRRequests(for: host)
-        guard requests.indices.contains(index) else {
-            showAlert(message: "XHR Not Available", detail: InspectionError.xhrIndexOutOfRange(index).localizedDescription)
-            return
-        }
-
-        let record = requests[index]
-        guard let url = URL(string: record.url) else {
-            showAlert(message: "XHR Not Available", detail: InspectionError.invalidXHRURL.localizedDescription)
-            return
-        }
-
-        let xhr = XHRRequestResponse(record: record)
-        let dataStore = webView.configuration.websiteDataStore
-        dataStore.httpCookieStore.getAllCookies { [weak self] cookies in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-
-                let cookieHeader = WebsiteDataReader.cookieHeader(for: url, from: cookies)
-
-                do {
-                    let response = try await WebsiteDataReader.fetchXHRJSON(
-                        xhr: xhr,
-                        url: url,
-                        cookieHeader: cookieHeader
-                    )
-                    self.displayXHRJSON(response, from: url)
-                } catch {
-                    self.showAlert(message: "Could Not Open XHR", detail: error.localizedDescription)
-                }
-            }
-        }
-    }
-
-    func consoleMessages() -> [ConsoleMessageRecord] {
-        consoleRecords
-    }
-
     func setViewportMode(_ mode: BrowserViewportMode) {
         guard viewportMode != mode else { return }
         viewportMode = mode
@@ -614,7 +488,7 @@ final class BrowserModel: NSObject, ObservableObject {
         }
     }
 
-    private func attachCookiePersistence(
+    func attachCookiePersistence(
         to tab: BrowserTabState,
         afterRestore: (() -> Void)? = nil
     ) {
@@ -663,250 +537,11 @@ final class BrowserModel: NSObject, ObservableObject {
         userContentController.removeScriptMessageHandler(forName: "wkdomainsLogin")
     }
 
-    private func resetXHRTracking(for url: URL?) {
+    func resetXHRTracking(for url: URL?) {
         activePageHost = url?.host?.lowercased()
         xhrRecords.removeAll(keepingCapacity: true)
         xhrRecordIndexesByID.removeAll(keepingCapacity: true)
         consoleRecords.removeAll(keepingCapacity: true)
-    }
-
-    private func recordConsoleMessage(_ message: [String: Any]) {
-        let rawArguments = message["arguments"] as? [Any] ?? []
-        let arguments = rawArguments.map { value in
-            if let value = value as? String {
-                return value
-            }
-
-            return String(describing: value)
-        }
-
-        let record = ConsoleMessageRecord(
-            id: UUID(),
-            level: message["level"] as? String ?? "log",
-            message: message["message"] as? String ?? arguments.joined(separator: " "),
-            arguments: arguments,
-            pageURL: message["pageURL"] as? String,
-            pageHost: (message["pageHost"] as? String)?.lowercased(),
-            stack: message["stack"] as? String,
-            createdAt: Date()
-        )
-
-        consoleRecords.append(record)
-        if consoleRecords.count > 200 {
-            consoleRecords.removeFirst(consoleRecords.count - 200)
-        }
-    }
-
-    private func recordXHRMessage(_ message: [String: Any]) {
-        guard let event = message["event"] as? String,
-              let id = message["id"] as? String
-        else {
-            return
-        }
-
-        if event == "start" {
-            guard let rawURL = message["url"] as? String,
-                  let url = URL(string: rawURL)
-            else {
-                return
-            }
-
-            let record = XHRRequestRecord(
-                id: id,
-                kind: message["kind"] as? String ?? "xhr",
-                method: (message["method"] as? String ?? "GET").uppercased(),
-                url: url.absoluteString,
-                host: url.host?.lowercased(),
-                pageURL: message["pageURL"] as? String,
-                pageHost: (message["pageHost"] as? String)?.lowercased(),
-                requestHeaders: Self.stringDictionary(from: message["requestHeaders"]),
-                userAgent: message["userAgent"] as? String,
-                startedAt: Date(),
-                completedAt: nil,
-                status: nil,
-                responseURL: nil,
-                responseBytes: nil,
-                jsonType: nil,
-                jsonItems: nil,
-                jsonShape: nil,
-                error: nil
-            )
-
-            xhrRecordIndexesByID[id] = xhrRecords.count
-            xhrRecords.append(record)
-            return
-        }
-
-        guard let index = xhrRecordIndexesByID[id],
-              xhrRecords.indices.contains(index)
-        else {
-            return
-        }
-
-        xhrRecords[index].completedAt = Date()
-        xhrRecords[index].status = Self.intValue(from: message["status"])
-        xhrRecords[index].responseURL = message["responseURL"] as? String
-        xhrRecords[index].responseBytes = Self.intValue(from: message["responseBytes"])
-        xhrRecords[index].jsonType = message["jsonType"] as? String
-        xhrRecords[index].jsonItems = Self.intValue(from: message["jsonItems"])
-        xhrRecords[index].jsonShape = message["jsonShape"] as? String
-        xhrRecords[index].error = message["error"] as? String
-
-        markScreenshotDirty(scheduleAfter: 0.45)
-    }
-
-    private func syncObservedPageState(from webView: WKWebView) {
-        guard let tab = tab(for: webView) else { return }
-
-        tab.title = tabTitle(for: webView)
-
-        if let url = webView.url {
-            tab.displayAddressText = url.absoluteString
-        }
-
-        refreshPublishedTabs()
-
-        guard activeTabID == tab.id else { return }
-        syncPageState(from: webView)
-    }
-
-    private func syncPageState(from webView: WKWebView) {
-        guard let tab = tab(for: webView) else { return }
-
-        if let url = webView.url {
-            tab.displayAddressText = url.absoluteString
-        }
-
-        tab.title = tabTitle(for: webView)
-        refreshPublishedTabs()
-
-        guard activeTabID == tab.id else { return }
-
-        if let url = webView.url {
-            displayAddressText = url.absoluteString
-            isSecurePage = url.scheme?.lowercased() == "https"
-            refreshDarkModeState(for: url)
-        }
-
-        canGoBack = webView.canGoBack
-        canGoForward = webView.canGoForward
-        estimatedProgress = webView.estimatedProgress
-        isLoading = webView.isLoading
-        hasAttemptedNavigation = tab.hasAttemptedNavigation
-        errorMessage = tab.errorMessage
-        refreshSiteIdentityState()
-    }
-
-    private func syncWindowTitle(from webView: WKWebView) {
-        guard let tab = tab(for: webView) else { return }
-
-        tab.title = tabTitle(for: webView)
-        refreshPublishedTabs()
-
-        guard activeTabID == tab.id else { return }
-
-        if tab.title != BrowserWKWebView.defaultWindowTitle {
-            self.webView.browserWindowTitle = tab.title
-        } else {
-            self.webView.browserWindowTitle = BrowserWKWebView.defaultWindowTitle
-        }
-    }
-
-    private func tabTitle(for webView: WKWebView) -> String {
-        let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let title, !title.isEmpty {
-            return title
-        }
-
-        return webView.url?.host ?? BrowserWKWebView.defaultWindowTitle
-    }
-
-    func selectTab(_ tabID: UUID) {
-        guard activeTabID != tabID,
-              let tab = tabStates.first(where: { $0.id == tabID })
-        else {
-            return
-        }
-
-        webView.blocksProgrammaticFocus = false
-        activeTabID = tab.id
-        webView = tab.webView
-        webViewID = UUID()
-        displayAddressText = tab.displayAddressText
-        errorMessage = tab.errorMessage
-        hasAttemptedNavigation = tab.hasAttemptedNavigation
-        isSecurePage = tab.webView.url?.scheme?.lowercased() == "https"
-        canGoBack = tab.webView.canGoBack
-        canGoForward = tab.webView.canGoForward
-        estimatedProgress = tab.webView.estimatedProgress
-        isLoading = tab.webView.isLoading
-        navigationFallbacks = tab.navigationFallbacks
-        resetScreenshotForNavigation()
-        resetXHRTracking(for: tab.webView.url)
-        refreshSiteIdentityState()
-        syncWindowTitle(from: tab.webView)
-        refreshPublishedTabs()
-        syncTitlebarTabState()
-    }
-
-    func addEmptyTab() {
-        let tab = makeTab(initialURL: nil)
-        tabStates.append(tab)
-        attachCookiePersistence(to: tab)
-        selectTab(tab.id)
-    }
-
-    private func makeTab(initialURL: URL?) -> BrowserTabState {
-        let identityID = initialURL.flatMap { settingsStore.activeIdentityID(for: $0) }
-        let webView = Self.makeWebView(
-            dataStore: Self.websiteDataStore(for: identityID),
-            usesDarkMode: settingsStore.usesDarkMode(for: initialURL)
-        )
-        let tab = BrowserTabState(
-            webView: webView,
-            cookiePersistence: BrowserCookiePersistence(directoryURL: settingsStore.directoryURL),
-            identityID: identityID
-        )
-        configure(tab)
-        return tab
-    }
-
-    private func refreshPublishedTabs() {
-        tabs = tabStates.map { tab in
-            BrowserTabItem(
-                id: tab.id,
-                title: tab.title,
-                url: tab.webView.url,
-                isActive: tab.id == activeTabID,
-                isLoading: tab.webView.isLoading,
-                hasAttemptedNavigation: tab.hasAttemptedNavigation
-            )
-        }
-
-        syncTitlebarTabState()
-    }
-
-    private func syncTitlebarTabState() {
-        let items = tabStates.map { tab in
-            BrowserTitlebarTab(
-                id: tab.id,
-                title: tab.title,
-                url: tab.webView.url,
-                isActive: tab.id == activeTabID,
-                isLoading: tab.webView.isLoading,
-                hasAttemptedNavigation: tab.hasAttemptedNavigation
-            )
-        }
-
-        for tab in tabStates {
-            tab.webView.titlebarTabs = items
-        }
-    }
-
-    private func recordVisitedURL(_ url: URL, identityID: UUID?) {
-        settingsStore.updateLastVisitedURL(url, identityID: identityID)
-        historyURLs = settingsStore.settings.historyURLs
-        refreshSiteIdentityState()
     }
 
     private func armLoginCapture(
@@ -925,7 +560,7 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.evaluateJavaScript(Self.loginCaptureScript(targetsJSON: json))
     }
 
-    private func saveCapturedLogin(_ message: [String: Any]) {
+    func saveCapturedLogin(_ message: [String: Any]) {
         guard let currentURL = (message["pageURL"] as? String).flatMap(URL.init(string:)) ?? webView.url,
               let usernameTarget = pendingLoginUsernameTarget,
               let passwordTarget = pendingLoginPasswordTarget,
@@ -949,7 +584,7 @@ final class BrowserModel: NSObject, ObservableObject {
         pendingLoginPasswordTarget = nil
     }
 
-    private func fillSavedLoginForCurrentSite(reportsMissingLogin: Bool) {
+    func fillSavedLoginForCurrentSite(reportsMissingLogin: Bool) {
         guard let entry = loginStore.login(for: webView.url, identityID: activeTab.identityID) else {
             if reportsMissingLogin {
                 showAlert(message: "No Saved Login", detail: "There is no saved login for this site yet.")
@@ -989,21 +624,7 @@ final class BrowserModel: NSObject, ObservableObject {
         }
     }
 
-    private func displayXHRJSON(_ response: XHRReplayResponse, from url: URL) {
-        let mimeType = response.contentType?
-            .split(separator: ";", maxSplits: 1)
-            .first
-            .map(String.init) ?? "application/json"
-
-        webView.load(
-            response.body,
-            mimeType: mimeType,
-            characterEncodingName: "utf-8",
-            baseURL: url
-        )
-    }
-
-    private func showAlert(message: String, detail: String) {
+    func showAlert(message: String, detail: String) {
         guard let window = webView.window else { return }
 
         let alert = NSAlert()
@@ -1014,7 +635,7 @@ final class BrowserModel: NSObject, ObservableObject {
         alert.beginSheetModal(for: window)
     }
 
-    private func refreshSiteIdentityState() {
+    func refreshSiteIdentityState() {
         currentIdentityName = settingsStore.identityName(for: activeTab.identityID)
         siteIdentityMenuItems = settingsStore.siteIdentityMenuItems(
             for: webView.url,
@@ -1026,11 +647,11 @@ final class BrowserModel: NSObject, ObservableObject {
         bookmarkURLs = settingsStore.bookmarkURLs
     }
 
-    private func refreshDarkModeState(for url: URL?) {
+    func refreshDarkModeState(for url: URL?) {
         webView.configureForcedDarkPageBackground(settingsStore.usesDarkMode(for: url))
     }
 
-    private static func xhrResponseByteSortKey(_ record: XHRRequestRecord) -> Int {
+    static func xhrResponseByteSortKey(_ record: XHRRequestRecord) -> Int {
         record.responseBytes ?? -1
     }
 
@@ -1041,7 +662,7 @@ final class BrowserModel: NSObject, ObservableObject {
         return formatter
     }()
 
-    private static func xhrMenuTitle(for record: XHRRequestRecord, at index: Int) -> String {
+    static func xhrMenuTitle(for record: XHRRequestRecord, at index: Int) -> String {
         var title = "\(index + 1) \(record.method) \(xhrMenuURLTitle(record.url))"
         var details: [String] = []
 
@@ -1061,7 +682,7 @@ final class BrowserModel: NSObject, ObservableObject {
         return "\(title.prefix(87))..."
     }
 
-    private static func xhrMenuURLTitle(_ rawURL: String) -> String {
+    static func xhrMenuURLTitle(_ rawURL: String) -> String {
         guard let url = URL(string: rawURL),
               let host = url.host
         else {
@@ -1075,7 +696,7 @@ final class BrowserModel: NSObject, ObservableObject {
         return "\(displayHost)\(path)\(query)"
     }
 
-    private static func normalizedHost(_ host: String) -> String {
+    static func normalizedHost(_ host: String) -> String {
         host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
     }
 
@@ -1094,7 +715,7 @@ final class BrowserModel: NSObject, ObservableObject {
         return components.url ?? url
     }
 
-    private static func host(_ host: String, matches requestedHost: String) -> Bool {
+    static func host(_ host: String, matches requestedHost: String) -> Bool {
         let host = normalizedHost(host)
 
         return host == requestedHost
@@ -1102,7 +723,7 @@ final class BrowserModel: NSObject, ObservableObject {
             || requestedHost.hasSuffix(".\(host)")
     }
 
-    private static func intValue(from value: Any?) -> Int? {
+    static func intValue(from value: Any?) -> Int? {
         if let value = value as? Int {
             return value
         }
@@ -1114,7 +735,7 @@ final class BrowserModel: NSObject, ObservableObject {
         return nil
     }
 
-    private static func stringDictionary(from value: Any?) -> [String: String] {
+    static func stringDictionary(from value: Any?) -> [String: String] {
         guard let dictionary = value as? [String: Any] else {
             return [:]
         }
@@ -1135,183 +756,3 @@ final class BrowserModel: NSObject, ObservableObject {
 }
 
 
-extension BrowserModel: BrowserContextMenuDelegate {}
-
-extension BrowserModel: WKScriptMessageHandler {
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any] else {
-            return
-        }
-
-        switch message.name {
-        case "wkdomainsXHR":
-            recordXHRMessage(body)
-        case "wkdomainsRender":
-            markScreenshotDirty(scheduleAfter: 0.35)
-        case "wkdomainsConsole":
-            recordConsoleMessage(body)
-        case "wkdomainsLogin":
-            saveCapturedLogin(body)
-        default:
-            return
-        }
-    }
-}
-
-extension BrowserModel: WKNavigationDelegate {
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        guard let tab = tab(for: webView) else { return }
-
-        tab.errorMessage = nil
-        tab.hasAttemptedNavigation = true
-
-        if activeTabID == tab.id {
-            errorMessage = nil
-            hasAttemptedNavigation = true
-            isLoading = true
-            estimatedProgress = max(0.08, webView.estimatedProgress)
-            resetScreenshotForNavigation()
-            resetXHRTracking(for: webView.url)
-        }
-
-        syncPageState(from: webView)
-    }
-
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        guard let tab = tab(for: webView) else { return }
-
-        tab.errorMessage = nil
-        tab.navigationFallbacks = []
-
-        if activeTabID == tab.id {
-            errorMessage = nil
-            navigationFallbacks = []
-        }
-
-        syncPageState(from: webView)
-
-        if let url = webView.url {
-            recordVisitedURL(url, identityID: tab.identityID)
-        }
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard let tab = tab(for: webView) else { return }
-
-        tab.errorMessage = nil
-
-        if activeTabID == tab.id {
-            errorMessage = nil
-            estimatedProgress = 1
-        }
-
-        syncPageState(from: webView)
-
-        if activeTabID == tab.id {
-            markScreenshotDirty(scheduleAfter: 0.25)
-            botTerminal.refreshIfOpen(
-                currentURL: webView.url,
-                pageTitle: webView.title,
-                viewportMode: viewportMode,
-                xhrCount: xhrRecords.count
-            )
-        }
-
-        if let url = webView.url {
-            recordVisitedURL(url, identityID: tab.identityID)
-        }
-
-        if activeTabID == tab.id {
-            fillSavedLoginForCurrentSite(reportsMissingLogin: false)
-        }
-    }
-
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        handleNavigationError(error, in: webView)
-    }
-
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        if loadNextFallback(after: error, in: webView) {
-            return
-        }
-
-        handleNavigationError(error, in: webView)
-    }
-
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard let url = navigationAction.request.url else {
-            decisionHandler(.cancel)
-            return
-        }
-
-        if let scheme = url.scheme?.lowercased(), !["http", "https", "about"].contains(scheme) {
-            NSWorkspace.shared.open(url)
-            decisionHandler(.cancel)
-            return
-        }
-
-        if let browserWebView = webView as? BrowserWKWebView {
-            browserWebView.configureForcedDarkPageBackground(settingsStore.usesDarkMode(for: url))
-        }
-        decisionHandler(.allow)
-    }
-
-    private func handleNavigationError(_ error: Error, in webView: WKWebView) {
-        let nsError = error as NSError
-        guard nsError.code != NSURLErrorCancelled else { return }
-
-        guard let tab = tab(for: webView) else { return }
-        tab.navigationFallbacks = []
-        tab.errorMessage = error.localizedDescription
-
-        if activeTabID == tab.id {
-            navigationFallbacks = []
-            isLoading = false
-            estimatedProgress = 0
-            errorMessage = error.localizedDescription
-            finishScreenshotWaiters(with: .failure(error))
-        }
-
-        refreshPublishedTabs()
-    }
-
-    private func loadNextFallback(after error: Error, in webView: WKWebView) -> Bool {
-        let nsError = error as NSError
-        guard let tab = tab(for: webView) else { return false }
-        guard nsError.code != NSURLErrorCancelled,
-              !tab.navigationFallbacks.isEmpty
-        else {
-            return false
-        }
-
-        let nextURL = tab.navigationFallbacks.removeFirst()
-        tab.errorMessage = nil
-        tab.displayAddressText = nextURL.absoluteString
-
-        if activeTabID == tab.id {
-            navigationFallbacks = tab.navigationFallbacks
-            errorMessage = nil
-            displayAddressText = nextURL.absoluteString
-            isSecurePage = nextURL.scheme?.lowercased() == "https"
-            resetXHRTracking(for: nextURL)
-        }
-
-        webView.load(URLRequest(url: nextURL))
-        return true
-    }
-}
-
-extension BrowserModel: WKUIDelegate {
-    func webView(
-        _ webView: WKWebView,
-        createWebViewWith configuration: WKWebViewConfiguration,
-        for navigationAction: WKNavigationAction,
-        windowFeatures: WKWindowFeatures
-    ) -> WKWebView? {
-        if navigationAction.targetFrame == nil {
-            webView.load(navigationAction.request)
-        }
-
-        return nil
-    }
-}
