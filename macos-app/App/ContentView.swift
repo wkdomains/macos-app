@@ -65,6 +65,9 @@ struct ContentView: View {
         .onChange(of: browser.historyURLs) { _, _ in
             scheduleSuggestions(for: addressDraft)
         }
+        .onChange(of: browser.bookmarkURLs) { _, _ in
+            scheduleSuggestions(for: addressDraft)
+        }
         .onChange(of: browser.isLoading) { _, isLoading in
             guard shouldFocusBrowserAfterLoad, !isLoading else { return }
             focusPendingBrowserContent()

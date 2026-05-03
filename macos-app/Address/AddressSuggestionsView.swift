@@ -12,6 +12,7 @@ import SwiftUI
 struct AddressSuggestion: Identifiable {
     enum Kind {
         case visit(AddressResolution)
+        case bookmark(URL)
         case history(URL)
         case search(String)
     }
@@ -25,6 +26,8 @@ struct AddressSuggestion: Identifiable {
         switch kind {
         case .visit:
             "Visit \(title)"
+        case .bookmark:
+            "Open bookmarked page \(title)"
         case .history:
             "Open \(title)"
         case .search(let query):
@@ -38,7 +41,7 @@ struct AddressSuggestion: Identifiable {
 
     var canInlineComplete: Bool {
         switch kind {
-        case .visit, .history:
+        case .visit, .bookmark, .history:
             true
         case .search:
             false
@@ -46,7 +49,7 @@ struct AddressSuggestion: Identifiable {
     }
 }
 
-struct AddressHistorySuggestionMatch {
+struct AddressURLSuggestionMatch {
     let rank: Int
     let offset: Int
     let suggestion: AddressSuggestion
@@ -212,30 +215,43 @@ extension ContentView {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 18, height: 18)
+        case .bookmark:
+            savedPageIcon(
+                faviconURL: suggestion.faviconURL,
+                fallbackSystemName: "bookmark.fill"
+            )
         case .history:
-            if let faviconURL = suggestion.faviconURL {
-                AsyncImage(url: faviconURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFit()
-                    default:
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(width: 18, height: 18)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            } else {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18, height: 18)
-            }
+            savedPageIcon(
+                faviconURL: suggestion.faviconURL,
+                fallbackSystemName: "clock.arrow.circlepath"
+            )
         case .search:
             Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+        }
+    }
+
+    @ViewBuilder
+    func savedPageIcon(faviconURL: URL?, fallbackSystemName: String) -> some View {
+        if let faviconURL {
+            AsyncImage(url: faviconURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                default:
+                    Image(systemName: fallbackSystemName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 18, height: 18)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        } else {
+            Image(systemName: fallbackSystemName)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 18, height: 18)
@@ -253,15 +269,24 @@ extension ContentView {
         }
 
         let historyURLs = browser.historyURLs
-        let localSuggestions = Self.localSuggestions(for: query, historyURLs: historyURLs)
+        let bookmarkURLs = browser.bookmarkURLs
+        let localSuggestions = Self.localSuggestions(
+            for: query,
+            historyURLs: historyURLs,
+            bookmarkURLs: bookmarkURLs
+        )
         suggestions = localSuggestions
 
-        suggestionTask = Task { [query, historyURLs] in
+        suggestionTask = Task { [query, historyURLs, bookmarkURLs] in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
 
             let fetchedSuggestions = await Self.fetchSuggestions(for: query)
-            let localSuggestions = Self.localSuggestions(for: query, historyURLs: historyURLs)
+            let localSuggestions = Self.localSuggestions(
+                for: query,
+                historyURLs: historyURLs,
+                bookmarkURLs: bookmarkURLs
+            )
             let combinedSuggestions = Self.combinedSuggestions(
                 localSuggestions: localSuggestions,
                 searchSuggestions: fetchedSuggestions
@@ -326,6 +351,8 @@ extension ContentView {
         switch suggestion.kind {
         case .visit(let resolution):
             browser.load(resolution)
+        case .bookmark(let url):
+            browser.load(url)
         case .history(let url):
             browser.load(url)
         case .search(let query):
@@ -471,9 +498,15 @@ extension ContentView {
         }
     }
 
-    static func localSuggestions(for query: String, historyURLs: [String]) -> [AddressSuggestion] {
+    static func localSuggestions(
+        for query: String,
+        historyURLs: [String],
+        bookmarkURLs: [URL]
+    ) -> [AddressSuggestion] {
         var suggestions: [AddressSuggestion] = []
+        let bookmarkSuggestions = bookmarkSuggestions(for: query, bookmarkURLs: bookmarkURLs)
         let historySuggestions = historySuggestions(for: query, historyURLs: historyURLs)
+        let savedSuggestions = deduplicatedSuggestions(bookmarkSuggestions + historySuggestions)
 
         if let resolution = AddressResolver.resolve(query) {
             switch resolution.kind {
@@ -500,35 +533,58 @@ extension ContentView {
             }
         }
 
-        if let firstHistorySuggestion = historySuggestions.first,
-           firstHistorySuggestion.completionText.lowercased().hasPrefix(query.lowercased())
+        if let firstSavedSuggestion = savedSuggestions.first,
+           firstSavedSuggestion.completionText.lowercased().hasPrefix(query.lowercased())
         {
-            return deduplicatedSuggestions(historySuggestions + suggestions)
+            return deduplicatedSuggestions(savedSuggestions + suggestions)
         }
 
-        return deduplicatedSuggestions(suggestions + historySuggestions)
+        return deduplicatedSuggestions(suggestions + savedSuggestions)
+    }
+
+    static func bookmarkSuggestions(for query: String, bookmarkURLs: [URL]) -> [AddressSuggestion] {
+        urlSuggestions(
+            for: query,
+            urls: bookmarkURLs,
+            idPrefix: "bookmark",
+            kind: AddressSuggestion.Kind.bookmark
+        )
     }
 
     static func historySuggestions(for query: String, historyURLs: [String]) -> [AddressSuggestion] {
-        let normalizedQuery = query.lowercased()
-        var matches: [AddressHistorySuggestionMatch] = []
+        let urls = historyURLs.compactMap { URL(string: $0) }
+        return urlSuggestions(
+            for: query,
+            urls: urls,
+            idPrefix: "history",
+            kind: AddressSuggestion.Kind.history
+        )
+    }
 
-        for (offset, rawURL) in historyURLs.enumerated() {
-            guard let url = URL(string: rawURL),
-                  let rank = historyRank(for: url, normalizedQuery: normalizedQuery)
+    static func urlSuggestions(
+        for query: String,
+        urls: [URL],
+        idPrefix: String,
+        kind: (URL) -> AddressSuggestion.Kind
+    ) -> [AddressSuggestion] {
+        let normalizedQuery = query.lowercased()
+        var matches: [AddressURLSuggestionMatch] = []
+
+        for (offset, url) in urls.enumerated() {
+            guard let rank = historyRank(for: url, normalizedQuery: normalizedQuery)
             else {
                 continue
             }
 
             let title = historyTitle(for: url)
             matches.append(
-                AddressHistorySuggestionMatch(
+                AddressURLSuggestionMatch(
                     rank: rank,
                     offset: offset,
                     suggestion: AddressSuggestion(
-                        id: "history-\(url.absoluteString)",
+                        id: "\(idPrefix)-\(url.absoluteString)",
                         title: title,
-                        kind: .history(url),
+                        kind: kind(url),
                         faviconURL: faviconURL(for: url)
                     )
                 )
