@@ -9,13 +9,34 @@ import AppKit
 import Foundation
 import SwiftUI
 
+private struct AddressSuggestion: Identifiable {
+    enum Kind {
+        case history(URL)
+        case search
+    }
+
+    let id: String
+    let title: String
+    let kind: Kind
+    let faviconURL: URL?
+
+    var accessibilityLabel: String {
+        switch kind {
+        case .history:
+            "Open \(title)"
+        case .search:
+            "Search \(title)"
+        }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var browser: BrowserModel
     @FocusState private var isAddressFocused: Bool
     @State private var isBotPanelVisible = false
     @State private var selectedSuggestionIndex: Int?
     @State private var suggestionTask: Task<Void, Never>?
-    @State private var suggestions: [String] = []
+    @State private var suggestions: [AddressSuggestion] = []
     @State private var keyDownMonitor: Any?
 
     var body: some View {
@@ -39,6 +60,9 @@ struct ContentView: View {
         }
         .onChange(of: browser.addressText) { _, value in
             scheduleSuggestions(for: value)
+        }
+        .onChange(of: browser.historyURLs) { _, _ in
+            scheduleSuggestions(for: browser.addressText)
         }
         .onChange(of: isAddressFocused) { _, isFocused in
             if isFocused {
@@ -166,12 +190,9 @@ struct ContentView: View {
                     selectSuggestion(suggestion)
                 } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 18)
+                        suggestionIcon(for: suggestion)
 
-                        Text(suggestion)
+                        Text(suggestion.title)
                             .font(.system(size: 14))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -187,7 +208,7 @@ struct ContentView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Search \(suggestion)")
+                .accessibilityLabel(suggestion.accessibilityLabel)
             }
         }
         .padding(6)
@@ -207,6 +228,39 @@ struct ContentView: View {
         isAddressFocused && !suggestions.isEmpty
     }
 
+    @ViewBuilder
+    private func suggestionIcon(for suggestion: AddressSuggestion) -> some View {
+        switch suggestion.kind {
+        case .history:
+            if let faviconURL = suggestion.faviconURL {
+                AsyncImage(url: faviconURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFit()
+                    default:
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 18, height: 18)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            } else {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+            }
+        case .search:
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+        }
+    }
+
     private func scheduleSuggestions(for value: String) {
         suggestionTask?.cancel()
         selectedSuggestionIndex = nil
@@ -217,11 +271,13 @@ struct ContentView: View {
             return
         }
 
-        suggestionTask = Task { [query] in
+        let historyURLs = browser.historyURLs
+
+        suggestionTask = Task { [query, historyURLs] in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
 
-            let fetchedSuggestions = await Self.fetchSuggestions(for: query)
+            let historySuggestions = Self.historySuggestions(for: query, historyURLs: historyURLs)
 
             await MainActor.run {
                 guard !Task.isCancelled,
@@ -231,7 +287,25 @@ struct ContentView: View {
                     return
                 }
 
-                suggestions = fetchedSuggestions
+                suggestions = historySuggestions
+                selectedSuggestionIndex = nil
+            }
+
+            let fetchedSuggestions = await Self.fetchSuggestions(for: query)
+            let combinedSuggestions = Self.combinedSuggestions(
+                historySuggestions: historySuggestions,
+                searchSuggestions: fetchedSuggestions
+            )
+
+            await MainActor.run {
+                guard !Task.isCancelled,
+                      isAddressFocused,
+                      browser.addressText.trimmingCharacters(in: .whitespacesAndNewlines) == query
+                else {
+                    return
+                }
+
+                suggestions = combinedSuggestions
                 selectedSuggestionIndex = nil
             }
         }
@@ -254,10 +328,16 @@ struct ContentView: View {
         }
     }
 
-    private func selectSuggestion(_ suggestion: String) {
+    private func selectSuggestion(_ suggestion: AddressSuggestion) {
         hideSuggestions()
         isAddressFocused = false
-        browser.searchGoogle(for: suggestion)
+
+        switch suggestion.kind {
+        case .history(let url):
+            browser.load(url)
+        case .search:
+            browser.searchGoogle(for: suggestion.title)
+        }
     }
 
     private func selectPreviousSuggestion() {
@@ -341,6 +421,123 @@ struct ContentView: View {
         } catch {
             return []
         }
+    }
+
+    private static func historySuggestions(for query: String, historyURLs: [String]) -> [AddressSuggestion] {
+        let normalizedQuery = query.lowercased()
+
+        return historyURLs.enumerated().compactMap { offset, rawURL in
+            guard let url = URL(string: rawURL),
+                  let rank = historyRank(for: url, normalizedQuery: normalizedQuery)
+            else {
+                return nil
+            }
+
+            let title = historyTitle(for: url)
+            return (
+                rank: rank,
+                offset: offset,
+                suggestion: AddressSuggestion(
+                    id: "history-\(url.absoluteString)",
+                    title: title,
+                    kind: .history(url),
+                    faviconURL: faviconURL(for: url)
+                )
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.rank != rhs.rank {
+                return lhs.rank < rhs.rank
+            }
+
+            return lhs.offset < rhs.offset
+        }
+        .map { item in
+            item.suggestion
+        }
+    }
+
+    private static func combinedSuggestions(
+        historySuggestions: [AddressSuggestion],
+        searchSuggestions: [String]
+    ) -> [AddressSuggestion] {
+        var seenTitles = Set(historySuggestions.map { $0.title.lowercased() })
+        var combinedSuggestions = historySuggestions
+
+        for suggestion in searchSuggestions {
+            let normalizedSuggestion = suggestion.lowercased()
+            guard !seenTitles.contains(normalizedSuggestion) else { continue }
+
+            seenTitles.insert(normalizedSuggestion)
+            combinedSuggestions.append(
+                AddressSuggestion(
+                    id: "search-\(suggestion)",
+                    title: suggestion,
+                    kind: .search,
+                    faviconURL: nil
+                )
+            )
+        }
+
+        return combinedSuggestions
+    }
+
+    private static func historyRank(for url: URL, normalizedQuery: String) -> Int? {
+        let displayHost = historyDisplayHost(for: url).lowercased()
+        let title = historyTitle(for: url).lowercased()
+        let absoluteString = url.absoluteString.lowercased()
+
+        if displayHost.hasPrefix(normalizedQuery) {
+            return 0
+        }
+
+        if title.hasPrefix(normalizedQuery) {
+            return 1
+        }
+
+        if displayHost.contains(normalizedQuery) {
+            return 2
+        }
+
+        if title.contains(normalizedQuery) {
+            return 3
+        }
+
+        if absoluteString.contains(normalizedQuery) {
+            return 4
+        }
+
+        return nil
+    }
+
+    private static func historyTitle(for url: URL) -> String {
+        guard url.host != nil else { return url.absoluteString }
+
+        let displayHost = historyDisplayHost(for: url)
+        let path = url.path.isEmpty || url.path == "/" ? "" : url.path
+        let query = url.query.map { "?\($0)" } ?? ""
+        let fragment = url.fragment.map { "#\($0)" } ?? ""
+
+        return "\(displayHost)\(path)\(query)\(fragment)"
+    }
+
+    private static func historyDisplayHost(for url: URL) -> String {
+        guard let host = url.host else { return url.absoluteString }
+
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    private static func faviconURL(for url: URL) -> URL? {
+        guard var components = URLComponents(string: "https://www.google.com/s2/favicons") else {
+            return nil
+        }
+
+        components.queryItems = [
+            URLQueryItem(name: "domain_url", value: url.absoluteString),
+            URLQueryItem(name: "sz", value: "32")
+        ]
+
+        return components.url
     }
 
     private var browserWorkspace: some View {
