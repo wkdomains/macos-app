@@ -318,6 +318,15 @@ extension BrowserModel {
         const observer = new MutationObserver(() => schedule("mutation"));
         observer.observe(document.documentElement, {
           attributes: true,
+          attributeFilter: [
+            "class",
+            "hidden",
+            "aria-hidden",
+            "aria-expanded",
+            "open",
+            "src",
+            "href"
+          ],
           childList: true,
           characterData: true,
           subtree: true
@@ -855,6 +864,7 @@ extension BrowserModel {
           forced = !withFallbackDisabled(isPageAlreadyDark);
           if (!forced) {
             removeBaseStyle();
+            stopObserving();
             return;
           }
         }
@@ -869,9 +879,16 @@ extension BrowserModel {
       };
 
       const schedule = (delay = 80) => {
+        if (forced === false) return;
         if (scheduled) return;
         scheduled = true;
         window.setTimeout(run, delay);
+      };
+
+      const stopObserving = () => {
+        if (!observer) return;
+        observer.disconnect();
+        observer = null;
       };
 
       const observe = () => {

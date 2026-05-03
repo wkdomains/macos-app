@@ -621,6 +621,7 @@ final class BrowserModel: NSObject, ObservableObject {
 
         screenshotDirtyVersion += 1
 
+        guard !screenshotWaiters.isEmpty else { return }
         guard !webView.isLoading else { return }
         scheduleScreenshotCapture(after: delay)
     }
