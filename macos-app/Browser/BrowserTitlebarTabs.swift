@@ -5,6 +5,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 struct BrowserTitlebarTab: Identifiable, Equatable {
@@ -43,6 +44,9 @@ extension BrowserWKWebView {
                 existingAccessory.addTab = { [weak self] in
                     self?.addTab?()
                 }
+                existingAccessory.moveTab = { [weak self] sourceID, targetID in
+                    self?.moveTab?(sourceID, targetID)
+                }
                 window.addTitlebarAccessoryViewController(existingAccessory)
                 titlebarTabsWindow = window
             }
@@ -56,6 +60,9 @@ extension BrowserWKWebView {
             accessory.addTab = { [weak self] in
                 self?.addTab?()
             }
+            accessory.moveTab = { [weak self] sourceID, targetID in
+                self?.moveTab?(sourceID, targetID)
+            }
             titlebarTabsAccessory = accessory
             window.addTitlebarAccessoryViewController(accessory)
             titlebarTabsWindow = window
@@ -67,6 +74,9 @@ extension BrowserWKWebView {
         }
         accessory.addTab = { [weak self] in
             self?.addTab?()
+        }
+        accessory.moveTab = { [weak self] sourceID, targetID in
+            self?.moveTab?(sourceID, targetID)
         }
     }
 
@@ -93,6 +103,7 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
 
     var selectTab: ((UUID) -> Void)?
     var addTab: (() -> Void)?
+    var moveTab: ((UUID, UUID) -> Void)?
 
     private static var cachedFavicons: [String: NSImage] = [:]
     private static var requestedFavicons = Set<String>()
@@ -106,6 +117,7 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
     private static let faviconPixelSize = 32
     private var hostingView: BrowserTabsTitlebarHostingView?
     private var faviconObserver: NSObjectProtocol?
+    private let dragState = BrowserTabsDragState()
 
     deinit {
         if let faviconObserver {
@@ -116,8 +128,10 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
     override func loadView() {
         let hostingView = BrowserTabsTitlebarHostingView(rootView: BrowserTabsTitlebarView(
             items: [],
+            dragState: dragState,
             selectTab: { _ in },
-            addTab: {}
+            addTab: {},
+            moveTab: { _, _ in }
         ))
         hostingView.frame = NSRect(x: 0, y: 0, width: 0, height: accessoryHeight)
         hostingView.sizingOptions = []
@@ -156,11 +170,15 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
 
         hostingView?.rootView = BrowserTabsTitlebarView(
             items: items,
+            dragState: dragState,
             selectTab: { [weak self] tabID in
                 self?.selectTab?(tabID)
             },
             addTab: { [weak self] in
                 self?.addTab?()
+            },
+            moveTab: { [weak self] sourceID, targetID in
+                self?.moveTab?(sourceID, targetID)
             }
         )
     }
@@ -342,6 +360,10 @@ private struct BrowserTitlebarItem: Identifiable {
     let isLoading: Bool
 }
 
+private final class BrowserTabsDragState {
+    var draggingTabID: UUID?
+}
+
 private final class BrowserTabsTitlebarHostingView: NSHostingView<BrowserTabsTitlebarView> {
     override var mouseDownCanMoveWindow: Bool {
         false
@@ -350,8 +372,10 @@ private final class BrowserTabsTitlebarHostingView: NSHostingView<BrowserTabsTit
 
 private struct BrowserTabsTitlebarView: View {
     let items: [BrowserTitlebarItem]
+    let dragState: BrowserTabsDragState
     let selectTab: (UUID) -> Void
     let addTab: () -> Void
+    let moveTab: (UUID, UUID) -> Void
 
     var body: some View {
         HStack(spacing: 4) {
@@ -363,6 +387,18 @@ private struct BrowserTabsTitlebarView: View {
                 }
                 .buttonStyle(.plain)
                 .help(item.tooltip)
+                .onDrag {
+                    dragState.draggingTabID = item.id
+                    return NSItemProvider(object: item.id.uuidString as NSString)
+                }
+                .onDrop(
+                    of: [UTType.text],
+                    delegate: BrowserTitlebarTabDropDelegate(
+                        item: item,
+                        dragState: dragState,
+                        moveTab: moveTab
+                    )
+                )
             }
 
             Button(action: addTab) {
@@ -377,6 +413,31 @@ private struct BrowserTabsTitlebarView: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
+    }
+}
+
+private struct BrowserTitlebarTabDropDelegate: DropDelegate {
+    let item: BrowserTitlebarItem
+    let dragState: BrowserTabsDragState
+    let moveTab: (UUID, UUID) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingTabID = dragState.draggingTabID,
+              draggingTabID != item.id
+        else {
+            return
+        }
+
+        moveTab(draggingTabID, item.id)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragState.draggingTabID = nil
+        return true
     }
 }
 

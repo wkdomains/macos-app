@@ -139,6 +139,9 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.addTab = { [weak self] in
             self?.addEmptyTab()
         }
+        webView.moveTab = { [weak self] sourceID, targetID in
+            self?.moveTab(sourceID, to: targetID)
+        }
         syncTitlebarTabState()
         webView.viewportSizeDidChange = { [weak self] in
             guard self?.webView === webView else { return }
@@ -527,6 +530,7 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.browserContextMenuDelegate = nil
         webView.selectTab = nil
         webView.addTab = nil
+        webView.moveTab = nil
         webView.viewportSizeDidChange = nil
         webView.removeTitlebarTabsAccessory()
 
@@ -754,4 +758,3 @@ final class BrowserModel: NSObject, ObservableObject {
 
 
 }
-

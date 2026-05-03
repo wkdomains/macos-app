@@ -175,6 +175,19 @@ extension BrowserModel {
         selectTab(nextTabID)
     }
 
+    func moveTab(_ sourceID: UUID, to targetID: UUID) {
+        guard let sourceIndex = tabStates.firstIndex(where: { $0.id == sourceID }),
+              let targetIndex = tabStates.firstIndex(where: { $0.id == targetID }),
+              sourceIndex != targetIndex
+        else {
+            return
+        }
+
+        let movedTab = tabStates.remove(at: sourceIndex)
+        tabStates.insert(movedTab, at: targetIndex)
+        refreshPublishedTabs()
+    }
+
     func makeTab(initialURL: URL?) -> BrowserTabState {
         let identityID = initialURL.flatMap { settingsStore.activeIdentityID(for: $0) }
         let webView = Self.makeWebView(
