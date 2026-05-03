@@ -23,8 +23,22 @@ struct macos_appApp: App {
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
+            BrowserTabCommands(browser: appModel.browser)
             BrowserHistoryCommands(browser: appModel.browser, faviconStore: historyFaviconStore)
             BrowserBookmarksCommands(browser: appModel.browser, faviconStore: bookmarkFaviconStore)
+        }
+    }
+}
+
+private struct BrowserTabCommands: Commands {
+    @ObservedObject var browser: BrowserModel
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Close Tab") {
+                browser.closeActiveTab()
+            }
+            .keyboardShortcut("w", modifiers: .command)
         }
     }
 }

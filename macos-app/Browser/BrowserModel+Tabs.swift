@@ -154,6 +154,27 @@ extension BrowserModel {
         selectTab(tab.id)
     }
 
+    func closeActiveTab() {
+        guard tabStates.count > 1,
+              let closingIndex = tabStates.firstIndex(where: { $0.id == activeTabID })
+        else {
+            return
+        }
+
+        let closingTab = tabStates[closingIndex]
+        let nextIndex = closingIndex == tabStates.index(before: tabStates.endIndex)
+            ? tabStates.index(before: closingIndex)
+            : tabStates.index(after: closingIndex)
+        let nextTabID = tabStates[nextIndex].id
+
+        closingTab.webView.stopLoading()
+        closingTab.cookiePersistence.saveNow()
+        detach(closingTab.webView)
+        closingTab.observations.removeAll()
+        tabStates.remove(at: closingIndex)
+        selectTab(nextTabID)
+    }
+
     func makeTab(initialURL: URL?) -> BrowserTabState {
         let identityID = initialURL.flatMap { settingsStore.activeIdentityID(for: $0) }
         let webView = Self.makeWebView(

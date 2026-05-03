@@ -521,7 +521,7 @@ final class BrowserModel: NSObject, ObservableObject {
         }
     }
 
-    private func detach(_ webView: BrowserWKWebView) {
+    func detach(_ webView: BrowserWKWebView) {
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         webView.browserContextMenuDelegate = nil
@@ -754,5 +754,4 @@ final class BrowserModel: NSObject, ObservableObject {
 
 
 }
-
 
