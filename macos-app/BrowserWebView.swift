@@ -130,15 +130,16 @@ final class BrowserWKWebView: WKWebView {
             menu.addItem(clearCookiesItem)
         }
 
-        let copyLinkItem = NSMenuItem(
-            title: copyLinkMenuTitle(for: contextMenuLinkURL),
-            action: #selector(copyLinkFromContextMenu(_:)),
-            keyEquivalent: ""
-        )
-        copyLinkItem.target = self
-        copyLinkItem.isEnabled = contextMenuLinkURL != nil
-        copyLinkItem.representedObject = contextMenuLinkURL
-        menu.addItem(copyLinkItem)
+        if let contextMenuLinkURL {
+            let copyLinkItem = NSMenuItem(
+                title: copyLinkMenuTitle(for: contextMenuLinkURL),
+                action: #selector(copyLinkFromContextMenu(_:)),
+                keyEquivalent: ""
+            )
+            copyLinkItem.target = self
+            copyLinkItem.representedObject = contextMenuLinkURL
+            menu.addItem(copyLinkItem)
+        }
 
         return menu
     }
