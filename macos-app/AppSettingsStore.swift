@@ -8,6 +8,23 @@
 import Darwin
 import Foundation
 
+struct SiteIdentity: Codable, Identifiable, Equatable {
+    var id: UUID
+    var siteKey: String
+    var name: String
+    var lastURL: String?
+    var createdAt: Date
+    var lastUsedAt: Date
+}
+
+struct BrowserSiteIdentityMenuItem: Identifiable, Equatable {
+    static let defaultID = "default"
+
+    var id: String
+    var title: String
+    var isCurrent: Bool
+}
+
 struct AppSettings: Codable {
     static let defaultPort: UInt16 = 9001
     static let defaultURL = "https://wkdomains.com"
@@ -18,6 +35,8 @@ struct AppSettings: Codable {
     var lastDomain: String
     var historyURLs: [String]
     var dark: Bool
+    var siteIdentities: [String: [SiteIdentity]]
+    var activeSiteIdentityIDs: [String: UUID]
 
     static var defaults: AppSettings {
         AppSettings(
@@ -25,16 +44,28 @@ struct AppSettings: Codable {
             lastURL: defaultURL,
             lastDomain: URL(string: defaultURL)?.host ?? "wkdomains.com",
             historyURLs: [defaultURL],
-            dark: true
+            dark: true,
+            siteIdentities: [:],
+            activeSiteIdentityIDs: [:]
         )
     }
 
-    init(port: UInt16, lastURL: String, lastDomain: String, historyURLs: [String], dark: Bool) {
+    init(
+        port: UInt16,
+        lastURL: String,
+        lastDomain: String,
+        historyURLs: [String],
+        dark: Bool,
+        siteIdentities: [String: [SiteIdentity]],
+        activeSiteIdentityIDs: [String: UUID]
+    ) {
         self.port = port
         self.lastURL = lastURL
         self.lastDomain = lastDomain
         self.historyURLs = historyURLs
         self.dark = dark
+        self.siteIdentities = siteIdentities
+        self.activeSiteIdentityIDs = activeSiteIdentityIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -47,6 +78,8 @@ struct AppSettings: Codable {
             ?? "wkdomains.com"
         historyURLs = try container.decodeIfPresent([String].self, forKey: .historyURLs) ?? []
         dark = try container.decodeIfPresent(Bool.self, forKey: .dark) ?? true
+        siteIdentities = try container.decodeIfPresent([String: [SiteIdentity]].self, forKey: .siteIdentities) ?? [:]
+        activeSiteIdentityIDs = try container.decodeIfPresent([String: UUID].self, forKey: .activeSiteIdentityIDs) ?? [:]
     }
 }
 
@@ -66,7 +99,9 @@ final class AppSettingsStore {
         settingsURL = directoryURL.appendingPathComponent("settings.json")
 
         encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        decoder.dateDecodingStrategy = .iso8601
 
         cachedSettings = Self.readSettings(from: settingsURL, decoder: decoder)
             ?? Self.readSettings(
@@ -86,7 +121,94 @@ final class AppSettingsStore {
         Self.validURL(from: cachedSettings.lastURL) ?? URL(string: AppSettings.defaultURL)!
     }
 
-    func updateLastVisitedURL(_ url: URL) {
+    func activeIdentityID(for url: URL) -> UUID? {
+        guard let siteKey = Self.siteKey(for: url),
+              let identityID = cachedSettings.activeSiteIdentityIDs[siteKey],
+              identity(withID: identityID, forSiteKey: siteKey) != nil
+        else {
+            return nil
+        }
+
+        return identityID
+    }
+
+    func siteIdentityMenuItems(for url: URL?, activeIdentityID: UUID?) -> [BrowserSiteIdentityMenuItem] {
+        guard let siteKey = url.flatMap(Self.siteKey(for:)) else {
+            return [
+                BrowserSiteIdentityMenuItem(
+                    id: BrowserSiteIdentityMenuItem.defaultID,
+                    title: "Default",
+                    isCurrent: activeIdentityID == nil
+                )
+            ]
+        }
+
+        let identities = cachedSettings.siteIdentities[siteKey] ?? []
+        return [
+            BrowserSiteIdentityMenuItem(
+                id: BrowserSiteIdentityMenuItem.defaultID,
+                title: "Default",
+                isCurrent: activeIdentityID == nil
+            )
+        ] + identities.map { identity in
+            BrowserSiteIdentityMenuItem(
+                id: identity.id.uuidString,
+                title: identity.name,
+                isCurrent: identity.id == activeIdentityID
+            )
+        }
+    }
+
+    func identityName(for identityID: UUID?) -> String {
+        guard let identityID,
+              let identity = identity(withID: identityID)
+        else {
+            return "Default"
+        }
+
+        return identity.name
+    }
+
+    func createIdentity(for url: URL) -> SiteIdentity? {
+        guard let siteKey = Self.siteKey(for: url),
+              let normalizedURL = Self.validURL(from: url.absoluteString)
+        else {
+            return nil
+        }
+
+        var identities = cachedSettings.siteIdentities[siteKey] ?? []
+        let now = Date()
+        let identity = SiteIdentity(
+            id: UUID(),
+            siteKey: siteKey,
+            name: nextIdentityName(for: identities),
+            lastURL: normalizedURL.absoluteString,
+            createdAt: now,
+            lastUsedAt: now
+        )
+
+        identities.append(identity)
+        cachedSettings.siteIdentities[siteKey] = identities
+        cachedSettings.activeSiteIdentityIDs[siteKey] = identity.id
+        write(cachedSettings)
+        return identity
+    }
+
+    func setActiveIdentity(_ identityID: UUID?, for url: URL) {
+        guard let siteKey = Self.siteKey(for: url) else { return }
+
+        if let identityID,
+           updateIdentity(withID: identityID, forSiteKey: siteKey, lastURL: url.absoluteString, lastUsedAt: Date())
+        {
+            cachedSettings.activeSiteIdentityIDs[siteKey] = identityID
+        } else {
+            cachedSettings.activeSiteIdentityIDs.removeValue(forKey: siteKey)
+        }
+
+        write(cachedSettings)
+    }
+
+    func updateLastVisitedURL(_ url: URL, identityID: UUID?) {
         guard let normalizedURL = Self.validURL(from: url.absoluteString),
               let host = normalizedURL.host
         else {
@@ -95,9 +217,11 @@ final class AppSettingsStore {
 
         let normalizedURLString = normalizedURL.absoluteString
         let history = Self.historyByPrepending(normalizedURLString, to: cachedSettings.historyURLs)
+        let identityChanged = updateIdentityForVisitedURL(normalizedURL, identityID: identityID)
         let hasChanged = cachedSettings.lastURL != normalizedURLString
             || cachedSettings.lastDomain != host
             || cachedSettings.historyURLs != history
+            || identityChanged
 
         guard hasChanged else { return }
 
@@ -105,6 +229,70 @@ final class AppSettingsStore {
         cachedSettings.lastDomain = host
         cachedSettings.historyURLs = history
         write(cachedSettings)
+    }
+
+    private func identity(withID identityID: UUID) -> SiteIdentity? {
+        for identities in cachedSettings.siteIdentities.values {
+            if let identity = identities.first(where: { $0.id == identityID }) {
+                return identity
+            }
+        }
+
+        return nil
+    }
+
+    private func identity(withID identityID: UUID, forSiteKey siteKey: String) -> SiteIdentity? {
+        cachedSettings.siteIdentities[siteKey]?.first(where: { $0.id == identityID })
+    }
+
+    private func updateIdentityForVisitedURL(_ url: URL, identityID: UUID?) -> Bool {
+        guard let identityID,
+              let siteKey = Self.siteKey(for: url)
+        else {
+            return false
+        }
+
+        return updateIdentity(
+            withID: identityID,
+            forSiteKey: siteKey,
+            lastURL: url.absoluteString,
+            lastUsedAt: Date()
+        )
+    }
+
+    @discardableResult
+    private func updateIdentity(
+        withID identityID: UUID,
+        forSiteKey siteKey: String,
+        lastURL: String?,
+        lastUsedAt: Date
+    ) -> Bool {
+        guard var identities = cachedSettings.siteIdentities[siteKey],
+              let index = identities.firstIndex(where: { $0.id == identityID })
+        else {
+            return false
+        }
+
+        if let lastURL,
+           Self.validURL(from: lastURL) != nil
+        {
+            identities[index].lastURL = lastURL
+        }
+
+        identities[index].lastUsedAt = lastUsedAt
+        cachedSettings.siteIdentities[siteKey] = identities
+        return true
+    }
+
+    private func nextIdentityName(for identities: [SiteIdentity]) -> String {
+        let existingNames = Set(identities.map { $0.name })
+        var index = identities.count + 2
+
+        while existingNames.contains("Account \(index)") {
+            index += 1
+        }
+
+        return "Account \(index)"
     }
 
     private static func validURL(from value: String) -> URL? {
@@ -139,6 +327,11 @@ final class AppSettingsStore {
         }
 
         return urls
+    }
+
+    nonisolated private static func siteKey(for url: URL) -> String? {
+        guard let host = url.host?.lowercased() else { return nil }
+        return DomainUtilities.registrableDomain(from: host)
     }
 
     private func write(_ settings: AppSettings) {
@@ -178,7 +371,42 @@ final class AppSettingsStore {
         }
 
         settings.historyURLs = historyByPrepending(settings.lastURL, to: settings.historyURLs)
+        settings.siteIdentities = normalizedSiteIdentities(settings.siteIdentities)
+        settings.activeSiteIdentityIDs = settings.activeSiteIdentityIDs.filter { siteKey, identityID in
+            settings.siteIdentities[siteKey]?.contains(where: { $0.id == identityID }) == true
+        }
         return settings
+    }
+
+    private static func normalizedSiteIdentities(_ identitiesBySite: [String: [SiteIdentity]]) -> [String: [SiteIdentity]] {
+        var normalized: [String: [SiteIdentity]] = [:]
+
+        for (siteKey, identities) in identitiesBySite {
+            let normalizedSiteKey = DomainUtilities.registrableDomain(from: siteKey)
+            var seen = Set<UUID>()
+            let validIdentities = identities.compactMap { identity -> SiteIdentity? in
+                guard seen.insert(identity.id).inserted else { return nil }
+
+                var identity = identity
+                identity.siteKey = normalizedSiteKey
+                identity.name = identity.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                if identity.name.isEmpty {
+                    identity.name = "Account \(seen.count + 1)"
+                }
+                if let lastURL = identity.lastURL,
+                   validURL(from: lastURL) == nil
+                {
+                    identity.lastURL = nil
+                }
+                return identity
+            }
+
+            if !validIdentities.isEmpty {
+                normalized[normalizedSiteKey] = validIdentities
+            }
+        }
+
+        return normalized
     }
 
     private static func realHomeDirectoryURL(fileManager: FileManager) -> URL {

@@ -20,13 +20,19 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published private(set) var historyURLs: [String]
     @Published private(set) var isLoading = false
     @Published private(set) var isSecurePage = false
+    @Published private(set) var currentIdentityName = "Default"
+    @Published private(set) var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] = [
+        BrowserSiteIdentityMenuItem(id: BrowserSiteIdentityMenuItem.defaultID, title: "Default", isCurrent: true)
+    ]
     @Published private(set) var viewportMode: BrowserViewportMode = .desktop
+    @Published private(set) var webViewID = UUID()
 
-    let webView: BrowserWKWebView
+    @Published private(set) var webView: BrowserWKWebView
     let botTerminal = BotTerminalModel()
 
     private var observations: [NSKeyValueObservation] = []
     private let settingsStore: AppSettingsStore
+    private var activeIdentityID: UUID?
     private var activePageHost: String?
     private var consoleRecords: [ConsoleMessageRecord] = []
     private var xhrRecords: [XHRRequestRecord] = []
@@ -40,18 +46,42 @@ final class BrowserModel: NSObject, ObservableObject {
     private var screenshotWaiters: [UUID: (Result<Data, Error>) -> Void] = [:]
     private var navigationFallbacks: [URL] = []
 
-    init(dataStore: WKWebsiteDataStore = .default(), settingsStore: AppSettingsStore = .shared) {
+    init(
+        dataStore: WKWebsiteDataStore? = nil,
+        activeIdentityID: UUID? = nil,
+        settingsStore: AppSettingsStore = .shared
+    ) {
         self.settingsStore = settingsStore
         historyURLs = settingsStore.settings.historyURLs
+        self.activeIdentityID = activeIdentityID ?? settingsStore.activeIdentityID(for: settingsStore.startupURL)
 
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = dataStore
-
-        webView = BrowserWKWebView(frame: .zero, configuration: configuration)
-        webView.configureForcedDarkPageBackground(settingsStore.settings.dark)
+        let initialDataStore = dataStore ?? Self.websiteDataStore(for: self.activeIdentityID)
+        webView = Self.makeWebView(dataStore: initialDataStore, usesDarkMode: settingsStore.settings.dark)
 
         super.init()
 
+        configure(webView)
+        refreshSiteIdentityState()
+    }
+
+    private static func websiteDataStore(for identityID: UUID?) -> WKWebsiteDataStore {
+        guard let identityID else {
+            return .default()
+        }
+
+        return WKWebsiteDataStore(forIdentifier: identityID)
+    }
+
+    private static func makeWebView(dataStore: WKWebsiteDataStore, usesDarkMode: Bool) -> BrowserWKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = dataStore
+
+        let webView = BrowserWKWebView(frame: .zero, configuration: configuration)
+        webView.configureForcedDarkPageBackground(usesDarkMode)
+        return webView
+    }
+
+    private func configure(_ webView: BrowserWKWebView) {
         webView.allowsBackForwardNavigationGestures = true
         webView.browserContextMenuDelegate = self
         webView.viewportSizeDidChange = { [weak self] in
@@ -164,6 +194,37 @@ final class BrowserModel: NSObject, ObservableObject {
         }
     }
 
+    func createFreshSiteIdentityForCurrentSite() {
+        guard let currentURL = webView.url,
+              let identity = settingsStore.createIdentity(for: currentURL)
+        else {
+            return
+        }
+
+        activeIdentityID = identity.id
+        replaceWebView(using: identity.id, loading: currentURL)
+        refreshSiteIdentityState()
+    }
+
+    func switchToSiteIdentity(_ menuItemID: String) {
+        guard let currentURL = webView.url else { return }
+
+        let nextIdentityID: UUID?
+        if menuItemID == BrowserSiteIdentityMenuItem.defaultID {
+            nextIdentityID = nil
+        } else {
+            guard let identityID = UUID(uuidString: menuItemID) else { return }
+            nextIdentityID = identityID
+        }
+
+        guard nextIdentityID != activeIdentityID else { return }
+
+        settingsStore.setActiveIdentity(nextIdentityID, for: currentURL)
+        activeIdentityID = nextIdentityID
+        replaceWebView(using: nextIdentityID, loading: currentURL)
+        refreshSiteIdentityState()
+    }
+
     func xhrRequests(for host: String) -> [XHRRequestRecord] {
         let normalizedHost = Self.normalizedHost(host)
 
@@ -263,6 +324,46 @@ final class BrowserModel: NSObject, ObservableObject {
         resetXHRTracking(for: url)
 
         webView.load(URLRequest(url: url))
+    }
+
+    private func replaceWebView(using identityID: UUID?, loading url: URL) {
+        let oldWebView = webView
+        oldWebView.stopLoading()
+        detach(oldWebView)
+        observations.removeAll()
+
+        resetScreenshotForNavigation()
+        resetXHRTracking(for: url)
+        errorMessage = nil
+        navigationFallbacks = []
+        displayAddressText = url.absoluteString
+        isSecurePage = url.scheme?.lowercased() == "https"
+        canGoBack = false
+        canGoForward = false
+        estimatedProgress = 0
+        isLoading = false
+        hasAttemptedNavigation = true
+
+        let nextWebView = Self.makeWebView(
+            dataStore: Self.websiteDataStore(for: identityID),
+            usesDarkMode: settingsStore.settings.dark
+        )
+        configure(nextWebView)
+        webView = nextWebView
+        webViewID = UUID()
+        nextWebView.load(URLRequest(url: url))
+    }
+
+    private func detach(_ webView: BrowserWKWebView) {
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        webView.browserContextMenuDelegate = nil
+        webView.viewportSizeDidChange = nil
+
+        let userContentController = webView.configuration.userContentController
+        userContentController.removeScriptMessageHandler(forName: "wkdomainsXHR")
+        userContentController.removeScriptMessageHandler(forName: "wkdomainsRender")
+        userContentController.removeScriptMessageHandler(forName: "wkdomainsConsole")
     }
 
     private func resetXHRTracking(for url: URL?) {
@@ -365,6 +466,7 @@ final class BrowserModel: NSObject, ObservableObject {
         canGoForward = webView.canGoForward
         estimatedProgress = webView.estimatedProgress
         isLoading = webView.isLoading
+        refreshSiteIdentityState()
     }
 
     private func syncWindowTitle(from webView: WKWebView) {
@@ -377,8 +479,17 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     private func recordVisitedURL(_ url: URL) {
-        settingsStore.updateLastVisitedURL(url)
+        settingsStore.updateLastVisitedURL(url, identityID: activeIdentityID)
         historyURLs = settingsStore.settings.historyURLs
+        refreshSiteIdentityState()
+    }
+
+    private func refreshSiteIdentityState() {
+        currentIdentityName = settingsStore.identityName(for: activeIdentityID)
+        siteIdentityMenuItems = settingsStore.siteIdentityMenuItems(
+            for: webView.url,
+            activeIdentityID: activeIdentityID
+        )
     }
 
     private static func normalizedHost(_ host: String) -> String {

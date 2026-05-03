@@ -25,6 +25,10 @@ struct BrowserWebView: NSViewRepresentable {
 
 protocol BrowserContextMenuDelegate: AnyObject {
     func clearCookiesForCurrentDomain()
+    func createFreshSiteIdentityForCurrentSite()
+    func switchToSiteIdentity(_ menuItemID: String)
+    var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] { get }
+    var currentIdentityName: String { get }
 }
 
 final class BrowserWKWebView: WKWebView {
@@ -156,6 +160,30 @@ final class BrowserWKWebView: WKWebView {
         menu.addItem(reloadItem)
 
         if url?.host != nil {
+            menu.addItem(NSMenuItem.separator())
+
+            let currentIdentityItem = NSMenuItem(
+                title: "Identity: \(browserContextMenuDelegate?.currentIdentityName ?? "Default")",
+                action: nil,
+                keyEquivalent: ""
+            )
+            currentIdentityItem.isEnabled = false
+            menu.addItem(currentIdentityItem)
+
+            let freshIdentityItem = NSMenuItem(
+                title: "Open Fresh Identity",
+                action: #selector(createFreshIdentityFromContextMenu),
+                keyEquivalent: ""
+            )
+            freshIdentityItem.target = self
+            menu.addItem(freshIdentityItem)
+
+            let switchIdentityItem = NSMenuItem(title: "Switch Identity", action: nil, keyEquivalent: "")
+            switchIdentityItem.submenu = identitySubmenu()
+            menu.addItem(switchIdentityItem)
+
+            menu.addItem(NSMenuItem.separator())
+
             let clearCookiesItem = NSMenuItem(
                 title: "Clear cookies",
                 action: #selector(clearCookiesFromContextMenu),
@@ -177,6 +205,27 @@ final class BrowserWKWebView: WKWebView {
         }
 
         return menu
+    }
+
+    private func identitySubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        let items = browserContextMenuDelegate?.siteIdentityMenuItems ?? [
+            BrowserSiteIdentityMenuItem(id: BrowserSiteIdentityMenuItem.defaultID, title: "Default", isCurrent: true)
+        ]
+
+        for identity in items {
+            let item = NSMenuItem(
+                title: identity.title,
+                action: #selector(switchIdentityFromContextMenu(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = identity.id
+            item.state = identity.isCurrent ? .on : .off
+            submenu.addItem(item)
+        }
+
+        return submenu
     }
 
     private func copyLinkMenuTitle(for linkURL: String?) -> String {
@@ -260,6 +309,15 @@ final class BrowserWKWebView: WKWebView {
 
     @objc private func clearCookiesFromContextMenu() {
         browserContextMenuDelegate?.clearCookiesForCurrentDomain()
+    }
+
+    @objc private func createFreshIdentityFromContextMenu() {
+        browserContextMenuDelegate?.createFreshSiteIdentityForCurrentSite()
+    }
+
+    @objc private func switchIdentityFromContextMenu(_ sender: NSMenuItem) {
+        guard let menuItemID = sender.representedObject as? String else { return }
+        browserContextMenuDelegate?.switchToSiteIdentity(menuItemID)
     }
 
     @objc private func copyLinkFromContextMenu(_ sender: NSMenuItem) {

@@ -607,16 +607,13 @@ private struct APIErrorResponse: Encodable {
 @MainActor
 private final class WebsiteDataReader {
     private let browser: BrowserModel
-    private let dataStore: WKWebsiteDataStore
-    private let localStorageReader: LocalStorageReader
 
     init(browser: BrowserModel) {
         self.browser = browser
-        self.dataStore = browser.webView.configuration.websiteDataStore
-        localStorageReader = LocalStorageReader(dataStore: dataStore)
     }
 
     func readStorage(for domain: RequestedDomain, completion: @escaping (DomainStorageResponse) -> Void) {
+        let dataStore = browser.webView.configuration.websiteDataStore
         dataStore.httpCookieStore.getAllCookies { [weak self] cookies in
             Task { @MainActor in
                 guard let self else { return }
@@ -632,7 +629,10 @@ private final class WebsiteDataReader {
                         return left.domain < right.domain
                     }
 
-                self.localStorageReader.readLocalStorage(for: domain.localStorageOrigins) { localStorageOrigins in
+                var localStorageReader: LocalStorageReader?
+                localStorageReader = LocalStorageReader(dataStore: dataStore)
+                localStorageReader?.readLocalStorage(for: domain.localStorageOrigins) { localStorageOrigins in
+                    _ = localStorageReader
                     self.readActiveSessionStorage(for: domain) { sessionStorageOrigins in
                         completion(
                             DomainStorageResponse(

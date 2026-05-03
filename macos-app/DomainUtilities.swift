@@ -8,7 +8,7 @@
 import Foundation
 
 enum DomainUtilities {
-    static func registrableDomain(from host: String) -> String {
+    nonisolated static func registrableDomain(from host: String) -> String {
         let normalizedHost = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
 
         if normalizedHost == "localhost"

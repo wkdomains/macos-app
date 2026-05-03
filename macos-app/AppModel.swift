@@ -6,7 +6,6 @@
 //
 
 import Combine
-import WebKit
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -15,10 +14,9 @@ final class AppModel: ObservableObject {
     private let apiServer: LocalAPIServer
 
     init() {
-        let dataStore = WKWebsiteDataStore.default()
         let settingsStore = AppSettingsStore.shared
 
-        browser = BrowserModel(dataStore: dataStore, settingsStore: settingsStore)
+        browser = BrowserModel(settingsStore: settingsStore)
         browser.setLocalAPIBaseURL("http://localhost:\(settingsStore.settings.port)")
         apiServer = LocalAPIServer(browser: browser, settings: settingsStore.settings)
         apiServer.start()

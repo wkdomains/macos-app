@@ -8,6 +8,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+import WebKit
 
 private struct AddressSuggestion: Identifiable {
     enum Kind {
@@ -168,6 +169,8 @@ struct ContentView: View {
             .keyboardShortcut("r", modifiers: .command)
 
             addressBar
+
+            identityControls
 
             viewportControls
 
@@ -791,6 +794,7 @@ struct ContentView: View {
                     webView: browser.webView,
                     blocksProgrammaticFocus: isAddressFocused
                 )
+                    .id(browser.webViewID)
                     .opacity(browser.hasAttemptedNavigation ? 1 : 0)
 
                 if !browser.hasAttemptedNavigation {
@@ -834,6 +838,51 @@ struct ContentView: View {
                 .help(mode.helpText)
             }
         }
+    }
+
+    private var identityControls: some View {
+        Menu {
+            Button {
+                browser.createFreshSiteIdentityForCurrentSite()
+            } label: {
+                Label("Open Fresh Identity", systemImage: "person.crop.circle.badge.plus")
+            }
+            .disabled(browser.webView.url == nil)
+
+            Divider()
+
+            ForEach(browser.siteIdentityMenuItems) { identity in
+                Button {
+                    browser.switchToSiteIdentity(identity.id)
+                } label: {
+                    Label(identity.title, systemImage: identity.isCurrent ? "checkmark.circle.fill" : "circle")
+                }
+                .disabled(identity.isCurrent || browser.webView.url == nil)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 12, weight: .semibold))
+
+                Text(browser.currentIdentityName)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .frame(maxWidth: 140)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityLabel("Site identity")
+        .help("Site identity")
     }
 
     private var botControls: some View {
