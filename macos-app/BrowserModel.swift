@@ -279,7 +279,7 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     var canFillSavedLoginForCurrentSite: Bool {
-        loginStore.hasLogin(for: webView.url)
+        loginStore.hasLogin(for: webView.url, identityID: activeIdentityID)
     }
 
     func useLoginFieldFromContextMenu(_ role: LoginFieldRole, target: LoginFieldTarget) {
@@ -695,14 +695,15 @@ final class BrowserModel: NSObject, ObservableObject {
             password: password,
             usernameTarget: usernameTarget,
             passwordTarget: passwordTarget,
-            for: currentURL
+            for: currentURL,
+            identityID: activeIdentityID
         )
         pendingLoginUsernameTarget = nil
         pendingLoginPasswordTarget = nil
     }
 
     private func fillSavedLoginForCurrentSite(reportsMissingLogin: Bool) {
-        guard let entry = loginStore.login(for: webView.url) else {
+        guard let entry = loginStore.login(for: webView.url, identityID: activeIdentityID) else {
             if reportsMissingLogin {
                 showLoginAlert(message: "No Saved Login", detail: "There is no saved login for this site yet.")
             }
