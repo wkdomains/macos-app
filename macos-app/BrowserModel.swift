@@ -599,6 +599,8 @@ final class BrowserModel: NSObject, ObservableObject {
                 host: url.host?.lowercased(),
                 pageURL: message["pageURL"] as? String,
                 pageHost: (message["pageHost"] as? String)?.lowercased(),
+                requestHeaders: Self.stringDictionary(from: message["requestHeaders"]),
+                userAgent: message["userAgent"] as? String,
                 startedAt: Date(),
                 completedAt: nil,
                 status: nil,
@@ -811,6 +813,23 @@ final class BrowserModel: NSObject, ObservableObject {
         }
 
         return nil
+    }
+
+    private static func stringDictionary(from value: Any?) -> [String: String] {
+        guard let dictionary = value as? [String: Any] else {
+            return [:]
+        }
+
+        var result: [String: String] = [:]
+        for (key, value) in dictionary {
+            guard let string = value as? String else {
+                continue
+            }
+
+            result[key.lowercased()] = string
+        }
+
+        return result
     }
 
     private static func loginCaptureScript(targetsJSON: String) -> String {

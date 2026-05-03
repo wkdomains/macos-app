@@ -37,6 +37,27 @@ extension BrowserModel {
         }
       };
 
+      const normalizedHeaders = (headers) => {
+        const result = {};
+
+        try {
+          if (!headers) return result;
+
+          new Headers(headers).forEach((value, name) => {
+            result[String(name).toLowerCase()] = String(value);
+          });
+        } catch (_) {}
+
+        return result;
+      };
+
+      const fetchHeaders = (input, init) => {
+        return {
+          ...normalizedHeaders(input instanceof Request ? input.headers : undefined),
+          ...normalizedHeaders(init && init.headers)
+        };
+      };
+
       const byteSize = (text) => {
         try {
           if (window.TextEncoder) return new TextEncoder().encode(text).length;
@@ -207,8 +228,17 @@ extension BrowserModel {
           const id = requestID();
           const method = (init && init.method) || (input && input.method) || "GET";
           const url = normalizeURL(input);
+          const requestHeaders = fetchHeaders(input, init);
 
-          post({ event: "start", id, kind: "fetch", method, url });
+          post({
+            event: "start",
+            id,
+            kind: "fetch",
+            method,
+            url,
+            requestHeaders,
+            userAgent: navigator.userAgent
+          });
 
           return originalFetch.apply(this, arguments).then((response) => {
             finishFetch(id, response, url);
@@ -227,15 +257,26 @@ extension BrowserModel {
       const OriginalXHR = window.XMLHttpRequest;
       if (typeof OriginalXHR === "function") {
         const originalOpen = OriginalXHR.prototype.open;
+        const originalSetRequestHeader = OriginalXHR.prototype.setRequestHeader;
         const originalSend = OriginalXHR.prototype.send;
 
         OriginalXHR.prototype.open = function(method, url) {
           this.__wkdomainsXHR = {
             method: method || "GET",
-            url: normalizeURL(url)
+            url: normalizeURL(url),
+            headers: {}
           };
 
           return originalOpen.apply(this, arguments);
+        };
+
+        OriginalXHR.prototype.setRequestHeader = function(name, value) {
+          if (!this.__wkdomainsXHR) this.__wkdomainsXHR = { headers: {} };
+          if (!this.__wkdomainsXHR.headers) this.__wkdomainsXHR.headers = {};
+
+          this.__wkdomainsXHR.headers[String(name).toLowerCase()] = String(value);
+
+          return originalSetRequestHeader.apply(this, arguments);
         };
 
         OriginalXHR.prototype.send = function() {
@@ -248,7 +289,9 @@ extension BrowserModel {
             id,
             kind: "xmlhttprequest",
             method: info.method || "GET",
-            url: info.url || ""
+            url: info.url || "",
+            requestHeaders: info.headers || {},
+            userAgent: navigator.userAgent
           });
 
           this.addEventListener("loadend", () => {

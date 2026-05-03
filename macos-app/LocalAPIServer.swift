@@ -129,6 +129,23 @@ final class LocalAPIServer {
             return
         }
 
+        if let index = request.xhrReplayIndex {
+            dataReader.replayXHRRequestForCurrentPage(at: index) { [weak self] result in
+                switch result {
+                case .success(let response):
+                    self?.sendData(
+                        response.body,
+                        contentType: response.contentType ?? "application/json; charset=utf-8",
+                        status: .ok,
+                        on: connection
+                    )
+                case .failure(let error):
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
         if request.path == "/api/v1/screenshot" {
             dataReader.readScreenshot { [weak self] result in
                 switch result {
@@ -556,6 +573,15 @@ private struct HTTPRequest {
 
         return host == "localhost" || host == "127.0.0.1" || host == "::1"
     }
+
+    var xhrReplayIndex: Int? {
+        let prefix = "/api/v1/xhr/"
+        guard path.hasPrefix(prefix) else {
+            return nil
+        }
+
+        return Int(path.dropFirst(prefix.count))
+    }
 }
 
 private struct RequestedDomain {
@@ -686,6 +712,47 @@ private final class WebsiteDataReader {
             return .success(readXHRRequests(for: try currentPageDomain()))
         } catch {
             return .failure(error)
+        }
+    }
+
+    func replayXHRRequestForCurrentPage(
+        at index: Int,
+        completion: @escaping (Result<XHRReplayResponse, Error>) -> Void
+    ) {
+        do {
+            let domain = try currentPageDomain()
+            let requests = readXHRRequests(for: domain).requests
+
+            guard requests.indices.contains(index) else {
+                throw InspectionError.xhrIndexOutOfRange(index)
+            }
+
+            let xhr = requests[index]
+            guard let url = URL(string: xhr.url) else {
+                throw InspectionError.invalidXHRURL
+            }
+
+            let dataStore = browser.webView.configuration.websiteDataStore
+            dataStore.httpCookieStore.getAllCookies { [weak self] cookies in
+                Task { @MainActor in
+                    guard let self else { return }
+
+                    let cookieHeader = self.cookieHeader(for: url, from: cookies)
+
+                    do {
+                        let response = try await Self.fetchXHRJSON(
+                            xhr: xhr,
+                            url: url,
+                            cookieHeader: cookieHeader
+                        )
+                        completion(.success(response))
+                    } catch {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        } catch {
+            completion(.failure(error))
         }
     }
 
@@ -832,6 +899,48 @@ private final class WebsiteDataReader {
         return cookieDomain == host
             || cookieDomain.hasSuffix(".\(host)")
             || host.hasSuffix(".\(cookieDomain)")
+    }
+
+    private func cookieHeader(for url: URL, from cookies: [HTTPCookie]) -> String? {
+        let matchingCookies = cookies.filter { cookie in
+            self.cookie(cookie, shouldBeSentTo: url)
+        }
+
+        guard !matchingCookies.isEmpty else {
+            return nil
+        }
+
+        return matchingCookies
+            .sorted { left, right in
+                if left.path.count == right.path.count {
+                    return left.name < right.name
+                }
+
+                return left.path.count > right.path.count
+            }
+            .map { "\($0.name)=\($0.value)" }
+            .joined(separator: "; ")
+    }
+
+    private func cookie(_ cookie: HTTPCookie, shouldBeSentTo url: URL) -> Bool {
+        guard let host = url.host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) else {
+            return false
+        }
+
+        if cookie.isSecure, url.scheme?.lowercased() != "https" {
+            return false
+        }
+
+        if let expiresDate = cookie.expiresDate, expiresDate <= Date() {
+            return false
+        }
+
+        let requestPath = url.path.isEmpty ? "/" : url.path
+        guard requestPath.hasPrefix(cookie.path) else {
+            return false
+        }
+
+        return self.cookie(cookie, matches: host)
     }
 
     private func readActiveSessionStorage(
@@ -981,6 +1090,92 @@ private final class WebsiteDataReader {
         }
     }
 
+    private static func fetchXHRJSON(
+        xhr: XHRRequestResponse,
+        url: URL,
+        cookieHeader: String?
+    ) async throws -> XHRReplayResponse {
+        var request = URLRequest(url: url)
+        request.httpMethod = xhr.method
+        request.timeoutInterval = 30
+
+        for (name, value) in xhr.requestHeaders {
+            guard shouldReplayHeader(name) else {
+                continue
+            }
+
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+
+        if request.value(forHTTPHeaderField: "Accept") == nil {
+            request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        }
+
+        if request.value(forHTTPHeaderField: "User-Agent") == nil {
+            request.setValue(xhr.userAgent ?? BotTerminalModel.llmsUserAgent, forHTTPHeaderField: "User-Agent")
+        }
+
+        if let cookieHeader, !cookieHeader.isEmpty {
+            request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+        }
+
+        if let pageURL = xhr.pageURL {
+            if request.value(forHTTPHeaderField: "Referer") == nil {
+                request.setValue(pageURL, forHTTPHeaderField: "Referer")
+            }
+
+            if request.value(forHTTPHeaderField: "Origin") == nil,
+               let origin = URL(string: pageURL).map(Self.originString(from:)) {
+                request.setValue(origin, forHTTPHeaderField: "Origin")
+            }
+        }
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let httpResponse = response as? HTTPURLResponse
+        let statusCode = httpResponse?.statusCode
+
+        guard !data.isEmpty else {
+            throw InspectionError.xhrReplayReturnedEmptyBody(statusCode)
+        }
+
+        do {
+            _ = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        } catch {
+            throw InspectionError.xhrReplayReturnedNonJSON(statusCode)
+        }
+
+        let responseContentType = httpResponse?.value(forHTTPHeaderField: "Content-Type")
+        let contentType: String
+        if responseContentType?.lowercased().contains("json") == true {
+            contentType = responseContentType ?? "application/json; charset=utf-8"
+        } else {
+            contentType = "application/json; charset=utf-8"
+        }
+
+        return XHRReplayResponse(
+            body: data,
+            contentType: contentType
+        )
+    }
+
+    private static func shouldReplayHeader(_ name: String) -> Bool {
+        switch name.lowercased() {
+        case "accept-encoding",
+            "connection",
+            "content-length",
+            "cookie",
+            "host",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade":
+            return false
+        default:
+            return true
+        }
+    }
+
     private static let iso8601Formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
@@ -991,6 +1186,10 @@ private final class WebsiteDataReader {
 private enum InspectionError: LocalizedError {
     case noPageLoaded
     case couldNotDecodePageJSON
+    case xhrIndexOutOfRange(Int)
+    case invalidXHRURL
+    case xhrReplayReturnedEmptyBody(Int?)
+    case xhrReplayReturnedNonJSON(Int?)
 
     var errorDescription: String? {
         switch self {
@@ -998,6 +1197,22 @@ private enum InspectionError: LocalizedError {
             return "No page is loaded."
         case .couldNotDecodePageJSON:
             return "Could not decode page inspection JSON."
+        case .xhrIndexOutOfRange(let index):
+            return "No observed XHR request exists at index \(index)."
+        case .invalidXHRURL:
+            return "The observed XHR request URL is invalid."
+        case .xhrReplayReturnedEmptyBody(let statusCode):
+            if let statusCode {
+                return "The replayed XHR returned an empty body with HTTP \(statusCode)."
+            }
+
+            return "The replayed XHR returned an empty body."
+        case .xhrReplayReturnedNonJSON(let statusCode):
+            if let statusCode {
+                return "The replayed XHR did not return JSON with HTTP \(statusCode)."
+            }
+
+            return "The replayed XHR did not return JSON."
         }
     }
 }
@@ -1065,6 +1280,11 @@ private struct XHRRequestsResponse: Encodable {
     let activePageURL: String?
     let activePageHost: String?
     let requests: [XHRRequestResponse]
+}
+
+private struct XHRReplayResponse {
+    let body: Data
+    let contentType: String?
 }
 
 private struct PageResponse: Encodable {
@@ -1137,6 +1357,8 @@ private struct XHRRequestResponse: Encodable {
     let host: String?
     let pageURL: String?
     let pageHost: String?
+    let requestHeaders: [String: String]
+    let userAgent: String?
     let startedAt: Date
     let completedAt: Date?
     let status: Int?
@@ -1155,6 +1377,8 @@ private struct XHRRequestResponse: Encodable {
         host = record.host
         pageURL = record.pageURL
         pageHost = record.pageHost
+        requestHeaders = record.requestHeaders
+        userAgent = record.userAgent
         startedAt = record.startedAt
         completedAt = record.completedAt
         status = record.status

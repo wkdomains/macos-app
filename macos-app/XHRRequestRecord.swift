@@ -15,6 +15,8 @@ struct XHRRequestRecord: Encodable {
     let host: String?
     let pageURL: String?
     let pageHost: String?
+    let requestHeaders: [String: String]
+    let userAgent: String?
     let startedAt: Date
     var completedAt: Date?
     var status: Int?
