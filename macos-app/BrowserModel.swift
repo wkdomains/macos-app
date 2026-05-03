@@ -413,14 +413,14 @@ final class BrowserModel: NSObject, ObservableObject {
             WKUserScript(
                 source: Self.xhrTrackingScript,
                 injectionTime: .atDocumentStart,
-                forMainFrameOnly: false
+                forMainFrameOnly: true
             )
         )
         userContentController.addUserScript(
             WKUserScript(
                 source: Self.renderInvalidationScript,
                 injectionTime: .atDocumentStart,
-                forMainFrameOnly: false
+                forMainFrameOnly: true
             )
         )
         if settingsStore.settings.dark {
@@ -428,7 +428,7 @@ final class BrowserModel: NSObject, ObservableObject {
                 WKUserScript(
                     source: Self.forcedDarkModeScript,
                     injectionTime: .atDocumentStart,
-                    forMainFrameOnly: false
+                    forMainFrameOnly: true
                 )
             )
         }
@@ -436,7 +436,7 @@ final class BrowserModel: NSObject, ObservableObject {
             WKUserScript(
                 source: Self.consoleTrackingScript,
                 injectionTime: .atDocumentStart,
-                forMainFrameOnly: false
+                forMainFrameOnly: true
             )
         )
     }
