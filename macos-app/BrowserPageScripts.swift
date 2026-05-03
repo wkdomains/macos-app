@@ -338,7 +338,6 @@ extension BrowserModel {
       window.__wkdomainsDarkModeInstalled = true;
 
       const STYLE_ID = "wkdomains-forced-dark-style";
-      const COVER_ID = "wkdomains-forced-dark-cover";
       const ROOT_ATTRIBUTE = "data-wkdomains-forced-dark";
       const READY_ATTRIBUTE = "data-wkdomains-forced-dark-ready";
       const DEFAULT_BACKGROUND = { r: 24, g: 26, b: 27, a: 1 };
@@ -363,12 +362,8 @@ extension BrowserModel {
       let scheduled = false;
       let applying = false;
       let observer = null;
-      const installedAt = performance.now ? performance.now() : Date.now();
-      let lastMutationAt = installedAt;
-      let coverReleaseTimer = null;
 
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-      const debugDarkMode = () => {};
 
       const parseComponent = (value, isAlpha = false) => {
         if (!value) return isAlpha ? 1 : 0;
@@ -650,14 +645,8 @@ extension BrowserModel {
       const ensureBaseStyle = () => {
         if (!document.documentElement) return;
         document.documentElement.setAttribute(ROOT_ATTRIBUTE, "true");
-        if (!document.documentElement.hasAttribute(READY_ATTRIBUTE)) {
-          ensurePreflightCover();
-        }
 
-        if (document.getElementById(STYLE_ID)) {
-          debugDarkMode("base-style-exists", {}, 3);
-          return;
-        }
+        if (document.getElementById(STYLE_ID)) return;
 
         const style = document.createElement("style");
         style.id = STYLE_ID;
@@ -665,9 +654,16 @@ extension BrowserModel {
           :root[${ROOT_ATTRIBUTE}] {
             color-scheme: dark !important;
           }
-          :root[${ROOT_ATTRIBUTE}][${READY_ATTRIBUTE}],
-          :root[${ROOT_ATTRIBUTE}][${READY_ATTRIBUTE}] body {
+          :root[${ROOT_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}] body,
+          :root[${ROOT_ATTRIBUTE}] body :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path) {
             background: ${toRGBA(DEFAULT_BACKGROUND)} !important;
+            color: ${toRGBA(DEFAULT_TEXT)} !important;
+            border-color: ${toRGBA(DEFAULT_BORDER)} !important;
+            transition-property: color, background-color, border-color, outline-color, box-shadow !important;
+            transition-duration: 0s !important;
+          }
+          :root[${ROOT_ATTRIBUTE}] a {
             color: ${toRGBA(DEFAULT_TEXT)} !important;
           }
           :root[${ROOT_ATTRIBUTE}] input,
@@ -683,106 +679,30 @@ extension BrowserModel {
         `;
 
         (document.head || document.documentElement).appendChild(style);
-        debugDarkMode("base-style-installed", {
-          parent: document.head ? "head" : "documentElement"
-        }, 5);
       };
 
-      const ensurePreflightCover = () => {
-        if (!document.documentElement) return;
-        if (document.getElementById(COVER_ID)) {
-          debugDarkMode("cover-exists", {}, 5);
-          return;
-        }
+      const withFallbackDisabled = (action) => {
+        const style = document.getElementById(STYLE_ID);
+        const wasDisabled = style ? style.disabled : false;
 
-        const cover = document.createElement("div");
-        cover.id = COVER_ID;
-        cover.setAttribute("aria-hidden", "true");
-        cover.style.cssText = [
-          "position:fixed",
-          "inset:0",
-          "z-index:2147483647",
-          "display:block",
-          `background:${toRGBA(DEFAULT_BACKGROUND)}`,
-          "pointer-events:none",
-          "border:0",
-          "margin:0",
-          "padding:0",
-          "width:100vw",
-          "height:100vh"
-        ].map((declaration) => `${declaration} !important`).join(";");
-
-        document.documentElement.appendChild(cover);
-        debugDarkMode("cover-installed", {
-          coverParent: "documentElement"
-        }, 5);
-      };
-
-      const releasePreflightCover = (removeBaseStyle = false) => {
-        if (coverReleaseTimer) {
-          window.clearTimeout(coverReleaseTimer);
-          coverReleaseTimer = null;
-        }
-
-        const finish = () => {
-          const hadCover = !!document.getElementById(COVER_ID);
-          document.getElementById(COVER_ID)?.remove();
-          debugDarkMode("cover-removed", {
-            hadCover,
-            removeBaseStyle
-          }, 10);
-
-          if (removeBaseStyle && document.documentElement) {
-            document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
-            document.documentElement.removeAttribute(READY_ATTRIBUTE);
-            document.getElementById(STYLE_ID)?.remove();
-            debugDarkMode("base-style-removed", {}, 5);
-          }
-        };
-
-        const shouldWaitForSettledPage = () => {
-          if (removeBaseStyle) return false;
-
-          const now = performance.now ? performance.now() : Date.now();
-          const elapsed = now - installedAt;
-          const quietFor = now - lastMutationAt;
-          const bodyChildren = document.body ? document.body.childElementCount : 0;
-          const bodyHeight = document.body
-            ? Math.max(document.body.scrollHeight || 0, document.body.getBoundingClientRect().height || 0)
-            : 0;
-          const hasUsefulContent = bodyChildren >= 8 || bodyHeight >= Math.max(360, innerHeight * 0.6);
-
-          if (!hasUsefulContent && elapsed < 900) return true;
-          if (hasUsefulContent && quietFor < 35 && elapsed < 450) return true;
-          if (!hasUsefulContent && quietFor < 90 && elapsed < 900) return true;
-
-          return false;
-        };
-
-        if (shouldWaitForSettledPage()) {
-          const now = performance.now ? performance.now() : Date.now();
-          debugDarkMode("cover-release-deferred", {
-            removeBaseStyle,
-            quietForMs: Math.round((now - lastMutationAt) * 10) / 10,
-            bodyChildren: document.body ? document.body.childElementCount : 0
-          }, 20);
-          coverReleaseTimer = window.setTimeout(() => releasePreflightCover(removeBaseStyle), 60);
-          return;
+        if (style) {
+          style.disabled = true;
         }
 
         try {
-          debugDarkMode("cover-release-scheduled", { removeBaseStyle }, 10);
-          requestAnimationFrame(() => requestAnimationFrame(finish));
-          window.setTimeout(finish, 220);
-        } catch (_) {
-          finish();
+          return action();
+        } finally {
+          if (style) {
+            style.disabled = wasDisabled;
+          }
         }
       };
 
       const removeBaseStyle = () => {
         if (!document.documentElement) return;
-        debugDarkMode("skip-already-dark");
-        releasePreflightCover(true);
+        document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
+        document.documentElement.removeAttribute(READY_ATTRIBUTE);
+        document.getElementById(STYLE_ID)?.remove();
       };
 
       const shouldSkipElement = (element) => {
@@ -852,21 +772,10 @@ extension BrowserModel {
 
       const run = () => {
         scheduled = false;
-        if (!document.documentElement || !document.body) {
-          debugDarkMode("run-waiting-for-body", {
-            hasDocumentElement: !!document.documentElement
-          }, 20);
-          return;
-        }
+        if (!document.documentElement || !document.body) return;
 
         if (forced !== true) {
-          forced = !isPageAlreadyDark();
-          debugDarkMode("detected-page", {
-            willForce: forced,
-            bodyChildren: document.body ? document.body.childElementCount : 0,
-            viewportWidth: innerWidth,
-            viewportHeight: innerHeight
-          }, 5);
+          forced = !withFallbackDisabled(isPageAlreadyDark);
           if (!forced) {
             removeBaseStyle();
             return;
@@ -874,49 +783,27 @@ extension BrowserModel {
         }
 
         applying = true;
-        debugDarkMode("apply-start", {
-          bodyChildren: document.body.childElementCount
-        }, 20);
         ensureBaseStyle();
-        applyRoot(document);
+        withFallbackDisabled(() => applyRoot(document));
         document.documentElement.setAttribute(READY_ATTRIBUTE, "true");
-        debugDarkMode("apply-ready", {
-          coverPresent: !!document.getElementById(COVER_ID)
-        }, 20);
-        releasePreflightCover(false);
         window.setTimeout(() => {
           applying = false;
-          debugDarkMode("apply-unlocked", {}, 20);
         }, 0);
       };
 
       const schedule = (delay = 80) => {
-        if (scheduled) {
-          debugDarkMode("schedule-skipped", { delay }, 8);
-          return;
-        }
+        if (scheduled) return;
         scheduled = true;
-        debugDarkMode("schedule", { delay }, 30);
         window.setTimeout(run, delay);
       };
 
       const observe = () => {
         if (observer || !document.documentElement || !window.MutationObserver) {
-          debugDarkMode("observe-skipped", {
-            hasObserver: !!observer,
-            hasDocumentElement: !!document.documentElement,
-            hasMutationObserver: !!window.MutationObserver
-          }, 5);
           return;
         }
 
         observer = new MutationObserver(() => {
-          lastMutationAt = performance.now ? performance.now() : Date.now();
           const nextDelay = forced === null ? 0 : 35;
-          debugDarkMode("mutation", {
-            applying,
-            nextDelay
-          }, 30);
           if (!applying) schedule(nextDelay);
         });
         observer.observe(document.documentElement, {
@@ -924,7 +811,6 @@ extension BrowserModel {
           childList: true,
           subtree: true
         });
-        debugDarkMode("observe-installed");
       };
 
       document.addEventListener("DOMContentLoaded", () => {
