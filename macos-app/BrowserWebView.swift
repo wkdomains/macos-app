@@ -131,7 +131,7 @@ final class BrowserWKWebView: WKWebView {
         }
 
         let copyLinkItem = NSMenuItem(
-            title: "Copy Link",
+            title: copyLinkMenuTitle(for: contextMenuLinkURL),
             action: #selector(copyLinkFromContextMenu(_:)),
             keyEquivalent: ""
         )
@@ -141,6 +141,39 @@ final class BrowserWKWebView: WKWebView {
         menu.addItem(copyLinkItem)
 
         return menu
+    }
+
+    private func copyLinkMenuTitle(for linkURL: String?) -> String {
+        guard let linkURL else { return "Copy Link" }
+
+        return "Copy \(truncatedMenuLinkTitle(linkURL))"
+    }
+
+    private func truncatedMenuLinkTitle(_ linkURL: String) -> String {
+        let title = displayMenuLinkTitle(linkURL)
+        guard title.count > 70 else { return title }
+        return "\(title.prefix(67))..."
+    }
+
+    private func displayMenuLinkTitle(_ linkURL: String) -> String {
+        guard let link = URL(string: linkURL),
+              let host = link.host
+        else {
+            return linkURL
+        }
+
+        if link.host == url?.host {
+            let path = link.path.isEmpty ? "/" : link.path
+            let query = link.query.map { "?\($0)" } ?? ""
+            let fragment = link.fragment.map { "#\($0)" } ?? ""
+            return "\(path)\(query)\(fragment)"
+        }
+
+        let displayHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        let path = link.path.isEmpty || link.path == "/" ? "" : link.path
+        let query = link.query.map { "?\($0)" } ?? ""
+        let fragment = link.fragment.map { "#\($0)" } ?? ""
+        return "\(displayHost)\(path)\(query)\(fragment)"
     }
 
     private func resolveLinkURL(at event: NSEvent, completion: @escaping (String?) -> Void) {
