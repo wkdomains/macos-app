@@ -31,7 +31,7 @@ protocol BrowserContextMenuDelegate: AnyObject {
     var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] { get }
     var currentIdentityName: String { get }
     var canToggleDarkThemeForCurrentSite: Bool { get }
-    var currentSiteUsesDarkTheme: Bool { get }
+    var currentSiteIsExcludedFromDarkTheme: Bool { get }
 }
 
 final class BrowserWKWebView: WKWebView {
@@ -210,13 +210,13 @@ final class BrowserWKWebView: WKWebView {
         menu.addItem(NSMenuItem.separator())
 
         let toggleDarkItem = NSMenuItem(
-            title: "Toggle Dark",
+            title: "Exclude from Dark",
             action: #selector(toggleDarkFromContextMenu),
             keyEquivalent: ""
         )
         toggleDarkItem.target = self
         toggleDarkItem.isEnabled = browserContextMenuDelegate?.canToggleDarkThemeForCurrentSite == true
-        toggleDarkItem.state = browserContextMenuDelegate?.currentSiteUsesDarkTheme == true ? .on : .off
+        toggleDarkItem.state = browserContextMenuDelegate?.currentSiteIsExcludedFromDarkTheme == true ? .on : .off
         menu.addItem(toggleDarkItem)
 
         return menu

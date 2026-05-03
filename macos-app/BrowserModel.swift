@@ -232,8 +232,8 @@ final class BrowserModel: NSObject, ObservableObject {
         settingsStore.isGlobalDarkModeEnabled && webView.url?.host != nil
     }
 
-    var currentSiteUsesDarkTheme: Bool {
-        settingsStore.usesDarkMode(for: webView.url)
+    var currentSiteIsExcludedFromDarkTheme: Bool {
+        settingsStore.isDarkModeDisabled(for: webView.url)
     }
 
     func toggleDarkThemeForCurrentSite() {
