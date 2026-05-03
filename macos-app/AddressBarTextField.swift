@@ -18,6 +18,7 @@ struct AddressBarTextField: NSViewRepresentable {
     let onCancel: () -> Void
     let onMoveSelection: (Int) -> Bool
     let onAcceptCompletion: () -> Bool
+    let shouldPreserveFocus: () -> Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -93,6 +94,22 @@ struct AddressBarTextField: NSViewRepresentable {
         }
 
         func controlTextDidEndEditing(_ notification: Notification) {
+            if parent.shouldPreserveFocus(),
+               let textField = notification.object as? BrowserAddressNSTextField
+            {
+                parent.isFocused = true
+
+                DispatchQueue.main.async {
+                    guard self.parent.shouldPreserveFocus() else {
+                        self.parent.isFocused = false
+                        return
+                    }
+
+                    textField.window?.makeFirstResponder(textField)
+                }
+                return
+            }
+
             parent.isFocused = false
         }
 

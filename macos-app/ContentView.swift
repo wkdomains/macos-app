@@ -245,7 +245,8 @@ struct ContentView: View {
                 onSubmit: submitAddressField,
                 onCancel: cancelAddressEditing,
                 onMoveSelection: moveSuggestionSelection,
-                onAcceptCompletion: acceptInlineCompletion
+                onAcceptCompletion: acceptInlineCompletion,
+                shouldPreserveFocus: shouldPreserveAddressFocus
             )
             .frame(height: 20)
                 .accessibilityLabel("Website address")
@@ -514,6 +515,17 @@ struct ContentView: View {
         shouldSelectAddressText = selectAll
         browser.webView.blocksProgrammaticFocus = true
         isAddressFocused = true
+    }
+
+    private func shouldPreserveAddressFocus() -> Bool {
+        guard isAddressFocused, NSApp.isActive else { return false }
+
+        switch NSApp.currentEvent?.type {
+        case .leftMouseDown?, .rightMouseDown?, .otherMouseDown?:
+            return false
+        default:
+            return true
+        }
     }
 
     private func focusBrowserContent() {
