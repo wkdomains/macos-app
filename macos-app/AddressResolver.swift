@@ -37,11 +37,11 @@ enum AddressResolver {
         return inferredWebpageResolution(for: value) ?? searchResolution(for: value)
     }
 
-    static func googleSearchURL(for query: String) -> URL? {
+    static func searchURL(for query: String) -> URL? {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else { return nil }
 
-        var components = URLComponents(string: "https://www.google.com/search")
+        var components = URLComponents(string: "https://duckduckgo.com/")
         components?.queryItems = [
             URLQueryItem(name: "q", value: trimmedQuery)
         ]
@@ -114,7 +114,7 @@ enum AddressResolver {
     }
 
     private static func searchResolution(for value: String) -> AddressResolution? {
-        guard let url = googleSearchURL(for: value) else { return nil }
+        guard let url = searchURL(for: value) else { return nil }
 
         return AddressResolution(
             kind: .search,

@@ -446,7 +446,7 @@ struct ContentView: View {
         case .history(let url):
             browser.load(url)
         case .search(let query):
-            browser.searchGoogle(for: query)
+            browser.searchWeb(for: query)
         }
 
         addressDraft = browser.displayAddressText

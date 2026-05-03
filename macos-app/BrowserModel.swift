@@ -100,8 +100,8 @@ final class BrowserModel: NSObject, ObservableObject {
         return true
     }
 
-    func searchGoogle(for query: String) {
-        guard let url = AddressResolver.googleSearchURL(for: query) else { return }
+    func searchWeb(for query: String) {
+        guard let url = AddressResolver.searchURL(for: query) else { return }
         load(url)
     }
 
