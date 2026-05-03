@@ -182,6 +182,246 @@ the same XHR endpoints and retrieve full JSON directly. Treat the output as
 sensitive. Cookie values, bearer tokens, session IDs, account IDs, and user IDs
 should be redacted before sharing logs or examples.
 
+## Inspect the agent view of the page
+
+Screenshots and XHR are only part of what an agent needs. wkdomains also exposes
+structured page context so a coding tool can understand the current URL,
+visible UI, console output, links, forms, scripts, and machine-readable domain
+resources.
+
+### Current page
+
+Use `/api/v1/page` for the browser's current page metadata:
+
+```sh
+curl http://localhost:9001/api/v1/page | jq .
+```
+
+Example shape:
+
+```json
+{
+  "url": "https://wkdomains.com/",
+  "title": "wkdomains.com | Official bots for domains",
+  "host": "wkdomains.com",
+  "domain": "wkdomains.com",
+  "origin": "https://wkdomains.com",
+  "viewportMode": "desktop",
+  "viewportWidth": 964,
+  "viewportHeight": 671,
+  "isLoading": false
+}
+```
+
+This is the quick orientation endpoint: where the human is, which registrable
+domain should be inspected, and what viewport the agent is seeing.
+
+### Visible DOM
+
+Use `/api/v1/dom` for a sanitized visible DOM summary:
+
+```sh
+curl http://localhost:9001/api/v1/dom | jq .
+```
+
+This is intentionally not raw HTML. It focuses on what an agent can act on:
+
+- visible text
+- headings
+- buttons, links, inputs, selects, and textareas
+- forms and fields
+- tables and sample rows
+- ARIA labels and roles
+- important attributes like `id`, `data-testid`, `aria-expanded`, `disabled`,
+  and `required`
+- active element context
+- element rectangles in the visible viewport
+
+Example shape:
+
+```json
+{
+  "url": "https://wkdomains.com/",
+  "title": "wkdomains.com | Official bots for domains",
+  "visibleText": "WK wkdomains Sign in OFFICIAL DOMAIN BOTS ...",
+  "headings": [
+    {
+      "tag": "h1",
+      "text": "Give your domain a bot that keeps watch.",
+      "rect": { "x": 39, "y": 166, "width": 760, "height": 96 }
+    }
+  ],
+  "controls": [
+    {
+      "tag": "button",
+      "text": "Open navigation",
+      "ariaLabel": "Open navigation",
+      "importantAttributes": {
+        "aria-expanded": "false"
+      }
+    }
+  ],
+  "links": [
+    {
+      "tag": "a",
+      "text": "Claim your domain bot",
+      "href": "https://wkdomains.com/login"
+    }
+  ],
+  "forms": [],
+  "tables": []
+}
+```
+
+### Console messages
+
+Use `/api/v1/console` for page-level console output captured inside WKWebView:
+
+```sh
+curl http://localhost:9001/api/v1/console | jq .
+```
+
+Example shape:
+
+```json
+{
+  "activePageHost": "www.cnn.com",
+  "activePageURL": "https://www.cnn.com/",
+  "captureScope": "page JavaScript console calls, window errors, unhandled promise rejections, and CSP violations captured inside WKWebView; browser-engine DevTools diagnostics are not exposed by WKWebView",
+  "capturedLevels": ["debug", "error", "info", "log", "warn"],
+  "messages": [
+    {
+      "level": "warn",
+      "message": "[GPT] Slot.setTargeting is deprecated...",
+      "pageHost": "www.cnn.com",
+      "pageURL": "https://www.cnn.com/",
+      "createdAt": "2026-05-02T23:56:41Z"
+    }
+  ]
+}
+```
+
+Quiet pages may legitimately return an empty `messages` array. Browser-engine
+diagnostics from another browser, such as Firefox layout warnings, are not page
+JavaScript console calls and are not exposed by WKWebView.
+
+### Links, forms, and scripts
+
+Use `/api/v1/links` to inspect important anchors, forms, scripts, and link tags:
+
+```sh
+curl http://localhost:9001/api/v1/links | jq .
+```
+
+Example shape:
+
+```json
+{
+  "url": "https://dialtoneapp.com/",
+  "anchors": [
+    {
+      "text": "Products",
+      "href": "https://dialtoneapp.com/products"
+    },
+    {
+      "text": "Run Free Scan",
+      "href": "https://dialtoneapp.com/#free-scan"
+    }
+  ],
+  "forms": [
+    {
+      "action": "https://dialtoneapp.com/",
+      "method": "GET",
+      "fields": [
+        {
+          "tag": "input",
+          "type": "url",
+          "placeholder": "example.com"
+        }
+      ]
+    }
+  ],
+  "linkTags": [
+    {
+      "rel": "alternate",
+      "type": "text/markdown",
+      "href": "https://dialtoneapp.com/llms-full.txt"
+    },
+    {
+      "rel": "agent",
+      "href": "https://dialtoneapp.com/.well-known/agent.json"
+    }
+  ],
+  "scripts": [
+    {
+      "src": "https://dialtoneapp.com/assets/index-CHgbgE8Y.js",
+      "type": "module"
+    }
+  ]
+}
+```
+
+This endpoint is useful when an agent needs to find navigation paths, discover
+machine-readable alternates, understand form shape, or identify the JavaScript
+bundle driving the current page.
+
+### Domain resources
+
+Use `/api/v1/resources` to discover common machine-readable files for the
+current domain:
+
+```sh
+curl http://localhost:9001/api/v1/resources | jq .
+```
+
+wkdomains currently probes:
+
+- `/llms.txt`
+- `/llms-full.txt`
+- `/openapi.json`
+- `/swagger.json`
+- `/sitemap.xml`
+- `/robots.txt`
+- `/.well-known/openapi.json`
+- `/.well-known/agent-card.json`
+- `/.well-known/ai-plugin.json`
+
+Example shape:
+
+```json
+{
+  "domain": "wkdomains.com",
+  "pageHost": "wkdomains.com",
+  "resources": [
+    {
+      "path": "/llms.txt",
+      "status": 200,
+      "found": true,
+      "contentType": "text/plain",
+      "sampledBytes": 8273
+    },
+    {
+      "path": "/openapi.json",
+      "status": 200,
+      "found": true,
+      "contentType": "application/json",
+      "sampledBytes": 27591
+    },
+    {
+      "path": "/.well-known/agent-card.json",
+      "status": 200,
+      "found": true,
+      "contentType": "application/json",
+      "sampledBytes": 2573
+    }
+  ]
+}
+```
+
+Responses include a short `bodyPreview` for text, JSON, and XML resources so an
+agent can quickly decide which discovered files matter without fetching every
+full document immediately.
+
 ## A better agent workflow
 
 Typical flow:
@@ -193,6 +433,11 @@ Typical flow:
 
 ```sh
 curl http://localhost:9001/api/v1/screenshot --output - > foo.png
+curl http://localhost:9001/api/v1/page | jq .
+curl http://localhost:9001/api/v1/dom | jq .
+curl http://localhost:9001/api/v1/links | jq .
+curl http://localhost:9001/api/v1/console | jq .
+curl http://localhost:9001/api/v1/resources | jq .
 curl http://localhost:9001/api/v1/xhr/app.netlify.com | jq .
 curl http://localhost:9001/api/v1/cookies/app.netlify.com | jq .
 ```
@@ -205,8 +450,12 @@ Instead of saying "look at this page" and hoping the agent can infer everything,
 wkdomains gives the agent the same practical signals a developer would use:
 
 - What is visible?
+- What page, domain, and viewport is active?
+- What links, controls, forms, tables, and ARIA labels are visible?
 - Which API calls produced it?
 - What shape is the JSON?
+- Which console errors or warnings happened?
+- Which `llms.txt`, OpenAPI, sitemap, robots, or agent-card resources exist?
 - Which authenticated request should be replayed?
 - Does the issue happen in mobile viewports too?
 

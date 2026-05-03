@@ -654,6 +654,7 @@ private final class WebsiteDataReader {
         return ConsoleMessagesResponse(
             activePageURL: browser.webView.url?.absoluteString,
             activePageHost: browser.webView.url?.host,
+            captureScope: "page JavaScript console calls, window errors, unhandled promise rejections, and CSP violations captured inside WKWebView; browser-engine DevTools diagnostics are not exposed by WKWebView",
             capturedLevels: ["debug", "error", "info", "log", "warn"],
             messages: messages
         )
@@ -996,6 +997,7 @@ private struct PageResponse: Encodable {
 private struct ConsoleMessagesResponse: Encodable {
     let activePageURL: String?
     let activePageHost: String?
+    let captureScope: String
     let capturedLevels: [String]
     let messages: [ConsoleMessageResponse]
 }
