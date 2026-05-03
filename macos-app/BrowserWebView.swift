@@ -28,10 +28,13 @@ protocol BrowserContextMenuDelegate: AnyObject {
     func createFreshSiteIdentityForCurrentSite()
     func switchToSiteIdentity(_ menuItemID: String)
     func toggleDarkThemeForCurrentSite()
+    func toggleBookmarkForCurrentPage()
     var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] { get }
     var currentIdentityName: String { get }
     var canToggleDarkThemeForCurrentSite: Bool { get }
     var currentSiteIsExcludedFromDarkTheme: Bool { get }
+    var canBookmarkCurrentPage: Bool { get }
+    var currentPageIsBookmarked: Bool { get }
 }
 
 final class BrowserWKWebView: WKWebView {
@@ -44,11 +47,19 @@ final class BrowserWKWebView: WKWebView {
             window?.title = browserWindowTitle
         }
     }
+    var bookmarkURLs: [URL] = [] {
+        didSet {
+            updateBookmarkTitlebarAccessory()
+        }
+    }
+    var openBookmark: ((URL) -> Void)?
     var viewportSizeDidChange: (() -> Void)?
     private var lastReportedViewportSize = NSSize.zero
     private var isHandlingDirectUserFocus = false
     private var contextMenuLinkURL: String?
     private var usesForcedDarkPageBackground = false
+    private var bookmarkTitlebarAccessory: BookmarkTitlebarAccessoryViewController?
+    private weak var bookmarkTitlebarWindow: NSWindow?
 
     override var acceptsFirstResponder: Bool {
         !blocksProgrammaticFocus || isHandlingDirectUserFocus
@@ -66,6 +77,14 @@ final class BrowserWKWebView: WKWebView {
         super.viewDidMoveToWindow()
         window?.title = browserWindowTitle
         configureDescendantScrollViewBackgrounds()
+        updateBookmarkTitlebarAccessory()
+    }
+
+    func removeBookmarkTitlebarAccessory() {
+        guard let bookmarkTitlebarAccessory else { return }
+        removeBookmarkTitlebarAccessory(bookmarkTitlebarAccessory, from: bookmarkTitlebarWindow)
+        self.bookmarkTitlebarAccessory = nil
+        bookmarkTitlebarWindow = nil
     }
 
     func configureForcedDarkPageBackground(_ enabled: Bool) {
@@ -219,6 +238,16 @@ final class BrowserWKWebView: WKWebView {
         toggleDarkItem.state = browserContextMenuDelegate?.currentSiteIsExcludedFromDarkTheme == true ? .on : .off
         menu.addItem(toggleDarkItem)
 
+        let toggleBookmarkItem = NSMenuItem(
+            title: "Bookmarked",
+            action: #selector(toggleBookmarkFromContextMenu),
+            keyEquivalent: ""
+        )
+        toggleBookmarkItem.target = self
+        toggleBookmarkItem.isEnabled = browserContextMenuDelegate?.canBookmarkCurrentPage == true
+        toggleBookmarkItem.state = browserContextMenuDelegate?.currentPageIsBookmarked == true ? .on : .off
+        menu.addItem(toggleBookmarkItem)
+
         return menu
     }
 
@@ -339,6 +368,10 @@ final class BrowserWKWebView: WKWebView {
         browserContextMenuDelegate?.toggleDarkThemeForCurrentSite()
     }
 
+    @objc private func toggleBookmarkFromContextMenu() {
+        browserContextMenuDelegate?.toggleBookmarkForCurrentPage()
+    }
+
     @objc private func copyLinkFromContextMenu(_ sender: NSMenuItem) {
         guard let linkURL = sender.representedObject as? String else { return }
 
@@ -355,5 +388,190 @@ final class BrowserWKWebView: WKWebView {
         guard didChange else { return }
         lastReportedViewportSize = size
         viewportSizeDidChange?()
+    }
+
+    private func updateBookmarkTitlebarAccessory() {
+        guard let window else {
+            removeBookmarkTitlebarAccessory()
+            return
+        }
+
+        guard !bookmarkURLs.isEmpty else {
+            removeBookmarkTitlebarAccessory()
+            return
+        }
+
+        let accessory: BookmarkTitlebarAccessoryViewController
+        if let existingAccessory = bookmarkTitlebarAccessory {
+            accessory = existingAccessory
+            if bookmarkTitlebarWindow !== window {
+                removeBookmarkTitlebarAccessory(existingAccessory, from: bookmarkTitlebarWindow)
+                window.addTitlebarAccessoryViewController(existingAccessory)
+                bookmarkTitlebarWindow = window
+            }
+        } else {
+            accessory = BookmarkTitlebarAccessoryViewController()
+            accessory.layoutAttribute = .left
+            bookmarkTitlebarAccessory = accessory
+            window.addTitlebarAccessoryViewController(accessory)
+            bookmarkTitlebarWindow = window
+        }
+
+        accessory.bookmarkURLs = bookmarkURLs
+        accessory.openBookmark = { [weak self] url in
+            self?.openBookmark?(url)
+        }
+    }
+
+    private func removeBookmarkTitlebarAccessory(
+        _ accessory: BookmarkTitlebarAccessoryViewController,
+        from window: NSWindow?
+    ) {
+        guard let window,
+              let index = window.titlebarAccessoryViewControllers.firstIndex(of: accessory)
+        else {
+            return
+        }
+
+        window.removeTitlebarAccessoryViewController(at: index)
+    }
+}
+
+private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessoryViewController {
+    var bookmarkURLs: [URL] = [] {
+        didSet {
+            renderButtons()
+        }
+    }
+
+    var openBookmark: ((URL) -> Void)?
+
+    private let stackView = NSStackView()
+    private var cachedFavicons: [String: NSImage] = [:]
+    private var requestedFavicons = Set<String>()
+    private var failedFavicons = Set<String>()
+
+    override func loadView() {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        stackView.orientation = .horizontal
+        stackView.alignment = .centerY
+        stackView.spacing = 4
+        stackView.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(stackView)
+        NSLayoutConstraint.activate([
+            stackView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: container.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            stackView.heightAnchor.constraint(greaterThanOrEqualToConstant: 28)
+        ])
+
+        view = container
+    }
+
+    private func renderButtons() {
+        loadViewIfNeeded()
+
+        for view in stackView.arrangedSubviews {
+            stackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        for (index, url) in bookmarkURLs.enumerated() {
+            let button = NSButton(frame: .zero)
+            button.bezelStyle = .texturedRounded
+            button.isBordered = false
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.image = favicon(for: url) ?? placeholderImage()
+            button.target = self
+            button.action = #selector(openBookmarkFromTitlebar(_:))
+            button.tag = index
+            button.toolTip = titlebarTooltip(for: url)
+            button.translatesAutoresizingMaskIntoConstraints = false
+
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 24),
+                button.heightAnchor.constraint(equalToConstant: 24)
+            ])
+
+            stackView.addArrangedSubview(button)
+        }
+    }
+
+    private func favicon(for url: URL) -> NSImage? {
+        let rawURL = url.absoluteString
+        if let image = cachedFavicons[rawURL] {
+            return image
+        }
+
+        requestFavicon(for: url)
+        return nil
+    }
+
+    private func requestFavicon(for url: URL) {
+        let rawURL = url.absoluteString
+        guard !failedFavicons.contains(rawURL),
+              requestedFavicons.insert(rawURL).inserted,
+              let faviconURL = Self.faviconURL(for: url)
+        else {
+            return
+        }
+
+        Task {
+            let imageData = try? await Self.fetchData(from: faviconURL)
+
+            await MainActor.run {
+                if let imageData, let image = NSImage(data: imageData) {
+                    cachedFavicons[rawURL] = image
+                } else {
+                    failedFavicons.insert(rawURL)
+                }
+
+                renderButtons()
+            }
+        }
+    }
+
+    private func placeholderImage() -> NSImage? {
+        NSImage(systemSymbolName: "globe", accessibilityDescription: "Bookmark")
+    }
+
+    private func titlebarTooltip(for url: URL) -> String {
+        guard let host = url.host else {
+            return url.absoluteString
+        }
+
+        let path = url.path.isEmpty || url.path == "/" ? "" : url.path
+        let query = url.query.map { "?\($0)" } ?? ""
+        let fragment = url.fragment.map { "#\($0)" } ?? ""
+        return "\(host)\(path)\(query)\(fragment)"
+    }
+
+    @objc private func openBookmarkFromTitlebar(_ sender: NSButton) {
+        guard bookmarkURLs.indices.contains(sender.tag) else { return }
+        openBookmark?(bookmarkURLs[sender.tag])
+    }
+
+    private static func fetchData(from url: URL) async throws -> Data {
+        let (data, _) = try await URLSession.shared.data(from: url)
+        return data
+    }
+
+    private static func faviconURL(for url: URL) -> URL? {
+        guard var components = URLComponents(string: "https://www.google.com/s2/favicons") else {
+            return nil
+        }
+
+        components.queryItems = [
+            URLQueryItem(name: "domain_url", value: url.absoluteString),
+            URLQueryItem(name: "sz", value: "32")
+        ]
+
+        return components.url
     }
 }

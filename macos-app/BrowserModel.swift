@@ -18,6 +18,7 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published private(set) var estimatedProgress = 0.0
     @Published private(set) var hasAttemptedNavigation = false
     @Published private(set) var historyURLs: [String]
+    @Published private(set) var bookmarkURLs: [URL]
     @Published private(set) var isLoading = false
     @Published private(set) var isSecurePage = false
     @Published private(set) var currentIdentityName = "Default"
@@ -53,6 +54,7 @@ final class BrowserModel: NSObject, ObservableObject {
     ) {
         self.settingsStore = settingsStore
         historyURLs = settingsStore.settings.historyURLs
+        bookmarkURLs = settingsStore.bookmarkURLs
         self.activeIdentityID = activeIdentityID ?? settingsStore.activeIdentityID(for: settingsStore.startupURL)
 
         let initialDataStore = dataStore ?? Self.websiteDataStore(for: self.activeIdentityID)
@@ -87,6 +89,10 @@ final class BrowserModel: NSObject, ObservableObject {
     private func configure(_ webView: BrowserWKWebView) {
         webView.allowsBackForwardNavigationGestures = true
         webView.browserContextMenuDelegate = self
+        webView.openBookmark = { [weak self] url in
+            self?.load(url)
+        }
+        syncBookmarkTitlebarState(for: webView)
         webView.viewportSizeDidChange = { [weak self] in
             self?.markScreenshotDirty(scheduleAfter: 0.25)
         }
@@ -249,6 +255,26 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.reload()
     }
 
+    var canBookmarkCurrentPage: Bool {
+        guard webView.url?.host != nil,
+              let scheme = webView.url?.scheme?.lowercased()
+        else {
+            return false
+        }
+
+        return ["http", "https"].contains(scheme)
+    }
+
+    var currentPageIsBookmarked: Bool {
+        settingsStore.isBookmarked(webView.url)
+    }
+
+    func toggleBookmarkForCurrentPage() {
+        guard let currentURL = webView.url else { return }
+        settingsStore.toggleBookmark(for: currentURL)
+        syncBookmarkState()
+    }
+
     func xhrRequests(for host: String) -> [XHRRequestRecord] {
         let normalizedHost = Self.normalizedHost(host)
 
@@ -383,7 +409,9 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         webView.browserContextMenuDelegate = nil
+        webView.openBookmark = nil
         webView.viewportSizeDidChange = nil
+        webView.removeBookmarkTitlebarAccessory()
 
         let userContentController = webView.configuration.userContentController
         userContentController.removeScriptMessageHandler(forName: "wkdomainsXHR")
@@ -516,6 +544,15 @@ final class BrowserModel: NSObject, ObservableObject {
             for: webView.url,
             activeIdentityID: activeIdentityID
         )
+    }
+
+    private func syncBookmarkState() {
+        bookmarkURLs = settingsStore.bookmarkURLs
+        syncBookmarkTitlebarState(for: webView)
+    }
+
+    private func syncBookmarkTitlebarState(for webView: BrowserWKWebView) {
+        webView.bookmarkURLs = settingsStore.bookmarkURLs
     }
 
     private func refreshDarkModeState(for url: URL?) {

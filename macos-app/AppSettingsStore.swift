@@ -30,6 +30,7 @@ struct AppSettings: Codable {
     static let defaultURL = "https://wkdomains.com"
     static let maxHistoryCount = 30
 
+    var bookmarks: [String]
     var port: UInt16
     var lastURL: String
     var lastDomain: String
@@ -41,6 +42,7 @@ struct AppSettings: Codable {
 
     static var defaults: AppSettings {
         AppSettings(
+            bookmarks: [],
             port: defaultPort,
             lastURL: defaultURL,
             lastDomain: URL(string: defaultURL)?.host ?? "wkdomains.com",
@@ -53,6 +55,7 @@ struct AppSettings: Codable {
     }
 
     init(
+        bookmarks: [String],
         port: UInt16,
         lastURL: String,
         lastDomain: String,
@@ -62,6 +65,7 @@ struct AppSettings: Codable {
         siteIdentities: [String: [SiteIdentity]],
         activeSiteIdentityIDs: [String: UUID]
     ) {
+        self.bookmarks = bookmarks
         self.port = port
         self.lastURL = lastURL
         self.lastDomain = lastDomain
@@ -75,6 +79,7 @@ struct AppSettings: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
+        bookmarks = try container.decodeIfPresent([String].self, forKey: .bookmarks) ?? []
         port = try container.decodeIfPresent(UInt16.self, forKey: .port) ?? Self.defaultPort
         lastURL = try container.decodeIfPresent(String.self, forKey: .lastURL) ?? Self.defaultURL
         lastDomain = try container.decodeIfPresent(String.self, forKey: .lastDomain)
@@ -130,6 +135,10 @@ final class AppSettingsStore {
         cachedSettings.darkDisabledSites
     }
 
+    var bookmarkURLs: [URL] {
+        cachedSettings.bookmarks.compactMap(Self.validURL)
+    }
+
     var isGlobalDarkModeEnabled: Bool {
         cachedSettings.dark
     }
@@ -154,6 +163,30 @@ final class AppSettingsStore {
         }
 
         cachedSettings.darkDisabledSites = disabledSites.sorted()
+        write(cachedSettings)
+    }
+
+    func isBookmarked(_ url: URL?) -> Bool {
+        guard let url,
+              let normalizedURL = Self.validURL(from: url.absoluteString)
+        else {
+            return false
+        }
+
+        return Set(cachedSettings.bookmarks).contains(normalizedURL.absoluteString)
+    }
+
+    func toggleBookmark(for url: URL) {
+        guard let normalizedURL = Self.validURL(from: url.absoluteString) else { return }
+
+        let normalizedURLString = normalizedURL.absoluteString
+        if let index = cachedSettings.bookmarks.firstIndex(of: normalizedURLString) {
+            cachedSettings.bookmarks.remove(at: index)
+        } else {
+            cachedSettings.bookmarks.append(normalizedURLString)
+        }
+
+        cachedSettings.bookmarks = Self.normalizedBookmarkURLs(cachedSettings.bookmarks)
         write(cachedSettings)
     }
 
@@ -331,7 +364,7 @@ final class AppSettingsStore {
         return "Account \(index)"
     }
 
-    private static func validURL(from value: String) -> URL? {
+    nonisolated private static func validURL(from value: String) -> URL? {
         guard let components = URLComponents(string: value),
               let scheme = components.scheme?.lowercased(),
               ["http", "https"].contains(scheme),
@@ -411,6 +444,7 @@ final class AppSettingsStore {
         }
 
         settings.historyURLs = historyByPrepending(settings.lastURL, to: settings.historyURLs)
+        settings.bookmarks = normalizedBookmarkURLs(settings.bookmarks)
         settings.darkDisabledSites = normalizedHosts(settings.darkDisabledSites)
         settings.siteIdentities = normalizedSiteIdentities(settings.siteIdentities)
         settings.activeSiteIdentityIDs = settings.activeSiteIdentityIDs.filter { siteKey, identityID in
@@ -419,11 +453,26 @@ final class AppSettingsStore {
         return settings
     }
 
-    private static func normalizedHosts(_ values: [String]) -> [String] {
+    nonisolated private static func normalizedBookmarkURLs(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var urls: [String] = []
+
+        for value in values {
+            guard let url = validURL(from: value) else { continue }
+
+            let normalizedURLString = url.absoluteString
+            guard seen.insert(normalizedURLString).inserted else { continue }
+            urls.append(normalizedURLString)
+        }
+
+        return urls
+    }
+
+    nonisolated private static func normalizedHosts(_ values: [String]) -> [String] {
         Array(Set(values.compactMap(normalizedHost))).sorted()
     }
 
-    private static func normalizedHost(from value: String) -> String? {
+    nonisolated private static func normalizedHost(from value: String) -> String? {
         var trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty else { return nil }
 
@@ -450,12 +499,12 @@ final class AppSettingsStore {
         return normalizedHost(trimmed)
     }
 
-    private static func normalizedHost(for url: URL) -> String? {
+    nonisolated private static func normalizedHost(for url: URL) -> String? {
         guard let host = url.host else { return nil }
         return normalizedHost(host)
     }
 
-    private static func normalizedHost(_ host: String) -> String {
+    nonisolated private static func normalizedHost(_ host: String) -> String {
         host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
     }
 
