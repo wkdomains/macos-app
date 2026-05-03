@@ -10,6 +10,42 @@ import Combine
 import Foundation
 import WebKit
 
+struct BrowserTabItem: Identifiable, Equatable {
+    var id: UUID
+    var title: String
+    var url: URL?
+    var isActive: Bool
+    var isLoading: Bool
+    var hasAttemptedNavigation: Bool
+}
+
+private final class BrowserTabState {
+    let id: UUID
+    var webView: BrowserWKWebView
+    let cookiePersistence: BrowserCookiePersistence
+    var identityID: UUID?
+    var observations: [NSKeyValueObservation] = []
+    var isCookieStoreReady = false
+    var pendingLoadRequest: (url: URL, fallbackURLs: [URL])?
+    var hasAttemptedNavigation = false
+    var displayAddressText = ""
+    var errorMessage: String?
+    var navigationFallbacks: [URL] = []
+    var title = BrowserWKWebView.defaultWindowTitle
+
+    init(
+        id: UUID = UUID(),
+        webView: BrowserWKWebView,
+        cookiePersistence: BrowserCookiePersistence,
+        identityID: UUID?
+    ) {
+        self.id = id
+        self.webView = webView
+        self.cookiePersistence = cookiePersistence
+        self.identityID = identityID
+    }
+}
+
 final class BrowserModel: NSObject, ObservableObject {
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
@@ -19,6 +55,8 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published private(set) var hasAttemptedNavigation = false
     @Published private(set) var historyURLs: [String]
     @Published private(set) var bookmarkURLs: [URL]
+    @Published private(set) var tabs: [BrowserTabItem] = []
+    @Published private(set) var activeTabID: UUID
     @Published private(set) var isLoading = false
     @Published private(set) var isSecurePage = false
     @Published private(set) var currentIdentityName = "Default"
@@ -31,11 +69,9 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published private(set) var webView: BrowserWKWebView
     let botTerminal = BotTerminalModel()
 
-    private var observations: [NSKeyValueObservation] = []
-    private let cookiePersistence: BrowserCookiePersistence
+    private var tabStates: [BrowserTabState]
     private let loginStore: LoginStore
     let settingsStore: AppSettingsStore
-    private var activeIdentityID: UUID?
     private var activePageHost: String?
     private var pendingLoginUsernameTarget: LoginFieldTarget?
     private var pendingLoginPasswordTarget: LoginFieldTarget?
@@ -50,8 +86,6 @@ final class BrowserModel: NSObject, ObservableObject {
     var screenshotRenderTask: Task<Void, Never>?
     var screenshotWaiters: [UUID: (Result<Data, Error>) -> Void] = [:]
     private var navigationFallbacks: [URL] = []
-    private var isCookieStoreReady = false
-    private var pendingLoadRequest: (url: URL, fallbackURLs: [URL])?
 
     init(
         dataStore: WKWebsiteDataStore? = nil,
@@ -60,22 +94,30 @@ final class BrowserModel: NSObject, ObservableObject {
     ) {
         self.settingsStore = settingsStore
         loginStore = LoginStore(directoryURL: settingsStore.directoryURL)
-        cookiePersistence = BrowserCookiePersistence(directoryURL: settingsStore.directoryURL)
         historyURLs = settingsStore.settings.historyURLs
         bookmarkURLs = settingsStore.bookmarkURLs
-        self.activeIdentityID = activeIdentityID ?? settingsStore.activeIdentityID(for: settingsStore.startupURL)
+        let initialIdentityID = activeIdentityID ?? settingsStore.activeIdentityID(for: settingsStore.startupURL)
 
-        let initialDataStore = dataStore ?? Self.websiteDataStore(for: self.activeIdentityID)
-        webView = Self.makeWebView(
+        let initialDataStore = dataStore ?? Self.websiteDataStore(for: initialIdentityID)
+        let initialWebView = Self.makeWebView(
             dataStore: initialDataStore,
             usesDarkMode: settingsStore.usesDarkMode(for: settingsStore.startupURL)
         )
+        let initialTab = BrowserTabState(
+            webView: initialWebView,
+            cookiePersistence: BrowserCookiePersistence(directoryURL: settingsStore.directoryURL),
+            identityID: initialIdentityID
+        )
+        tabStates = [initialTab]
+        activeTabID = initialTab.id
+        webView = initialWebView
 
         super.init()
 
-        configure(webView)
+        configure(initialTab)
         refreshSiteIdentityState()
-        attachCookiePersistence(to: webView, identityID: self.activeIdentityID)
+        refreshPublishedTabs()
+        attachCookiePersistence(to: initialTab)
     }
 
     private static func websiteDataStore(for identityID: UUID?) -> WKWebsiteDataStore {
@@ -123,42 +165,52 @@ final class BrowserModel: NSObject, ObservableObject {
         return nil
     }
 
-    private func configure(_ webView: BrowserWKWebView) {
+    private var activeTab: BrowserTabState {
+        tabStates.first { $0.id == activeTabID } ?? tabStates[0]
+    }
+
+    private func tab(for webView: WKWebView) -> BrowserTabState? {
+        tabStates.first { $0.webView === webView }
+    }
+
+    private func configure(_ tab: BrowserTabState) {
+        let webView = tab.webView
         webView.allowsBackForwardNavigationGestures = true
         webView.browserContextMenuDelegate = self
-        webView.openBookmark = { [weak self] url in
-            self?.load(url)
+        webView.selectTab = { [weak self] tabID in
+            self?.selectTab(tabID)
         }
-        webView.moveBookmark = { [weak self] sourceURL, targetURL in
-            self?.moveBookmark(sourceURL, to: targetURL)
+        webView.addTab = { [weak self] in
+            self?.addEmptyTab()
         }
-        syncBookmarkTitlebarState(for: webView)
+        syncTitlebarTabState()
         webView.viewportSizeDidChange = { [weak self] in
+            guard self?.webView === webView else { return }
             self?.markScreenshotDirty(scheduleAfter: 0.25)
         }
         webView.navigationDelegate = self
         webView.uiDelegate = self
         installPageTrackingScripts(on: webView.configuration.userContentController)
 
-        observations = [
+        tab.observations = [
             webView.observe(\.estimatedProgress, options: [.initial, .new]) { [weak self] webView, _ in
                 DispatchQueue.main.async {
-                    self?.estimatedProgress = webView.estimatedProgress
+                    self?.syncObservedPageState(from: webView)
                 }
             },
             webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] webView, _ in
                 DispatchQueue.main.async {
-                    self?.isLoading = webView.isLoading
+                    self?.syncObservedPageState(from: webView)
                 }
             },
             webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] webView, _ in
                 DispatchQueue.main.async {
-                    self?.canGoBack = webView.canGoBack
+                    self?.syncObservedPageState(from: webView)
                 }
             },
             webView.observe(\.canGoForward, options: [.initial, .new]) { [weak self] webView, _ in
                 DispatchQueue.main.async {
-                    self?.canGoForward = webView.canGoForward
+                    self?.syncObservedPageState(from: webView)
                 }
             },
             webView.observe(\.url, options: [.new]) { [weak self] webView, _ in
@@ -192,6 +244,8 @@ final class BrowserModel: NSObject, ObservableObject {
 
     func goBack() {
         guard webView.canGoBack else { return }
+        activeTab.errorMessage = nil
+        activeTab.navigationFallbacks = []
         errorMessage = nil
         navigationFallbacks = []
         webView.goBack()
@@ -199,6 +253,8 @@ final class BrowserModel: NSObject, ObservableObject {
 
     func goForward() {
         guard webView.canGoForward else { return }
+        activeTab.errorMessage = nil
+        activeTab.navigationFallbacks = []
         errorMessage = nil
         navigationFallbacks = []
         webView.goForward()
@@ -206,6 +262,8 @@ final class BrowserModel: NSObject, ObservableObject {
 
     func reload() {
         guard hasAttemptedNavigation else { return }
+        activeTab.errorMessage = nil
+        activeTab.navigationFallbacks = []
         errorMessage = nil
 
         navigationFallbacks = []
@@ -223,7 +281,7 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     func saveCookiesNow() {
-        cookiePersistence.saveNow()
+        activeTab.cookiePersistence.saveNow()
     }
 
     func clearCookiesForCurrentDomain() {
@@ -254,7 +312,7 @@ final class BrowserModel: NSObject, ObservableObject {
             return
         }
 
-        activeIdentityID = identity.id
+        activeTab.identityID = identity.id
         replaceWebView(using: identity.id, loading: Self.siteBaseURL(for: currentURL))
         refreshSiteIdentityState()
     }
@@ -270,16 +328,16 @@ final class BrowserModel: NSObject, ObservableObject {
             nextIdentityID = identityID
         }
 
-        guard nextIdentityID != activeIdentityID else { return }
+        guard nextIdentityID != activeTab.identityID else { return }
 
         settingsStore.setActiveIdentity(nextIdentityID, for: currentURL)
-        activeIdentityID = nextIdentityID
+        activeTab.identityID = nextIdentityID
         replaceWebView(using: nextIdentityID, loading: Self.siteBaseURL(for: currentURL))
         refreshSiteIdentityState()
     }
 
     var canFillSavedLoginForCurrentSite: Bool {
-        loginStore.hasLogin(for: webView.url, identityID: activeIdentityID)
+        loginStore.hasLogin(for: webView.url, identityID: activeTab.identityID)
     }
 
     func useLoginFieldFromContextMenu(_ role: LoginFieldRole, target: LoginFieldTarget) {
@@ -481,8 +539,9 @@ final class BrowserModel: NSObject, ObservableObject {
     private func load(_ url: URL, fallbackURLs: [URL]) {
         prepareForLoad(url, fallbackURLs: fallbackURLs)
 
-        guard isCookieStoreReady else {
-            pendingLoadRequest = (url, fallbackURLs)
+        let tab = activeTab
+        guard tab.isCookieStoreReady else {
+            tab.pendingLoadRequest = (url, fallbackURLs)
             return
         }
 
@@ -490,6 +549,12 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     private func prepareForLoad(_ url: URL, fallbackURLs: [URL]) {
+        let tab = activeTab
+        tab.hasAttemptedNavigation = true
+        tab.errorMessage = nil
+        tab.displayAddressText = url.absoluteString
+        tab.navigationFallbacks = fallbackURLs
+
         hasAttemptedNavigation = true
         errorMessage = nil
         displayAddressText = url.absoluteString
@@ -497,15 +562,23 @@ final class BrowserModel: NSObject, ObservableObject {
         navigationFallbacks = fallbackURLs
         resetXHRTracking(for: url)
         refreshDarkModeState(for: url)
+        refreshPublishedTabs()
     }
 
     private func replaceWebView(using identityID: UUID?, loading url: URL) {
-        let oldWebView = webView
+        let tab = activeTab
+        let oldWebView = tab.webView
         oldWebView.stopLoading()
         detach(oldWebView)
-        observations.removeAll()
-        pendingLoadRequest = nil
-        isCookieStoreReady = false
+        tab.observations.removeAll()
+        tab.pendingLoadRequest = nil
+        tab.isCookieStoreReady = false
+        tab.identityID = identityID
+        tab.hasAttemptedNavigation = true
+        tab.displayAddressText = url.absoluteString
+        tab.errorMessage = nil
+        tab.navigationFallbacks = []
+        tab.title = BrowserWKWebView.defaultWindowTitle
 
         resetScreenshotForNavigation()
         resetXHRTracking(for: url)
@@ -523,10 +596,13 @@ final class BrowserModel: NSObject, ObservableObject {
             dataStore: Self.websiteDataStore(for: identityID),
             usesDarkMode: settingsStore.usesDarkMode(for: url)
         )
-        configure(nextWebView)
+        tab.webView = nextWebView
+        configure(tab)
         webView = nextWebView
         webViewID = UUID()
-        attachCookiePersistence(to: nextWebView, identityID: identityID) { [weak self, weak nextWebView] in
+        refreshPublishedTabs()
+        syncTitlebarTabState()
+        attachCookiePersistence(to: tab) { [weak self, weak nextWebView] in
             guard let self,
                   let nextWebView,
                   self.webView === nextWebView
@@ -539,29 +615,34 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     private func attachCookiePersistence(
-        to webView: BrowserWKWebView,
-        identityID: UUID?,
+        to tab: BrowserTabState,
         afterRestore: (() -> Void)? = nil
     ) {
-        cookiePersistence.attach(to: webView.configuration.websiteDataStore, identityID: identityID) { [weak self, weak webView] in
+        let webView = tab.webView
+        tab.cookiePersistence.attach(to: webView.configuration.websiteDataStore, identityID: tab.identityID) { [weak self, weak webView] in
             DispatchQueue.main.async {
                 guard let self,
                       let webView,
-                      self.webView === webView
+                      tab.webView === webView
                 else {
                     return
                 }
 
-                self.isCookieStoreReady = true
+                tab.isCookieStoreReady = true
 
                 if let afterRestore {
                     afterRestore()
                     return
                 }
 
-                guard let pendingLoadRequest = self.pendingLoadRequest else { return }
-                self.pendingLoadRequest = nil
-                self.load(pendingLoadRequest.url, fallbackURLs: pendingLoadRequest.fallbackURLs)
+                guard let pendingLoadRequest = tab.pendingLoadRequest else { return }
+                tab.pendingLoadRequest = nil
+
+                if self.activeTabID == tab.id {
+                    self.load(pendingLoadRequest.url, fallbackURLs: pendingLoadRequest.fallbackURLs)
+                } else {
+                    webView.load(URLRequest(url: pendingLoadRequest.url))
+                }
             }
         }
     }
@@ -570,10 +651,10 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         webView.browserContextMenuDelegate = nil
-        webView.openBookmark = nil
-        webView.moveBookmark = nil
+        webView.selectTab = nil
+        webView.addTab = nil
         webView.viewportSizeDidChange = nil
-        webView.removeBookmarkTitlebarAccessory()
+        webView.removeTitlebarTabsAccessory()
 
         let userContentController = webView.configuration.userContentController
         userContentController.removeScriptMessageHandler(forName: "wkdomainsXHR")
@@ -674,7 +755,33 @@ final class BrowserModel: NSObject, ObservableObject {
         markScreenshotDirty(scheduleAfter: 0.45)
     }
 
+    private func syncObservedPageState(from webView: WKWebView) {
+        guard let tab = tab(for: webView) else { return }
+
+        tab.title = tabTitle(for: webView)
+
+        if let url = webView.url {
+            tab.displayAddressText = url.absoluteString
+        }
+
+        refreshPublishedTabs()
+
+        guard activeTabID == tab.id else { return }
+        syncPageState(from: webView)
+    }
+
     private func syncPageState(from webView: WKWebView) {
+        guard let tab = tab(for: webView) else { return }
+
+        if let url = webView.url {
+            tab.displayAddressText = url.absoluteString
+        }
+
+        tab.title = tabTitle(for: webView)
+        refreshPublishedTabs()
+
+        guard activeTabID == tab.id else { return }
+
         if let url = webView.url {
             displayAddressText = url.absoluteString
             isSecurePage = url.scheme?.lowercased() == "https"
@@ -685,20 +792,119 @@ final class BrowserModel: NSObject, ObservableObject {
         canGoForward = webView.canGoForward
         estimatedProgress = webView.estimatedProgress
         isLoading = webView.isLoading
+        hasAttemptedNavigation = tab.hasAttemptedNavigation
+        errorMessage = tab.errorMessage
         refreshSiteIdentityState()
     }
 
     private func syncWindowTitle(from webView: WKWebView) {
-        let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let title, !title.isEmpty {
-            self.webView.browserWindowTitle = title
+        guard let tab = tab(for: webView) else { return }
+
+        tab.title = tabTitle(for: webView)
+        refreshPublishedTabs()
+
+        guard activeTabID == tab.id else { return }
+
+        if tab.title != BrowserWKWebView.defaultWindowTitle {
+            self.webView.browserWindowTitle = tab.title
         } else {
             self.webView.browserWindowTitle = BrowserWKWebView.defaultWindowTitle
         }
     }
 
-    private func recordVisitedURL(_ url: URL) {
-        settingsStore.updateLastVisitedURL(url, identityID: activeIdentityID)
+    private func tabTitle(for webView: WKWebView) -> String {
+        let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let title, !title.isEmpty {
+            return title
+        }
+
+        return webView.url?.host ?? BrowserWKWebView.defaultWindowTitle
+    }
+
+    func selectTab(_ tabID: UUID) {
+        guard activeTabID != tabID,
+              let tab = tabStates.first(where: { $0.id == tabID })
+        else {
+            return
+        }
+
+        webView.blocksProgrammaticFocus = false
+        activeTabID = tab.id
+        webView = tab.webView
+        webViewID = UUID()
+        displayAddressText = tab.displayAddressText
+        errorMessage = tab.errorMessage
+        hasAttemptedNavigation = tab.hasAttemptedNavigation
+        isSecurePage = tab.webView.url?.scheme?.lowercased() == "https"
+        canGoBack = tab.webView.canGoBack
+        canGoForward = tab.webView.canGoForward
+        estimatedProgress = tab.webView.estimatedProgress
+        isLoading = tab.webView.isLoading
+        navigationFallbacks = tab.navigationFallbacks
+        resetScreenshotForNavigation()
+        resetXHRTracking(for: tab.webView.url)
+        refreshSiteIdentityState()
+        syncWindowTitle(from: tab.webView)
+        refreshPublishedTabs()
+        syncTitlebarTabState()
+    }
+
+    func addEmptyTab() {
+        let tab = makeTab(initialURL: nil)
+        tabStates.append(tab)
+        attachCookiePersistence(to: tab)
+        selectTab(tab.id)
+    }
+
+    private func makeTab(initialURL: URL?) -> BrowserTabState {
+        let identityID = initialURL.flatMap { settingsStore.activeIdentityID(for: $0) }
+        let webView = Self.makeWebView(
+            dataStore: Self.websiteDataStore(for: identityID),
+            usesDarkMode: settingsStore.usesDarkMode(for: initialURL)
+        )
+        let tab = BrowserTabState(
+            webView: webView,
+            cookiePersistence: BrowserCookiePersistence(directoryURL: settingsStore.directoryURL),
+            identityID: identityID
+        )
+        configure(tab)
+        return tab
+    }
+
+    private func refreshPublishedTabs() {
+        tabs = tabStates.map { tab in
+            BrowserTabItem(
+                id: tab.id,
+                title: tab.title,
+                url: tab.webView.url,
+                isActive: tab.id == activeTabID,
+                isLoading: tab.webView.isLoading,
+                hasAttemptedNavigation: tab.hasAttemptedNavigation
+            )
+        }
+
+        syncTitlebarTabState()
+    }
+
+    private func syncTitlebarTabState() {
+        let items = tabStates.map { tab in
+            BrowserTitlebarTab(
+                id: tab.id,
+                title: tab.title,
+                url: tab.webView.url,
+                isActive: tab.id == activeTabID,
+                isLoading: tab.webView.isLoading,
+                hasAttemptedNavigation: tab.hasAttemptedNavigation
+            )
+        }
+
+        for tab in tabStates {
+            tab.webView.titlebarTabs = items
+        }
+    }
+
+    private func recordVisitedURL(_ url: URL, identityID: UUID?) {
+        settingsStore.updateLastVisitedURL(url, identityID: identityID)
         historyURLs = settingsStore.settings.historyURLs
         refreshSiteIdentityState()
     }
@@ -737,14 +943,14 @@ final class BrowserModel: NSObject, ObservableObject {
             usernameTarget: usernameTarget,
             passwordTarget: passwordTarget,
             for: currentURL,
-            identityID: activeIdentityID
+            identityID: activeTab.identityID
         )
         pendingLoginUsernameTarget = nil
         pendingLoginPasswordTarget = nil
     }
 
     private func fillSavedLoginForCurrentSite(reportsMissingLogin: Bool) {
-        guard let entry = loginStore.login(for: webView.url, identityID: activeIdentityID) else {
+        guard let entry = loginStore.login(for: webView.url, identityID: activeTab.identityID) else {
             if reportsMissingLogin {
                 showAlert(message: "No Saved Login", detail: "There is no saved login for this site yet.")
             }
@@ -809,20 +1015,15 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     private func refreshSiteIdentityState() {
-        currentIdentityName = settingsStore.identityName(for: activeIdentityID)
+        currentIdentityName = settingsStore.identityName(for: activeTab.identityID)
         siteIdentityMenuItems = settingsStore.siteIdentityMenuItems(
             for: webView.url,
-            activeIdentityID: activeIdentityID
+            activeIdentityID: activeTab.identityID
         )
     }
 
     private func syncBookmarkState() {
         bookmarkURLs = settingsStore.bookmarkURLs
-        syncBookmarkTitlebarState(for: webView)
-    }
-
-    private func syncBookmarkTitlebarState(for webView: BrowserWKWebView) {
-        webView.bookmarkURLs = settingsStore.bookmarkURLs
     }
 
     private func refreshDarkModeState(for url: URL?) {
@@ -959,54 +1160,82 @@ extension BrowserModel: WKScriptMessageHandler {
 
 extension BrowserModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        errorMessage = nil
-        hasAttemptedNavigation = true
-        isLoading = true
-        estimatedProgress = max(0.08, webView.estimatedProgress)
-        resetScreenshotForNavigation()
-        resetXHRTracking(for: webView.url)
+        guard let tab = tab(for: webView) else { return }
+
+        tab.errorMessage = nil
+        tab.hasAttemptedNavigation = true
+
+        if activeTabID == tab.id {
+            errorMessage = nil
+            hasAttemptedNavigation = true
+            isLoading = true
+            estimatedProgress = max(0.08, webView.estimatedProgress)
+            resetScreenshotForNavigation()
+            resetXHRTracking(for: webView.url)
+        }
+
         syncPageState(from: webView)
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        errorMessage = nil
-        navigationFallbacks = []
+        guard let tab = tab(for: webView) else { return }
+
+        tab.errorMessage = nil
+        tab.navigationFallbacks = []
+
+        if activeTabID == tab.id {
+            errorMessage = nil
+            navigationFallbacks = []
+        }
+
         syncPageState(from: webView)
 
         if let url = webView.url {
-            recordVisitedURL(url)
+            recordVisitedURL(url, identityID: tab.identityID)
         }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        errorMessage = nil
-        estimatedProgress = 1
-        syncPageState(from: webView)
-        markScreenshotDirty(scheduleAfter: 0.25)
-        botTerminal.refreshIfOpen(
-            currentURL: webView.url,
-            pageTitle: webView.title,
-            viewportMode: viewportMode,
-            xhrCount: xhrRecords.count
-        )
+        guard let tab = tab(for: webView) else { return }
 
-        if let url = webView.url {
-            recordVisitedURL(url)
+        tab.errorMessage = nil
+
+        if activeTabID == tab.id {
+            errorMessage = nil
+            estimatedProgress = 1
         }
 
-        fillSavedLoginForCurrentSite(reportsMissingLogin: false)
+        syncPageState(from: webView)
+
+        if activeTabID == tab.id {
+            markScreenshotDirty(scheduleAfter: 0.25)
+            botTerminal.refreshIfOpen(
+                currentURL: webView.url,
+                pageTitle: webView.title,
+                viewportMode: viewportMode,
+                xhrCount: xhrRecords.count
+            )
+        }
+
+        if let url = webView.url {
+            recordVisitedURL(url, identityID: tab.identityID)
+        }
+
+        if activeTabID == tab.id {
+            fillSavedLoginForCurrentSite(reportsMissingLogin: false)
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        handleNavigationError(error)
+        handleNavigationError(error, in: webView)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        if loadNextFallback(after: error) {
+        if loadNextFallback(after: error, in: webView) {
             return
         }
 
-        handleNavigationError(error)
+        handleNavigationError(error, in: webView)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -1021,34 +1250,52 @@ extension BrowserModel: WKNavigationDelegate {
             return
         }
 
-        refreshDarkModeState(for: url)
+        if let browserWebView = webView as? BrowserWKWebView {
+            browserWebView.configureForcedDarkPageBackground(settingsStore.usesDarkMode(for: url))
+        }
         decisionHandler(.allow)
     }
 
-    private func handleNavigationError(_ error: Error) {
+    private func handleNavigationError(_ error: Error, in webView: WKWebView) {
         let nsError = error as NSError
         guard nsError.code != NSURLErrorCancelled else { return }
 
-        navigationFallbacks = []
-        isLoading = false
-        estimatedProgress = 0
-        errorMessage = error.localizedDescription
-        finishScreenshotWaiters(with: .failure(error))
+        guard let tab = tab(for: webView) else { return }
+        tab.navigationFallbacks = []
+        tab.errorMessage = error.localizedDescription
+
+        if activeTabID == tab.id {
+            navigationFallbacks = []
+            isLoading = false
+            estimatedProgress = 0
+            errorMessage = error.localizedDescription
+            finishScreenshotWaiters(with: .failure(error))
+        }
+
+        refreshPublishedTabs()
     }
 
-    private func loadNextFallback(after error: Error) -> Bool {
+    private func loadNextFallback(after error: Error, in webView: WKWebView) -> Bool {
         let nsError = error as NSError
+        guard let tab = tab(for: webView) else { return false }
         guard nsError.code != NSURLErrorCancelled,
-              !navigationFallbacks.isEmpty
+              !tab.navigationFallbacks.isEmpty
         else {
             return false
         }
 
-        let nextURL = navigationFallbacks.removeFirst()
-        errorMessage = nil
-        displayAddressText = nextURL.absoluteString
-        isSecurePage = nextURL.scheme?.lowercased() == "https"
-        resetXHRTracking(for: nextURL)
+        let nextURL = tab.navigationFallbacks.removeFirst()
+        tab.errorMessage = nil
+        tab.displayAddressText = nextURL.absoluteString
+
+        if activeTabID == tab.id {
+            navigationFallbacks = tab.navigationFallbacks
+            errorMessage = nil
+            displayAddressText = nextURL.absoluteString
+            isSecurePage = nextURL.scheme?.lowercased() == "https"
+            resetXHRTracking(for: nextURL)
+        }
+
         webView.load(URLRequest(url: nextURL))
         return true
     }

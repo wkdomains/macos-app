@@ -68,6 +68,19 @@ struct ContentView: View {
         .onChange(of: browser.bookmarkURLs) { _, _ in
             scheduleSuggestions(for: addressDraft)
         }
+        .onChange(of: browser.activeTabID) { _, _ in
+            addressDraft = browser.displayAddressText
+            hideSuggestions()
+
+            if browser.hasAttemptedNavigation {
+                isAddressEditing = false
+                isAddressFocused = false
+                shouldFocusBrowserAfterLoad = true
+                focusBrowserContentWhenReady()
+            } else {
+                focusAddressBar(selectAll: false)
+            }
+        }
         .onChange(of: browser.isLoading) { _, isLoading in
             guard shouldFocusBrowserAfterLoad, !isLoading else { return }
             focusPendingBrowserContent()

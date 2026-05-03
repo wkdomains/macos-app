@@ -39,6 +39,15 @@ struct XHRContextMenuItem: Equatable {
     let title: String
 }
 
+struct BrowserTitlebarTab: Identifiable, Equatable {
+    var id: UUID
+    var title: String
+    var url: URL?
+    var isActive: Bool
+    var isLoading: Bool
+    var hasAttemptedNavigation: Bool
+}
+
 struct BrowserWebView: NSViewRepresentable {
     let webView: BrowserWKWebView
     let blocksProgrammaticFocus: Bool
@@ -82,21 +91,21 @@ final class BrowserWKWebView: WKWebView {
             window?.title = browserWindowTitle
         }
     }
-    var bookmarkURLs: [URL] = [] {
+    var titlebarTabs: [BrowserTitlebarTab] = [] {
         didSet {
-            updateBookmarkTitlebarAccessory()
+            updateTitlebarTabsAccessory()
         }
     }
-    var openBookmark: ((URL) -> Void)?
-    var moveBookmark: ((URL, URL) -> Void)?
+    var selectTab: ((UUID) -> Void)?
+    var addTab: (() -> Void)?
     var viewportSizeDidChange: (() -> Void)?
     private var lastReportedViewportSize = NSSize.zero
     private var isHandlingDirectUserFocus = false
     private var contextMenuLinkURL: String?
     private var contextMenuLoginField: LoginFieldTarget?
     private var usesForcedDarkPageBackground = false
-    private var bookmarkTitlebarAccessory: BookmarkTitlebarAccessoryViewController?
-    private weak var bookmarkTitlebarWindow: NSWindow?
+    private var titlebarTabsAccessory: BrowserTabsTitlebarAccessoryViewController?
+    private weak var titlebarTabsWindow: NSWindow?
 
     override var acceptsFirstResponder: Bool {
         !blocksProgrammaticFocus || isHandlingDirectUserFocus
@@ -114,14 +123,14 @@ final class BrowserWKWebView: WKWebView {
         super.viewDidMoveToWindow()
         window?.title = browserWindowTitle
         configureDescendantScrollViewBackgrounds()
-        updateBookmarkTitlebarAccessory()
+        updateTitlebarTabsAccessory()
     }
 
-    func removeBookmarkTitlebarAccessory() {
-        guard let bookmarkTitlebarAccessory else { return }
-        removeBookmarkTitlebarAccessory(bookmarkTitlebarAccessory, from: bookmarkTitlebarWindow)
-        self.bookmarkTitlebarAccessory = nil
-        bookmarkTitlebarWindow = nil
+    func removeTitlebarTabsAccessory() {
+        guard let titlebarTabsAccessory else { return }
+        removeTitlebarTabsAccessory(titlebarTabsAccessory, from: titlebarTabsWindow)
+        self.titlebarTabsAccessory = nil
+        titlebarTabsWindow = nil
     }
 
     func configureForcedDarkPageBackground(_ enabled: Bool) {
@@ -623,58 +632,53 @@ final class BrowserWKWebView: WKWebView {
         viewportSizeDidChange?()
     }
 
-    private func updateBookmarkTitlebarAccessory() {
+    private func updateTitlebarTabsAccessory() {
         guard let window else {
-            removeBookmarkTitlebarAccessory()
+            removeTitlebarTabsAccessory()
             return
         }
 
-        guard !bookmarkURLs.isEmpty else {
-            removeBookmarkTitlebarAccessory()
-            return
-        }
-
-        let accessory: BookmarkTitlebarAccessoryViewController
-        if let existingAccessory = bookmarkTitlebarAccessory {
+        let accessory: BrowserTabsTitlebarAccessoryViewController
+        if let existingAccessory = titlebarTabsAccessory {
             accessory = existingAccessory
-            if bookmarkTitlebarWindow !== window {
-                removeBookmarkTitlebarAccessory(existingAccessory, from: bookmarkTitlebarWindow)
-                existingAccessory.bookmarkURLs = bookmarkURLs
-                existingAccessory.openBookmark = { [weak self] url in
-                    self?.openBookmark?(url)
+            if titlebarTabsWindow !== window {
+                removeTitlebarTabsAccessory(existingAccessory, from: titlebarTabsWindow)
+                existingAccessory.tabs = titlebarTabs
+                existingAccessory.selectTab = { [weak self] tabID in
+                    self?.selectTab?(tabID)
                 }
-                existingAccessory.moveBookmark = { [weak self] sourceURL, targetURL in
-                    self?.moveBookmark?(sourceURL, targetURL)
+                existingAccessory.addTab = { [weak self] in
+                    self?.addTab?()
                 }
                 window.addTitlebarAccessoryViewController(existingAccessory)
-                bookmarkTitlebarWindow = window
+                titlebarTabsWindow = window
             }
         } else {
-            accessory = BookmarkTitlebarAccessoryViewController()
+            accessory = BrowserTabsTitlebarAccessoryViewController()
             accessory.layoutAttribute = .left
-            accessory.bookmarkURLs = bookmarkURLs
-            accessory.openBookmark = { [weak self] url in
-                self?.openBookmark?(url)
+            accessory.tabs = titlebarTabs
+            accessory.selectTab = { [weak self] tabID in
+                self?.selectTab?(tabID)
             }
-            accessory.moveBookmark = { [weak self] sourceURL, targetURL in
-                self?.moveBookmark?(sourceURL, targetURL)
+            accessory.addTab = { [weak self] in
+                self?.addTab?()
             }
-            bookmarkTitlebarAccessory = accessory
+            titlebarTabsAccessory = accessory
             window.addTitlebarAccessoryViewController(accessory)
-            bookmarkTitlebarWindow = window
+            titlebarTabsWindow = window
         }
 
-        accessory.bookmarkURLs = bookmarkURLs
-        accessory.openBookmark = { [weak self] url in
-            self?.openBookmark?(url)
+        accessory.tabs = titlebarTabs
+        accessory.selectTab = { [weak self] tabID in
+            self?.selectTab?(tabID)
         }
-        accessory.moveBookmark = { [weak self] sourceURL, targetURL in
-            self?.moveBookmark?(sourceURL, targetURL)
+        accessory.addTab = { [weak self] in
+            self?.addTab?()
         }
     }
 
-    private func removeBookmarkTitlebarAccessory(
-        _ accessory: BookmarkTitlebarAccessoryViewController,
+    private func removeTitlebarTabsAccessory(
+        _ accessory: BrowserTabsTitlebarAccessoryViewController,
         from window: NSWindow?
     ) {
         guard let window,
@@ -687,15 +691,15 @@ final class BrowserWKWebView: WKWebView {
     }
 }
 
-private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessoryViewController {
-    var bookmarkURLs: [URL] = [] {
+private final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewController {
+    var tabs: [BrowserTitlebarTab] = [] {
         didSet {
             renderButtons()
         }
     }
 
-    var openBookmark: ((URL) -> Void)?
-    var moveBookmark: ((URL, URL) -> Void)?
+    var selectTab: ((UUID) -> Void)?
+    var addTab: (() -> Void)?
 
     private var cachedFavicons: [String: NSImage] = [:]
     private var requestedFavicons = Set<String>()
@@ -706,15 +710,13 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
     private let accessoryHeight: CGFloat = 28
     private static let faviconPointSize: CGFloat = 16
     private static let faviconPixelSize = 32
-    private var hostingView: BookmarkTitlebarHostingView?
-    private let dragState = BookmarkTitlebarDragState()
+    private var hostingView: BrowserTabsTitlebarHostingView?
 
     override func loadView() {
-        let hostingView = BookmarkTitlebarHostingView(rootView: BookmarkTitlebarView(
+        let hostingView = BrowserTabsTitlebarHostingView(rootView: BrowserTabsTitlebarView(
             items: [],
-            dragState: dragState,
-            openBookmark: { _ in },
-            moveBookmark: { _, _ in }
+            selectTab: { _ in },
+            addTab: {}
         ))
         hostingView.frame = NSRect(x: 0, y: 0, width: 0, height: accessoryHeight)
         hostingView.sizingOptions = []
@@ -725,25 +727,26 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
     private func renderButtons() {
         loadViewIfNeeded()
 
-        let width = accessoryWidth(for: bookmarkURLs.count)
+        let width = accessoryWidth(for: tabs.count)
         view.setFrameSize(NSSize(width: width, height: accessoryHeight))
 
-        let items = bookmarkURLs.map { url in
-            BookmarkTitlebarItem(
-                url: url,
-                image: favicon(for: url) ?? placeholderImage(),
-                tooltip: titlebarTooltip(for: url)
+        let items = tabs.map { tab in
+            BrowserTitlebarItem(
+                id: tab.id,
+                image: tab.url.flatMap { favicon(for: $0) } ?? placeholderImage(),
+                tooltip: titlebarTooltip(for: tab),
+                isActive: tab.isActive,
+                isLoading: tab.isLoading
             )
         }
 
-        hostingView?.rootView = BookmarkTitlebarView(
+        hostingView?.rootView = BrowserTabsTitlebarView(
             items: items,
-            dragState: dragState,
-            openBookmark: { [weak self] url in
-                self?.openBookmark?(url)
+            selectTab: { [weak self] tabID in
+                self?.selectTab?(tabID)
             },
-            moveBookmark: { [weak self] sourceURL, targetURL in
-                self?.moveBookmark?(sourceURL, targetURL)
+            addTab: { [weak self] in
+                self?.addTab?()
             }
         )
     }
@@ -798,10 +801,15 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
     }
 
     private func placeholderImage() -> NSImage? {
-        NSImage(systemSymbolName: "globe", accessibilityDescription: "Bookmark")
+        NSImage(named: NSImage.Name("AppIcon"))
+            ?? NSImage(systemSymbolName: "globe", accessibilityDescription: "Tab")
     }
 
-    private func titlebarTooltip(for url: URL) -> String {
+    private func titlebarTooltip(for tab: BrowserTitlebarTab) -> String {
+        guard let url = tab.url else {
+            return tab.hasAttemptedNavigation ? tab.title : "New Tab"
+        }
+
         guard let host = url.host else {
             return url.absoluteString
         }
@@ -809,7 +817,8 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
         let path = url.path.isEmpty || url.path == "/" ? "" : url.path
         let query = url.query.map { "?\($0)" } ?? ""
         let fragment = url.fragment.map { "#\($0)" } ?? ""
-        return "\(host)\(path)\(query)\(fragment)"
+        let title = tab.title == BrowserWKWebView.defaultWindowTitle ? host : tab.title
+        return "\(title) - \(host)\(path)\(query)\(fragment)"
     }
 
     private static func fetchData(from url: URL) async throws -> Data {
@@ -888,102 +897,86 @@ private final class BookmarkTitlebarAccessoryViewController: NSTitlebarAccessory
         return undersizedPenalty + abs(pixels - preferredPixels)
     }
 
-    private func accessoryWidth(for bookmarkCount: Int) -> CGFloat {
-        guard bookmarkCount > 0 else { return 0 }
-        let spacing = CGFloat(max(0, bookmarkCount - 1)) * buttonSpacing
-        return (horizontalInset * 2) + (CGFloat(bookmarkCount) * buttonSize) + spacing
+    private func accessoryWidth(for tabCount: Int) -> CGFloat {
+        let itemCount = tabCount + 1
+        let spacing = CGFloat(max(0, itemCount - 1)) * buttonSpacing
+        return (horizontalInset * 2) + (CGFloat(itemCount) * buttonSize) + spacing
     }
 }
 
-private struct BookmarkTitlebarItem: Identifiable {
-    let url: URL
+private struct BrowserTitlebarItem: Identifiable {
+    let id: UUID
     let image: NSImage?
     let tooltip: String
-
-    var id: String {
-        url.absoluteString
-    }
+    let isActive: Bool
+    let isLoading: Bool
 }
 
-private final class BookmarkTitlebarDragState {
-    var draggingBookmarkID: String?
-}
-
-private final class BookmarkTitlebarHostingView: NSHostingView<BookmarkTitlebarView> {
+private final class BrowserTabsTitlebarHostingView: NSHostingView<BrowserTabsTitlebarView> {
     override var mouseDownCanMoveWindow: Bool {
         false
     }
 }
 
-private struct BookmarkTitlebarView: View {
-    let items: [BookmarkTitlebarItem]
-    let dragState: BookmarkTitlebarDragState
-    let openBookmark: (URL) -> Void
-    let moveBookmark: (URL, URL) -> Void
+private struct BrowserTabsTitlebarView: View {
+    let items: [BrowserTitlebarItem]
+    let selectTab: (UUID) -> Void
+    let addTab: () -> Void
 
     var body: some View {
         HStack(spacing: 4) {
             ForEach(items) { item in
                 Button {
-                    openBookmark(item.url)
+                    selectTab(item.id)
                 } label: {
-                    Group {
-                        if let image = item.image {
-                            Image(nsImage: image)
-                                .resizable()
-                                .interpolation(.high)
-                                .frame(width: 16, height: 16)
-                        } else {
-                            Image(systemName: "globe")
-                                .font(.system(size: 15, weight: .regular))
-                        }
-                    }
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
+                    TabIcon(item: item)
                 }
                 .buttonStyle(.plain)
                 .help(item.tooltip)
-                .onDrag {
-                    dragState.draggingBookmarkID = item.id
-                    return NSItemProvider(object: item.id as NSString)
-                }
-                .onDrop(
-                    of: [UTType.text],
-                    delegate: BookmarkTitlebarDropDelegate(
-                        item: item,
-                        dragState: dragState,
-                        moveBookmark: moveBookmark
-                    )
-                )
             }
+
+            Button(action: addTab) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("New Tab")
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
     }
 }
 
-private struct BookmarkTitlebarDropDelegate: DropDelegate {
-    let item: BookmarkTitlebarItem
-    let dragState: BookmarkTitlebarDragState
-    let moveBookmark: (URL, URL) -> Void
+private struct TabIcon: View {
+    let item: BrowserTitlebarItem
 
-    func dropEntered(info: DropInfo) {
-        guard let draggingBookmarkID = dragState.draggingBookmarkID,
-              draggingBookmarkID != item.id,
-              let sourceURL = URL(string: draggingBookmarkID)
-        else {
-            return
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(item.isActive ? Color.accentColor.opacity(0.18) : Color.clear)
+
+            if item.isLoading {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.55)
+                    .frame(width: 16, height: 16)
+            } else if let image = item.image {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 16, height: 16)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            } else {
+                Image(systemName: "globe")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(.secondary)
+            }
         }
-
-        moveBookmark(sourceURL, item.url)
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        dragState.draggingBookmarkID = nil
-        return true
+        .frame(width: 24, height: 24)
+        .contentShape(Rectangle())
     }
 }
