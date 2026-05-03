@@ -339,6 +339,7 @@ extension BrowserModel {
 
       const STYLE_ID = "wkdomains-forced-dark-style";
       const ROOT_ATTRIBUTE = "data-wkdomains-forced-dark";
+      const READY_ATTRIBUTE = "data-wkdomains-forced-dark-ready";
       const DEFAULT_BACKGROUND = { r: 24, g: 26, b: 27, a: 1 };
       const DEFAULT_TEXT = { r: 232, g: 230, b: 227, a: 1 };
       const MUTED_TEXT = { r: 157, g: 148, b: 136, a: 1 };
@@ -528,19 +529,25 @@ extension BrowserModel {
         return toRGBA(mix(transformed, DEFAULT_BACKGROUND, neutral ? 0.18 : 0.02));
       };
 
-      const transformForeground = (color) => {
+      const transformForeground = (color, element = null) => {
         if (!color || color.a < 0.05) return null;
         const luminance = relativeLuminance(color);
         if (luminance > 0.62) return toRGBA(color);
 
         const hsl = rgbToHSL(color);
-        const neutral = hsl.s < 0.18 || hsl.l < 0.14;
+        const linkLikeBlue = element
+          && element.closest
+          && element.closest("a")
+          && hsl.h > 185
+          && hsl.h < 265
+          && hsl.s > 0.22;
+        const neutral = linkLikeBlue || hsl.s < 0.18 || hsl.l < 0.14;
         const sourceLightness = clamp(hsl.l, 0, 1);
         const transformed = neutral
           ? hslToRGB({
               h: 36,
               s: 0.12,
-              l: sourceLightness < 0.20
+              l: sourceLightness < 0.20 || linkLikeBlue
                 ? 0.88
                 : clamp(0.44 + (1 - sourceLightness) * 0.45, 0.56, 0.78),
               a: color.a
@@ -606,8 +613,20 @@ extension BrowserModel {
           return false;
         }
 
+        const hadPreflight = document.documentElement.hasAttribute(ROOT_ATTRIBUTE);
+        if (hadPreflight) {
+          document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
+        }
+
+        const finish = (value) => {
+          if (hadPreflight) {
+            document.documentElement.setAttribute(ROOT_ATTRIBUTE, "true");
+          }
+          return value;
+        };
+
         const rootStyle = getComputedStyle(document.documentElement);
-        if (rootStyle.filter.includes("invert(1)")) return true;
+        if (rootStyle.filter.includes("invert(1)")) return finish(true);
 
         const columns = Math.min(4, Math.max(1, Math.ceil(innerWidth / 256)));
         const rows = Math.min(4, Math.max(1, Math.ceil(innerHeight / 256)));
@@ -629,10 +648,10 @@ extension BrowserModel {
           }
         }
 
-        if (total === 0) return false;
+        if (total === 0) return finish(false);
         const average = luminanceSum / total;
         const darkShare = darkCount / total;
-        return darkShare >= 0.65 && average < 0.42;
+        return finish(darkShare >= 0.65 && average < 0.42);
       };
 
       const ensureBaseStyle = () => {
@@ -653,6 +672,9 @@ extension BrowserModel {
             background: ${toRGBA(DEFAULT_BACKGROUND)} !important;
             color: ${toRGBA(DEFAULT_TEXT)} !important;
           }
+          :root[${ROOT_ATTRIBUTE}]:not([${READY_ATTRIBUTE}]) body {
+            visibility: hidden !important;
+          }
           :root[${ROOT_ATTRIBUTE}] input,
           :root[${ROOT_ATTRIBUTE}] textarea,
           :root[${ROOT_ATTRIBUTE}] select,
@@ -668,10 +690,17 @@ extension BrowserModel {
         (document.head || document.documentElement).appendChild(style);
       };
 
+      const removeBaseStyle = () => {
+        if (!document.documentElement) return;
+        document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
+        document.documentElement.removeAttribute(READY_ATTRIBUTE);
+        document.getElementById(STYLE_ID)?.remove();
+      };
+
       const shouldSkipElement = (element) => {
         if (!element || SKIP_TAGS.has(element.tagName.toUpperCase())) return true;
         const style = getComputedStyle(element);
-        return style.display === "none" || style.visibility === "hidden";
+        return style.display === "none";
       };
 
       const applyElement = (element) => {
@@ -687,7 +716,7 @@ extension BrowserModel {
         }
 
         if (!SVG_TAGS.has(tag)) {
-          const color = transformForeground(parseColor(style.color));
+          const color = transformForeground(parseColor(style.color), element);
           if (color) element.style.setProperty("color", color, "important");
         }
 
@@ -711,10 +740,10 @@ extension BrowserModel {
           const fill = parseColor(style.fill);
           const stroke = parseColor(style.stroke);
           if (fill && relativeLuminance(fill) < 0.52) {
-            element.style.setProperty("fill", transformForeground(fill), "important");
+            element.style.setProperty("fill", transformForeground(fill, element), "important");
           }
           if (stroke && relativeLuminance(stroke) < 0.52) {
-            element.style.setProperty("stroke", transformForeground(stroke), "important");
+            element.style.setProperty("stroke", transformForeground(stroke, element), "important");
           }
         }
       };
@@ -739,12 +768,16 @@ extension BrowserModel {
 
         if (forced !== true) {
           forced = !isPageAlreadyDark();
-          if (!forced) return;
+          if (!forced) {
+            removeBaseStyle();
+            return;
+          }
         }
 
         applying = true;
         ensureBaseStyle();
         applyRoot(document);
+        document.documentElement.setAttribute(READY_ATTRIBUTE, "true");
         window.setTimeout(() => {
           applying = false;
         }, 0);
@@ -776,8 +809,9 @@ extension BrowserModel {
       window.addEventListener("load", () => schedule(40), { passive: true });
       window.addEventListener("pageshow", () => schedule(40), { passive: true });
 
+      ensureBaseStyle();
       if (document.readyState === "loading") {
-        schedule(80);
+        schedule(0);
       } else {
         observe();
         schedule(0);
