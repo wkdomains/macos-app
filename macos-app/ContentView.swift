@@ -217,6 +217,12 @@ struct ContentView: View {
 
                     Text(addressCompletion.suffix)
                         .foregroundStyle(.primary)
+                        .padding(.horizontal, 2)
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(Color.accentColor.opacity(0.18))
+                        )
                 }
                 .font(.system(size: 14))
                 .lineLimit(1)
@@ -288,24 +294,30 @@ struct ContentView: View {
 
     private var addressCompletion: AddressCompletion? {
         guard isAddressEditing,
-              selectedSuggestionIndex == nil,
-              let suggestion = suggestions.first,
-              suggestion.canInlineComplete
+              selectedSuggestionIndex == nil
         else {
             return nil
         }
 
         let typedText = addressDraft
         let trimmedTypedText = typedText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let completionText = suggestion.completionText
         guard !trimmedTypedText.isEmpty,
-              typedText == trimmedTypedText,
-              completionText.lowercased().hasPrefix(typedText.lowercased()),
-              completionText.count > typedText.count
+              typedText == trimmedTypedText
         else {
             return nil
         }
 
+        guard let suggestion = suggestions.first(where: { suggestion in
+            guard suggestion.canInlineComplete else { return false }
+
+            let completionText = suggestion.completionText
+            return completionText.lowercased().hasPrefix(typedText.lowercased())
+                && completionText.count > typedText.count
+        }) else {
+            return nil
+        }
+
+        let completionText = suggestion.completionText
         return AddressCompletion(
             suggestion: suggestion,
             typedText: typedText,
@@ -410,6 +422,8 @@ struct ContentView: View {
            suggestions.indices.contains(selectedSuggestionIndex)
         {
             selectSuggestion(suggestions[selectedSuggestionIndex])
+        } else if let addressCompletion {
+            selectSuggestion(addressCompletion.suggestion)
         } else {
             hideSuggestions()
             isAddressEditing = false
@@ -580,6 +594,7 @@ struct ContentView: View {
 
     private static func localSuggestions(for query: String, historyURLs: [String]) -> [AddressSuggestion] {
         var suggestions: [AddressSuggestion] = []
+        let historySuggestions = historySuggestions(for: query, historyURLs: historyURLs)
 
         if let resolution = AddressResolver.resolve(query) {
             switch resolution.kind {
@@ -606,7 +621,12 @@ struct ContentView: View {
             }
         }
 
-        let historySuggestions = historySuggestions(for: query, historyURLs: historyURLs)
+        if let firstHistorySuggestion = historySuggestions.first,
+           firstHistorySuggestion.completionText.lowercased().hasPrefix(query.lowercased())
+        {
+            return deduplicatedSuggestions(historySuggestions + suggestions)
+        }
+
         return deduplicatedSuggestions(suggestions + historySuggestions)
     }
 
