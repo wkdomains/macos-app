@@ -362,6 +362,7 @@ private struct BrowserTitlebarItem: Identifiable {
 
 private final class BrowserTabsDragState {
     var draggingTabID: UUID?
+    var dropTargetTabID: UUID?
 }
 
 private final class BrowserTabsTitlebarHostingView: NSHostingView<BrowserTabsTitlebarView> {
@@ -388,6 +389,7 @@ private struct BrowserTabsTitlebarView: View {
                 .buttonStyle(.plain)
                 .help(item.tooltip)
                 .onDrag {
+                    dragState.dropTargetTabID = nil
                     dragState.draggingTabID = item.id
                     return NSItemProvider(object: item.id.uuidString as NSString)
                 }
@@ -428,7 +430,13 @@ private struct BrowserTitlebarTabDropDelegate: DropDelegate {
             return
         }
 
-        moveTab(draggingTabID, item.id)
+        dragState.dropTargetTabID = item.id
+    }
+
+    func dropExited(info: DropInfo) {
+        if dragState.dropTargetTabID == item.id {
+            dragState.dropTargetTabID = nil
+        }
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -436,7 +444,21 @@ private struct BrowserTitlebarTabDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        dragState.draggingTabID = nil
+        defer {
+            dragState.draggingTabID = nil
+            dragState.dropTargetTabID = nil
+        }
+
+        guard let draggingTabID = dragState.draggingTabID else {
+            return true
+        }
+
+        let targetTabID = dragState.dropTargetTabID ?? item.id
+        guard draggingTabID != targetTabID else {
+            return true
+        }
+
+        moveTab(draggingTabID, targetTabID)
         return true
     }
 }
