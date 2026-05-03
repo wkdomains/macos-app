@@ -1,6 +1,6 @@
 ---
 name: wkdomains-local-browser-api
-description: Use wkdomains local browser-state endpoints to inspect the currently visible page, DOM, resources, XHR/fetch activity, cookies, storage, and screenshot from localhost:9001.
+description: Use wkdomains local browser-state endpoints to inspect the currently visible page, DOM, links, console, resources, XHR/fetch activity, cookies, storage, and screenshot from localhost:9001.
 ---
 
 # wkdomains Local Browser API
@@ -20,6 +20,8 @@ http://localhost:9001
 curl http://localhost:9001/api/v1/screenshot --output - > foo.png
 curl http://localhost:9001/api/v1/page | jq .
 curl http://localhost:9001/api/v1/dom | jq .
+curl http://localhost:9001/api/v1/links | jq .
+curl http://localhost:9001/api/v1/console | jq .
 curl http://localhost:9001/api/v1/resources | jq .
 curl http://localhost:9001/api/v1/xhr | jq .
 curl http://localhost:9001/api/v1/cookies | jq .
@@ -29,6 +31,8 @@ curl http://localhost:9001/api/v1/cookies | jq .
 
 - `/api/v1/page`: Start here. Gets current URL, title, host, registrable domain, origin, viewport, loading state, and navigation state.
 - `/api/v1/dom`: Use for visible page structure, text, controls, forms, tables, ARIA labels, and element rectangles. This is the main endpoint for deciding what is on screen.
+- `/api/v1/links`: Use to inspect important anchors, forms, scripts, and link tags.
+- `/api/v1/console`: Use for captured page console calls, window errors, unhandled promise rejections, and CSP violations.
 - `/api/v1/resources`: Use to discover domain-level machine-readable files and common API descriptors such as `llms.txt`, OpenAPI files, sitemaps, robots, and related resources.
 - `/api/v1/xhr`: Use after interacting with the page or waiting for load. Lists observed XHR/fetch requests for the current page host, including method, URL, status, size, and `jsonShape`.
 - `/api/v1/cookies`: Use only when authenticated browser context is needed. Returns cookies plus localStorage and sessionStorage for the current page host. Treat as sensitive.
@@ -38,10 +42,12 @@ curl http://localhost:9001/api/v1/cookies | jq .
 
 1. Call `/api/v1/page` to confirm the active page and host.
 2. Call `/api/v1/dom` to understand the visible UI and available actions.
-3. Call `/api/v1/resources` when looking for domain documentation or API discovery files.
-4. Call `/api/v1/xhr` to identify browser-observed API calls and useful JSON shapes.
-5. Call `/api/v1/cookies` only if replaying authenticated requests requires browser session data.
-6. Capture `/api/v1/screenshot` when the rendered view matters or DOM text is not enough.
+3. Call `/api/v1/links` when looking for navigation, forms, scripts, or alternate resources on the active page.
+4. Call `/api/v1/console` when checking client-side errors or logged diagnostic output.
+5. Call `/api/v1/resources` when looking for domain documentation or API discovery files.
+6. Call `/api/v1/xhr` to identify browser-observed API calls and useful JSON shapes.
+7. Call `/api/v1/cookies` only if replaying authenticated requests requires browser session data.
+8. Capture `/api/v1/screenshot` when the rendered view matters or DOM text is not enough.
 
 ## Notes
 

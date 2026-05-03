@@ -49,6 +49,8 @@ Examples:
 curl http://localhost:9001/api/v1/screenshot --output - > foo.png
 curl http://localhost:9001/api/v1/page | jq .
 curl http://localhost:9001/api/v1/dom | jq .
+curl http://localhost:9001/api/v1/links | jq .
+curl http://localhost:9001/api/v1/console | jq .
 curl http://localhost:9001/api/v1/resources | jq .
 curl http://localhost:9001/api/v1/xhr | jq .
 curl http://localhost:9001/api/v1/cookies | jq .
