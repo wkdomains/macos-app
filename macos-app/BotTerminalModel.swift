@@ -26,11 +26,13 @@ final class BotTerminalModel: ObservableObject {
 
     @Published private(set) var message = "Open the agent terminal to start domain discovery."
     @Published private(set) var isOpen = false
+    @Published private(set) var isInputReady = false
 
     private var requests: [BotTerminalRequest] = []
     private var discoveryTask: Task<Void, Never>?
     private var terminalLines: [String] = []
     private var loadingLineIndex: Int?
+    private var currentPageContext: PageContext?
 
     func open(currentURL: URL?, pageTitle: String?, viewportMode: BrowserViewportMode, xhrCount: Int) {
         isOpen = true
@@ -63,6 +65,8 @@ final class BotTerminalModel: ObservableObject {
         discoveryTask?.cancel()
         terminalLines = []
         loadingLineIndex = nil
+        isInputReady = false
+        currentPageContext = nil
 
         guard let currentURL,
               let host = currentURL.host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")),
@@ -74,6 +78,15 @@ final class BotTerminalModel: ObservableObject {
 
         let domain = DomainUtilities.registrableDomain(from: host)
         let llmsURL = "https://\(domain)/llms.txt"
+        currentPageContext = PageContext(
+            currentURL: currentURL.absoluteString,
+            pageHost: host,
+            domain: domain,
+            llmsURL: llmsURL,
+            pageTitle: pageTitle,
+            viewportMode: viewportMode.rawValue,
+            xhrCount: xhrCount
+        )
         appendLine("wkdomains agent view")
         appendLine("Domain: \(domain)")
         appendLine("Page: \(currentURL.absoluteString)")
@@ -135,6 +148,56 @@ final class BotTerminalModel: ObservableObject {
         return true
     }
 
+    func submitHumanMessage(_ rawMessage: String) {
+        let humanMessage = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !humanMessage.isEmpty else { return }
+
+        guard let context = currentPageContext else {
+            appendLine("")
+            appendLine("Human:")
+            appendLine(humanMessage)
+            appendLine("Agent request could not be queued because no page context is loaded.")
+            return
+        }
+
+        appendLine("")
+        appendLine("Human:")
+        appendLine(humanMessage)
+        appendLine("Agent: request queued.")
+
+        let request = BotTerminalRequest(
+            id: UUID(),
+            createdAt: Date(),
+            currentURL: context.currentURL,
+            pageHost: context.pageHost,
+            domain: context.domain,
+            llmsURL: context.llmsURL,
+            userAgent: Self.llmsUserAgent,
+            prompt: """
+            The human asked from the wkdomains agent terminal:
+
+            \(humanMessage)
+
+            Current page context:
+            URL: \(context.currentURL)
+            Title: \(context.pageTitle ?? "")
+            Host: \(context.pageHost)
+            Domain: \(context.domain)
+            Viewport: \(context.viewportMode)
+            Observed XHR count: \(context.xhrCount)
+
+            Use wkdomains local endpoints if available:
+            /api/v1/page, /api/v1/dom, /api/v1/links, /api/v1/console, /api/v1/resources, /api/v1/screenshot, /api/v1/xhr/{host}, and /api/v1/cookies/{host}.
+
+            Reply concisely for the terminal.
+            """,
+            status: "pending"
+        )
+
+        requests.removeAll { $0.status == "pending" }
+        requests.append(request)
+    }
+
     private func discoverDomain(_ domain: String) async {
         var foundLabels: [String] = []
         var apiLine: String?
@@ -187,6 +250,7 @@ final class BotTerminalModel: ObservableObject {
         appendLine("")
         appendLine("Summary:")
         appendLine(Self.discoverySummary(domain: domain, foundLabels: foundLabels, apiLine: apiLine, affordances: affordances))
+        isInputReady = true
     }
 
     private func appendLine(_ line: String) {
@@ -356,6 +420,16 @@ final class BotTerminalModel: ObservableObject {
         return words.prefix(limit).joined(separator: " ") + "..."
     }
 
+}
+
+private struct PageContext {
+    let currentURL: String
+    let pageHost: String
+    let domain: String
+    let llmsURL: String
+    let pageTitle: String?
+    let viewportMode: String
+    let xhrCount: Int
 }
 
 private struct ResourceDiscoveryResult {
