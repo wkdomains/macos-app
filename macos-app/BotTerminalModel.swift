@@ -140,7 +140,14 @@ final class BotTerminalModel: ObservableObject {
         if trimmedSummary.isEmpty {
             appendLine("[agent] No summary was provided.")
         } else {
-            appendLine("")
+            if let loadingLineIndex,
+               terminalLines.indices.contains(loadingLineIndex),
+               terminalLines[loadingLineIndex].hasPrefix("Agent: waiting")
+            {
+                updateLoadingLine("Agent: reply received.")
+            } else {
+                appendLine("")
+            }
             appendLine("Agent reply:")
             appendLine(Self.wordLimited(trimmedSummary, limit: 80))
         }
@@ -163,7 +170,7 @@ final class BotTerminalModel: ObservableObject {
         appendLine("")
         appendLine("Human:")
         appendLine(humanMessage)
-        appendLine("Agent: request queued.")
+        appendLoadingLine("Agent: waiting for attached MCP client...")
 
         let request = BotTerminalRequest(
             id: UUID(),
