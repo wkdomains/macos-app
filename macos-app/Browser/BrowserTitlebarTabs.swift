@@ -94,9 +94,10 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
     var selectTab: ((UUID) -> Void)?
     var addTab: (() -> Void)?
 
-    private var cachedFavicons: [String: NSImage] = [:]
-    private var requestedFavicons = Set<String>()
-    private var failedFavicons = Set<String>()
+    private static var cachedFavicons: [String: NSImage] = [:]
+    private static var requestedFavicons = Set<String>()
+    private static var failedFavicons = Set<String>()
+    private static let faviconDidUpdate = Notification.Name("BrowserTabsTitlebarFaviconDidUpdate")
     private let buttonSize: CGFloat = 24
     private let buttonSpacing: CGFloat = 4
     private let horizontalInset: CGFloat = 8
@@ -104,6 +105,13 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
     private static let faviconPointSize: CGFloat = 16
     private static let faviconPixelSize = 32
     private var hostingView: BrowserTabsTitlebarHostingView?
+    private var faviconObserver: NSObjectProtocol?
+
+    deinit {
+        if let faviconObserver {
+            NotificationCenter.default.removeObserver(faviconObserver)
+        }
+    }
 
     override func loadView() {
         let hostingView = BrowserTabsTitlebarHostingView(rootView: BrowserTabsTitlebarView(
@@ -115,6 +123,19 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
         hostingView.sizingOptions = []
         self.hostingView = hostingView
         view = hostingView
+        observeFaviconUpdates()
+    }
+
+    private func observeFaviconUpdates() {
+        guard faviconObserver == nil else { return }
+
+        faviconObserver = NotificationCenter.default.addObserver(
+            forName: Self.faviconDidUpdate,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.renderButtons()
+        }
     }
 
     private func renderButtons() {
@@ -145,8 +166,8 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
     }
 
     private func favicon(for url: URL) -> NSImage? {
-        let rawURL = url.absoluteString
-        if let image = cachedFavicons[rawURL] {
+        let cacheKey = Self.faviconCacheKey(for: url)
+        if let image = Self.cachedFavicons[cacheKey] {
             return image
         }
 
@@ -155,9 +176,9 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
     }
 
     private func requestFavicon(for url: URL) {
-        let rawURL = url.absoluteString
-        guard !failedFavicons.contains(rawURL),
-              requestedFavicons.insert(rawURL).inserted,
+        let cacheKey = Self.faviconCacheKey(for: url)
+        guard !Self.failedFavicons.contains(cacheKey),
+              Self.requestedFavicons.insert(cacheKey).inserted,
               !Self.faviconURLs(for: url).isEmpty
         else {
             return
@@ -183,11 +204,12 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
 
             await MainActor.run {
                 if let loadedImageData, let image = Self.faviconImage(from: loadedImageData) {
-                    cachedFavicons[rawURL] = image
+                    Self.cachedFavicons[cacheKey] = image
                 } else {
-                    failedFavicons.insert(rawURL)
+                    Self.failedFavicons.insert(cacheKey)
                 }
 
+                NotificationCenter.default.post(name: Self.faviconDidUpdate, object: nil)
                 renderButtons()
             }
         }
@@ -212,6 +234,21 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
         let fragment = url.fragment.map { "#\($0)" } ?? ""
         let title = tab.title == BrowserWKWebView.defaultWindowTitle ? host : tab.title
         return "\(title) - \(host)\(path)\(query)\(fragment)"
+    }
+
+    private static func faviconCacheKey(for url: URL) -> String {
+        guard let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased()
+        else {
+            return url.absoluteString
+        }
+
+        var key = "\(scheme)://\(host)"
+        if let port = url.port {
+            key += ":\(port)"
+        }
+
+        return key
     }
 
     private static func fetchData(from url: URL) async throws -> Data {
