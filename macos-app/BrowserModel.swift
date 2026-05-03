@@ -214,6 +214,10 @@ final class BrowserModel: NSObject, ObservableObject {
         botTerminal.pendingRequests()
     }
 
+    func waitForPendingBotRequests(timeout: TimeInterval, completion: @escaping (_ requests: [BotTerminalRequest], _ timedOut: Bool) -> Void) {
+        botTerminal.waitForPendingRequests(timeout: timeout, completion: completion)
+    }
+
     func replyToBotRequest(id: UUID, summary: String) -> Bool {
         botTerminal.completeRequest(id: id, summary: summary)
     }

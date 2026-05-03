@@ -267,6 +267,20 @@ final class LocalAPIServer {
                 ]
             ],
             [
+                "name": "wait_for_human_request",
+                "description": "Long-poll for a pending request created by the human in wkdomains. Returns immediately if a request is already pending; otherwise waits until one appears or the timeout expires.",
+                "inputSchema": [
+                    "type": "object",
+                    "properties": [
+                        "timeoutMs": [
+                            "type": "integer",
+                            "description": "How long to wait before returning with no request. Defaults to 30000 and is capped at 120000."
+                        ]
+                    ],
+                    "additionalProperties": false
+                ]
+            ],
+            [
                 "name": "reply_to_human_request",
                 "description": "Send a terminal reply for a pending human request.",
                 "inputSchema": [
@@ -307,6 +321,20 @@ final class LocalAPIServer {
         case "get_human_requests":
             let requests = dataReader.readPendingBotRequests()
             sendMCPToolResult(id: id, value: ["requests": requests], on: connection)
+        case "wait_for_human_request":
+            let rawTimeoutMs = arguments["timeoutMs"] as? Int ?? 30_000
+            let timeoutMs = min(max(rawTimeoutMs, 1_000), 120_000)
+
+            dataReader.waitForPendingBotRequests(timeout: TimeInterval(timeoutMs) / 1_000) { [weak self] requests, timedOut in
+                self?.sendMCPToolResult(
+                    id: id,
+                    value: [
+                        "timedOut": timedOut,
+                        "requests": requests
+                    ],
+                    on: connection
+                )
+            }
         case "reply_to_human_request":
             guard let requestId = arguments["requestId"] as? String,
                   let uuid = UUID(uuidString: requestId),
@@ -695,18 +723,12 @@ private final class WebsiteDataReader {
     }
 
     func readPendingBotRequests() -> [[String: Any]] {
-        browser.pendingBotRequests().map { request in
-            [
-                "id": request.id.uuidString,
-                "createdAt": Self.iso8601Formatter.string(from: request.createdAt),
-                "currentURL": request.currentURL,
-                "pageHost": request.pageHost,
-                "domain": request.domain,
-                "llmsURL": request.llmsURL,
-                "userAgent": request.userAgent,
-                "prompt": request.prompt,
-                "status": request.status
-            ]
+        browser.pendingBotRequests().map(Self.dictionary(from:))
+    }
+
+    func waitForPendingBotRequests(timeout: TimeInterval, completion: @escaping (_ requests: [[String: Any]], _ timedOut: Bool) -> Void) {
+        browser.waitForPendingBotRequests(timeout: timeout) { requests, timedOut in
+            completion(requests.map(Self.dictionary(from:)), timedOut)
         }
     }
 
@@ -827,6 +849,20 @@ private final class WebsiteDataReader {
         components.port = url.port
 
         return components.url?.absoluteString ?? url.absoluteString
+    }
+
+    private static func dictionary(from request: BotTerminalRequest) -> [String: Any] {
+        [
+            "id": request.id.uuidString,
+            "createdAt": iso8601Formatter.string(from: request.createdAt),
+            "currentURL": request.currentURL,
+            "pageHost": request.pageHost,
+            "domain": request.domain,
+            "llmsURL": request.llmsURL,
+            "userAgent": request.userAgent,
+            "prompt": request.prompt,
+            "status": request.status
+        ]
     }
 
     private static func resourceCandidates(for domain: String) -> [URL] {

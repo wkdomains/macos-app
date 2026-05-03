@@ -33,6 +33,7 @@ final class BotTerminalModel: ObservableObject {
     private var terminalLines: [String] = []
     private var loadingLineIndex: Int?
     private var currentPageContext: PageContext?
+    private var requestWaiters: [UUID: (_ requests: [BotTerminalRequest], _ timedOut: Bool) -> Void] = [:]
 
     func open(currentURL: URL?, pageTitle: String?, viewportMode: BrowserViewportMode, xhrCount: Int) {
         isOpen = true
@@ -119,6 +120,7 @@ final class BotTerminalModel: ObservableObject {
 
         requests.removeAll { $0.status == "pending" }
         requests.append(request)
+        notifyRequestWaiters()
 
         discoveryTask = Task { [weak self] in
             guard let self else { return }
@@ -128,6 +130,27 @@ final class BotTerminalModel: ObservableObject {
 
     func pendingRequests() -> [BotTerminalRequest] {
         requests.filter { $0.status == "pending" }
+    }
+
+    func waitForPendingRequests(timeout: TimeInterval, completion: @escaping (_ requests: [BotTerminalRequest], _ timedOut: Bool) -> Void) {
+        let pendingRequests = pendingRequests()
+        if !pendingRequests.isEmpty {
+            completion(pendingRequests, false)
+            return
+        }
+
+        let waiterID = UUID()
+        requestWaiters[waiterID] = completion
+
+        Task { @MainActor [weak self] in
+            let nanoseconds = UInt64(max(1, timeout) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard let waiter = self?.requestWaiters.removeValue(forKey: waiterID) else {
+                return
+            }
+
+            waiter([], true)
+        }
     }
 
     func completeRequest(id: UUID, summary: String) -> Bool {
@@ -203,6 +226,7 @@ final class BotTerminalModel: ObservableObject {
 
         requests.removeAll { $0.status == "pending" }
         requests.append(request)
+        notifyRequestWaiters()
     }
 
     private func discoverDomain(_ domain: String) async {
@@ -283,6 +307,20 @@ final class BotTerminalModel: ObservableObject {
 
     private func renderMessage() {
         message = terminalLines.joined(separator: "\n")
+    }
+
+    private func notifyRequestWaiters() {
+        let pendingRequests = pendingRequests()
+        guard !pendingRequests.isEmpty, !requestWaiters.isEmpty else {
+            return
+        }
+
+        let waiters = Array(requestWaiters.values)
+        requestWaiters.removeAll()
+
+        for waiter in waiters {
+            waiter(pendingRequests, false)
+        }
     }
 
     private static let resourcePaths = [
