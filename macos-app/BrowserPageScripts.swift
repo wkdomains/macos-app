@@ -338,6 +338,7 @@ extension BrowserModel {
       window.__wkdomainsDarkModeInstalled = true;
 
       const STYLE_ID = "wkdomains-forced-dark-style";
+      const COVER_ID = "wkdomains-forced-dark-cover";
       const ROOT_ATTRIBUTE = "data-wkdomains-forced-dark";
       const READY_ATTRIBUTE = "data-wkdomains-forced-dark-ready";
       const DEFAULT_BACKGROUND = { r: 24, g: 26, b: 27, a: 1 };
@@ -362,8 +363,49 @@ extension BrowserModel {
       let scheduled = false;
       let applying = false;
       let observer = null;
+      const installedAt = performance.now ? performance.now() : Date.now();
+      let lastMutationAt = installedAt;
+      let coverReleaseTimer = null;
+      const debugCounts = new Map();
+      const isTopFrame = (() => {
+        try { return window.top === window; } catch (_) { return false; }
+      })();
 
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+      const debugDarkMode = (event, data = {}, limit = 20) => {
+        if (!isTopFrame) return;
+
+        const count = debugCounts.get(event) || 0;
+        if (count >= limit) return;
+        debugCounts.set(event, count + 1);
+
+        const now = performance.now ? performance.now() : Date.now();
+        const payload = {
+          event,
+          elapsedMs: Math.round((now - installedAt) * 10) / 10,
+          readyState: document.readyState,
+          hasHead: !!document.head,
+          hasBody: !!document.body,
+          forced,
+          ...data
+        };
+        const message = `[wkdomains-dark] ${event} ${JSON.stringify(payload)}`;
+
+        try {
+          window.webkit.messageHandlers.wkdomainsConsole.postMessage({
+            level: "debug",
+            arguments: [message],
+            message,
+            pageURL: location.href,
+            pageHost: location.hostname
+          });
+        } catch (_) {
+          try { console.debug(message); } catch (_) {}
+        }
+      };
+
+      debugDarkMode("install");
 
       const parseComponent = (value, isAlpha = false) => {
         if (!value) return isAlpha ? 1 : 0;
@@ -613,20 +655,8 @@ extension BrowserModel {
           return false;
         }
 
-        const hadPreflight = document.documentElement.hasAttribute(ROOT_ATTRIBUTE);
-        if (hadPreflight) {
-          document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
-        }
-
-        const finish = (value) => {
-          if (hadPreflight) {
-            document.documentElement.setAttribute(ROOT_ATTRIBUTE, "true");
-          }
-          return value;
-        };
-
         const rootStyle = getComputedStyle(document.documentElement);
-        if (rootStyle.filter.includes("invert(1)")) return finish(true);
+        if (rootStyle.filter.includes("invert(1)")) return true;
 
         const columns = Math.min(4, Math.max(1, Math.ceil(innerWidth / 256)));
         const rows = Math.min(4, Math.max(1, Math.ceil(innerHeight / 256)));
@@ -648,32 +678,34 @@ extension BrowserModel {
           }
         }
 
-        if (total === 0) return finish(false);
+        if (total === 0) return false;
         const average = luminanceSum / total;
         const darkShare = darkCount / total;
-        return finish(darkShare >= 0.65 && average < 0.42);
+        return darkShare >= 0.65 && average < 0.42;
       };
 
       const ensureBaseStyle = () => {
         if (!document.documentElement) return;
         document.documentElement.setAttribute(ROOT_ATTRIBUTE, "true");
+        if (!document.documentElement.hasAttribute(READY_ATTRIBUTE)) {
+          ensurePreflightCover();
+        }
 
-        if (document.getElementById(STYLE_ID)) return;
+        if (document.getElementById(STYLE_ID)) {
+          debugDarkMode("base-style-exists", {}, 3);
+          return;
+        }
 
         const style = document.createElement("style");
         style.id = STYLE_ID;
         style.textContent = `
           :root[${ROOT_ATTRIBUTE}] {
             color-scheme: dark !important;
-            background: ${toRGBA(DEFAULT_BACKGROUND)} !important;
           }
-          :root[${ROOT_ATTRIBUTE}],
-          :root[${ROOT_ATTRIBUTE}] body {
+          :root[${ROOT_ATTRIBUTE}][${READY_ATTRIBUTE}],
+          :root[${ROOT_ATTRIBUTE}][${READY_ATTRIBUTE}] body {
             background: ${toRGBA(DEFAULT_BACKGROUND)} !important;
             color: ${toRGBA(DEFAULT_TEXT)} !important;
-          }
-          :root[${ROOT_ATTRIBUTE}]:not([${READY_ATTRIBUTE}]) body {
-            visibility: hidden !important;
           }
           :root[${ROOT_ATTRIBUTE}] input,
           :root[${ROOT_ATTRIBUTE}] textarea,
@@ -688,13 +720,106 @@ extension BrowserModel {
         `;
 
         (document.head || document.documentElement).appendChild(style);
+        debugDarkMode("base-style-installed", {
+          parent: document.head ? "head" : "documentElement"
+        }, 5);
+      };
+
+      const ensurePreflightCover = () => {
+        if (!document.documentElement) return;
+        if (document.getElementById(COVER_ID)) {
+          debugDarkMode("cover-exists", {}, 5);
+          return;
+        }
+
+        const cover = document.createElement("div");
+        cover.id = COVER_ID;
+        cover.setAttribute("aria-hidden", "true");
+        cover.style.cssText = [
+          "position:fixed",
+          "inset:0",
+          "z-index:2147483647",
+          "display:block",
+          `background:${toRGBA(DEFAULT_BACKGROUND)}`,
+          "pointer-events:none",
+          "border:0",
+          "margin:0",
+          "padding:0",
+          "width:100vw",
+          "height:100vh"
+        ].map((declaration) => `${declaration} !important`).join(";");
+
+        document.documentElement.appendChild(cover);
+        debugDarkMode("cover-installed", {
+          coverParent: "documentElement"
+        }, 5);
+      };
+
+      const releasePreflightCover = (removeBaseStyle = false) => {
+        if (coverReleaseTimer) {
+          window.clearTimeout(coverReleaseTimer);
+          coverReleaseTimer = null;
+        }
+
+        const finish = () => {
+          const hadCover = !!document.getElementById(COVER_ID);
+          document.getElementById(COVER_ID)?.remove();
+          debugDarkMode("cover-removed", {
+            hadCover,
+            removeBaseStyle
+          }, 10);
+
+          if (removeBaseStyle && document.documentElement) {
+            document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
+            document.documentElement.removeAttribute(READY_ATTRIBUTE);
+            document.getElementById(STYLE_ID)?.remove();
+            debugDarkMode("base-style-removed", {}, 5);
+          }
+        };
+
+        const shouldWaitForSettledPage = () => {
+          if (removeBaseStyle) return false;
+
+          const now = performance.now ? performance.now() : Date.now();
+          const elapsed = now - installedAt;
+          const quietFor = now - lastMutationAt;
+          const bodyChildren = document.body ? document.body.childElementCount : 0;
+          const bodyHeight = document.body
+            ? Math.max(document.body.scrollHeight || 0, document.body.getBoundingClientRect().height || 0)
+            : 0;
+          const hasUsefulContent = bodyChildren >= 8 || bodyHeight >= Math.max(360, innerHeight * 0.6);
+
+          if (!hasUsefulContent && elapsed < 900) return true;
+          if (elapsed < 220) return true;
+          if (quietFor < 90 && elapsed < 900) return true;
+
+          return false;
+        };
+
+        if (shouldWaitForSettledPage()) {
+          const now = performance.now ? performance.now() : Date.now();
+          debugDarkMode("cover-release-deferred", {
+            removeBaseStyle,
+            quietForMs: Math.round((now - lastMutationAt) * 10) / 10,
+            bodyChildren: document.body ? document.body.childElementCount : 0
+          }, 20);
+          coverReleaseTimer = window.setTimeout(() => releasePreflightCover(removeBaseStyle), 60);
+          return;
+        }
+
+        try {
+          debugDarkMode("cover-release-scheduled", { removeBaseStyle }, 10);
+          requestAnimationFrame(() => requestAnimationFrame(finish));
+          window.setTimeout(finish, 220);
+        } catch (_) {
+          finish();
+        }
       };
 
       const removeBaseStyle = () => {
         if (!document.documentElement) return;
-        document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
-        document.documentElement.removeAttribute(READY_ATTRIBUTE);
-        document.getElementById(STYLE_ID)?.remove();
+        debugDarkMode("skip-already-dark");
+        releasePreflightCover(true);
       };
 
       const shouldSkipElement = (element) => {
@@ -764,10 +889,21 @@ extension BrowserModel {
 
       const run = () => {
         scheduled = false;
-        if (!document.documentElement || !document.body) return;
+        if (!document.documentElement || !document.body) {
+          debugDarkMode("run-waiting-for-body", {
+            hasDocumentElement: !!document.documentElement
+          }, 20);
+          return;
+        }
 
         if (forced !== true) {
           forced = !isPageAlreadyDark();
+          debugDarkMode("detected-page", {
+            willForce: forced,
+            bodyChildren: document.body ? document.body.childElementCount : 0,
+            viewportWidth: innerWidth,
+            viewportHeight: innerHeight
+          }, 5);
           if (!forced) {
             removeBaseStyle();
             return;
@@ -775,31 +911,56 @@ extension BrowserModel {
         }
 
         applying = true;
+        debugDarkMode("apply-start", {
+          bodyChildren: document.body.childElementCount
+        }, 20);
         ensureBaseStyle();
         applyRoot(document);
         document.documentElement.setAttribute(READY_ATTRIBUTE, "true");
+        debugDarkMode("apply-ready", {
+          coverPresent: !!document.getElementById(COVER_ID)
+        }, 20);
+        releasePreflightCover(false);
         window.setTimeout(() => {
           applying = false;
+          debugDarkMode("apply-unlocked", {}, 20);
         }, 0);
       };
 
       const schedule = (delay = 80) => {
-        if (scheduled) return;
+        if (scheduled) {
+          debugDarkMode("schedule-skipped", { delay }, 8);
+          return;
+        }
         scheduled = true;
+        debugDarkMode("schedule", { delay }, 30);
         window.setTimeout(run, delay);
       };
 
       const observe = () => {
-        if (observer || !document.documentElement || !window.MutationObserver) return;
+        if (observer || !document.documentElement || !window.MutationObserver) {
+          debugDarkMode("observe-skipped", {
+            hasObserver: !!observer,
+            hasDocumentElement: !!document.documentElement,
+            hasMutationObserver: !!window.MutationObserver
+          }, 5);
+          return;
+        }
 
         observer = new MutationObserver(() => {
-          if (!applying) schedule(140);
+          lastMutationAt = performance.now ? performance.now() : Date.now();
+          debugDarkMode("mutation", {
+            applying,
+            nextDelay: forced === null ? 0 : 140
+          }, 30);
+          if (!applying) schedule(forced === null ? 0 : 140);
         });
         observer.observe(document.documentElement, {
           attributes: true,
           childList: true,
           subtree: true
         });
+        debugDarkMode("observe-installed");
       };
 
       document.addEventListener("DOMContentLoaded", () => {
@@ -810,10 +971,10 @@ extension BrowserModel {
       window.addEventListener("pageshow", () => schedule(40), { passive: true });
 
       ensureBaseStyle();
+      observe();
       if (document.readyState === "loading") {
         schedule(0);
       } else {
-        observe();
         schedule(0);
       }
     })();
