@@ -46,6 +46,13 @@ extension BrowserModel {
         }
         userContentController.addUserScript(
             WKUserScript(
+                source: Self.jsonViewerScript,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            )
+        )
+        userContentController.addUserScript(
+            WKUserScript(
                 source: Self.consoleTrackingScript,
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
