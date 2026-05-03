@@ -422,6 +422,110 @@ Responses include a short `bodyPreview` for text, JSON, and XML resources so an
 agent can quickly decide which discovered files matter without fetching every
 full document immediately.
 
+## Browser left, agent view right
+
+The larger vision is that wkdomains becomes "what an agent sees" beside what
+the human sees. The left side stays a normal browser. The right side is an
+agent-native interpretation of the current page, domain, APIs, auth state,
+network behavior, and integration affordances.
+
+The memory-chip icon in the upper-right toolbar is the agent-view toggle. When
+opened, the browser moves to 75% width and the right 25% becomes a black
+terminal panel with green text. Today it starts the current `llms.txt` request.
+The intended direction is for that terminal to become a live notebook of
+wkdomains discovery events and MCP-agent insight. Tapping the memory-chip icon
+again closes the terminal.
+
+### Domain discovery
+
+Whenever the human lands on a domain, wkdomains should automatically check the
+likely agent and developer entry points:
+
+- `/llms.txt`
+- `/llms-full.txt`
+- `/openapi.json`
+- `/swagger.json`
+- `/.well-known/openapi.json`
+- `/.well-known/ai-plugin.json`
+- `/.well-known/agent-card.json`
+- `/sitemap.xml`
+- `/robots.txt`
+
+The terminal can then show a compact domain map:
+
+```text
+Domain: withone.ai
+Found: llms.txt, sitemap.xml, markdown docs routes
+API: api.withone.ai
+Agent affordance: universal MCP, knowledge search API
+```
+
+### Agent insight loop
+
+When the page or domain changes, the attached MCP agent should be asked to
+synthesize a rolling agent view from the normalized data wkdomains already has:
+
+- current URL, title, host, and viewport
+- screenshot
+- visible DOM summary
+- recent XHR and response shapes
+- cookies and auth shape
+- discovered `llms.txt`, OpenAPI, sitemap, robots, and agent-card files
+- console messages and browser-observed errors
+
+The prompt is effectively:
+
+```text
+Here is the current URL, screenshot, DOM summary, recent XHR,
+cookies/auth shape, discovered llms.txt, OpenAPI, and sitemap.
+Explain what this domain offers to an agent and what actions are possible.
+```
+
+The terminal becomes a live notebook:
+
+```text
+Fetching llms.txt...
+Found OpenAPI candidate...
+Recent XHR suggests authenticated dashboard API...
+This page appears to be a projects list.
+Useful API endpoint: GET /teams/{slug}/sites
+Agent-facing summary:
+...
+```
+
+### MCP owns reasoning, wkdomains owns data
+
+wkdomains should gather, sanitize, and normalize the browser data. The MCP
+client should reason over it. That keeps the app valuable across different
+agents and editors:
+
+- Codex
+- Claude Code
+- Cursor
+- other MCP clients later
+
+Direct LLM API streaming can come later, but it should not be the first step.
+It adds API keys, billing, model settings, and privacy questions. MCP keeps the
+human's chosen coding agent as the brain while wkdomains stays the local
+browser data source.
+
+### Terminal event UX
+
+The terminal should append structured events immediately, then add agent
+summaries when they are ready:
+
+```text
+[page] https://www.withone.ai/
+[discover] found /llms.txt
+[discover] found /sitemap.xml
+[xhr] 12 requests observed
+[agent] This domain exposes an agent integration platform...
+```
+
+Even if MCP returns a final answer instead of token streaming, the terminal
+still feels alive because wkdomains streams its own page, discovery, network,
+and resource events as they happen.
+
 ## A better agent workflow
 
 Typical flow:
@@ -461,7 +565,8 @@ wkdomains gives the agent the same practical signals a developer would use:
 
 ## Future MCP ideas
 
-Future versions will add an MCP server so coding agents can use wkdomains as a
+wkdomains already exposes a small MCP bridge for the current human request
+flow. Future versions should expand it so coding agents can use wkdomains as a
 live browser context without asking the human to paste screenshots, cookies,
 network logs, or copied JSON.
 
