@@ -33,6 +33,18 @@ extension BrowserModel {
         }
       };
 
+      const injectStyleAtEnd = (style, root = document) => {
+        const target = root === document ? (document.documentElement || document.head) : root;
+        if (!target) return;
+        try {
+          if (style.parentNode !== target || style.nextSibling) {
+            target.appendChild(style);
+          }
+        } catch (_) {
+          target.appendChild(style);
+        }
+      };
+
       const getInlineOverrideStyle = () => {
         const inlineOverrides = [
           [COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", "color"],
@@ -90,19 +102,28 @@ extension BrowserModel {
           border-color: var(--darkreader-border) !important;
           caret-color: var(--darkreader-neutral-text) !important;
         }
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input:not([type]),
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input[type="text"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input[type="search"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input[type="email"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input[type="password"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input[type="url"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input[type="tel"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input[type="number"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) textarea {
+          -webkit-appearance: none !important;
+          appearance: none !important;
+          background-color: rgb(24, 26, 27) !important;
+          background-image: none !important;
+          color: var(--darkreader-neutral-text) !important;
+          -webkit-text-fill-color: var(--darkreader-neutral-text) !important;
+          caret-color: var(--darkreader-neutral-text) !important;
+          box-shadow: inset 0 0 0 9999px rgb(24, 26, 27) !important;
+        }
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input::placeholder,
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) textarea::placeholder {
           color: rgb(176, 170, 160) !important;
           opacity: 1 !important;
-        }
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input[name="subjectbox"],
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input[aria-label="Subject"],
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input[placeholder="Subject"],
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input.aoT {
-          background: rgb(24, 26, 27) !important;
-          color: var(--darkreader-neutral-text) !important;
-          -webkit-text-fill-color: var(--darkreader-neutral-text) !important;
-          box-shadow: none !important;
         }
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [contenteditable="true"],
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="textbox"],
@@ -135,6 +156,12 @@ extension BrowserModel {
         }
       `;
 
+      const ensureSiteFixStyle = () => {
+        const siteFixStyle = createOrUpdateStyle("wkdomains-darkreader--site-fixes", document);
+        siteFixStyle.textContent = getSiteFixStyle();
+        injectStyleAtEnd(siteFixStyle, document);
+      };
+
       const ensureBaseStyle = () => {
         if (!document.documentElement) return;
         document.documentElement.setAttribute(ROOT_ATTRIBUTE, "true");
@@ -148,19 +175,25 @@ extension BrowserModel {
         userAgentStyle.textContent = getUserAgentStyle();
         injectStyleNextTo(userAgentStyle, document, fallbackStyle);
 
+        const invertStyle = createOrUpdateStyle("wkdomains-darkreader--invert", document);
+        invertStyle.textContent = getSiteFixInvertStyle();
+        injectStyleNextTo(invertStyle, document, userAgentStyle);
+
         const inlineStyle = createOrUpdateStyle("wkdomains-darkreader--inline", document);
         inlineStyle.textContent = getInlineOverrideStyle();
-        injectStyleNextTo(inlineStyle, document, userAgentStyle);
+        injectStyleNextTo(inlineStyle, document, invertStyle);
 
         const structuralStyle = createOrUpdateStyle("wkdomains-darkreader--structural", document);
         structuralStyle.textContent = getStructuralStyle();
         injectStyleNextTo(structuralStyle, document, inlineStyle);
+
+        ensureSiteFixStyle();
       };
 
       const createShadowStaticStyleOverrides = (root) => {
         if (!root || !root.querySelector) return;
         const style = createOrUpdateStyle(SHADOW_STYLE_CLASS, root);
-        style.textContent = `${getInlineOverrideStyle()}\n${getUserAgentStyle()}`;
+        style.textContent = `${getInlineOverrideStyle()}\n${getUserAgentStyle()}\n${getSiteFixInvertStyle()}\n${getSiteFixStyle()}`;
         if (style.parentNode !== root) {
           try {
             root.insertBefore(style, root.firstChild);

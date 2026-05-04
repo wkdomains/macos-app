@@ -312,6 +312,7 @@ extension BrowserModel {
         applying = true;
         ensureBaseStyle();
         updateManageableStyles(document);
+        ensureSiteFixStyle();
         discoverExistingShadowRoots(document);
 
         const roots = dirtyRoots.size > 0 ? Array.from(dirtyRoots) : [document];
@@ -321,6 +322,7 @@ extension BrowserModel {
             applyRoot(root);
           }
         });
+        ensureSiteFixStyle();
 
         finalizeReadyWhenUseful();
         window.setTimeout(() => {

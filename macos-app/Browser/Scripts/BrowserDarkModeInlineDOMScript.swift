@@ -99,6 +99,7 @@ extension BrowserModel {
 
       const hasMediaBackdrop = (element, style) => {
         if (!element || !style) return false;
+        if (shouldIgnoreImageAnalysis(element)) return false;
 
         const backgroundImage = style.backgroundImage || "";
         if (backgroundImage && backgroundImage !== "none" && !backgroundImage.includes("gradient")) {
@@ -114,6 +115,7 @@ extension BrowserModel {
 
         for (const media of element.querySelectorAll("video,img,picture,canvas,iframe,object,embed")) {
           if (!isVisibleMedia(media)) continue;
+          if (shouldIgnoreImageAnalysis(media)) continue;
 
           const mediaRect = visibleRectFor(media);
           const elementCoverage = mediaRect.area / Math.max(1, elementRect.area);
@@ -213,10 +215,28 @@ extension BrowserModel {
         }
       };
 
+      const clearInlineOverrides = (element) => {
+        setOverride(element, COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", null);
+        setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", null);
+        setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", null);
+        setOverride(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", null);
+        setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", null);
+        setOverride(element, BOX_SHADOW_ATTRIBUTE, "--wkdomains-forced-dark-box-shadow", null);
+        for (const override of BORDER_OVERRIDES) {
+          setOverride(element, override.attr, override.prop, null);
+        }
+      };
+
       const overrideInlineStyle = (element) => {
         if (!element || !element.getAttribute || !element.style) return;
         const key = inlineCacheKeyFor(element);
         if (inlineStyleCache.get(element) === key) return;
+
+        if (shouldIgnoreInlineStyle(element)) {
+          clearInlineOverrides(element);
+          inlineStyleCache.set(element, key);
+          return;
+        }
 
         if (element.hasAttribute("bgcolor")) {
           let value = element.getAttribute("bgcolor") || "";

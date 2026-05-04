@@ -413,6 +413,7 @@ extension BrowserModel {
           for (const root of discoveredShadowRoots) {
             updateManageableStyles(root);
           }
+          ensureSiteFixStyle();
         }, delay);
       };
 

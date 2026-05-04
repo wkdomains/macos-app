@@ -96,6 +96,8 @@ extension BrowserModel {
 
     \#(Self.browserDarkModeColorScript)
 
+    \#(Self.browserDarkModeSiteFixesScript)
+
     \#(Self.browserDarkModeStaticStyleScript)
 
     \#(Self.browserDarkModeStylesheetScript)
