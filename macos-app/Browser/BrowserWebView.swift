@@ -92,6 +92,7 @@ final class BrowserWKWebView: WKWebView {
     var selectTab: ((UUID) -> Void)?
     var addTab: (() -> Void)?
     var moveTab: ((UUID, UUID) -> Void)?
+    var togglePinnedTab: ((UUID) -> Void)?
     var viewportSizeDidChange: (() -> Void)?
     private var lastReportedViewportSize = NSSize.zero
     private var isHandlingDirectUserFocus = false

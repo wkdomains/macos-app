@@ -35,6 +35,7 @@ struct AppSettings: Codable {
     var lastURL: String
     var lastDomain: String
     var openTabs: [String]
+    var openTabPins: [Bool]
     var activeTabIndex: Int
     var historyURLs: [String]
     var dark: Bool
@@ -49,6 +50,7 @@ struct AppSettings: Codable {
             lastURL: defaultURL,
             lastDomain: URL(string: defaultURL)?.host ?? "wkdomains.com",
             openTabs: [defaultURL],
+            openTabPins: [false],
             activeTabIndex: 0,
             historyURLs: [defaultURL],
             dark: true,
@@ -64,6 +66,7 @@ struct AppSettings: Codable {
         lastURL: String,
         lastDomain: String,
         openTabs: [String],
+        openTabPins: [Bool],
         activeTabIndex: Int,
         historyURLs: [String],
         dark: Bool,
@@ -76,6 +79,7 @@ struct AppSettings: Codable {
         self.lastURL = lastURL
         self.lastDomain = lastDomain
         self.openTabs = openTabs
+        self.openTabPins = openTabPins
         self.activeTabIndex = activeTabIndex
         self.historyURLs = historyURLs
         self.dark = dark
@@ -94,6 +98,7 @@ struct AppSettings: Codable {
             ?? URL(string: Self.defaultURL)?.host
             ?? "wkdomains.com"
         openTabs = try container.decodeIfPresent([String].self, forKey: .openTabs) ?? []
+        openTabPins = try container.decodeIfPresent([Bool].self, forKey: .openTabPins) ?? []
         activeTabIndex = try container.decodeIfPresent(Int.self, forKey: .activeTabIndex) ?? 0
         historyURLs = try container.decodeIfPresent([String].self, forKey: .historyURLs) ?? []
         dark = try container.decodeIfPresent(Bool.self, forKey: .dark) ?? true
@@ -144,6 +149,15 @@ final class AppSettingsStore {
     var startupURLs: [URL] {
         let urls = cachedSettings.openTabs.compactMap(Self.validURL)
         return urls.isEmpty ? [startupURL] : urls
+    }
+
+    var startupTabPins: [Bool] {
+        let urls = cachedSettings.openTabs.compactMap(Self.validURL)
+        guard !urls.isEmpty else { return [false] }
+
+        return urls.indices.map { index in
+            cachedSettings.openTabPins.indices.contains(index) ? cachedSettings.openTabPins[index] : false
+        }
     }
 
     var startupActiveTabIndex: Int {
@@ -341,18 +355,21 @@ final class AppSettingsStore {
         write(cachedSettings)
     }
 
-    func updateOpenTabs(_ rawURLs: [String], activeIndex: Int) {
-        let urls = Self.normalizedOpenTabURLs(rawURLs)
-        let nextURLs = urls.isEmpty ? [cachedSettings.lastURL] : urls
+    func updateOpenTabs(_ rawURLs: [String], activeIndex: Int, pinnedFlags: [Bool]) {
+        let normalizedTabs = Self.normalizedOpenTabs(rawURLs, pinnedFlags: pinnedFlags)
+        let nextURLs = normalizedTabs.urls.isEmpty ? [cachedSettings.lastURL] : normalizedTabs.urls
+        let nextPins = normalizedTabs.urls.isEmpty ? [false] : normalizedTabs.pinnedFlags
         let nextActiveIndex = nextURLs.indices.contains(activeIndex) ? activeIndex : 0
 
         guard cachedSettings.openTabs != nextURLs
+            || cachedSettings.openTabPins != nextPins
             || cachedSettings.activeTabIndex != nextActiveIndex
         else {
             return
         }
 
         cachedSettings.openTabs = nextURLs
+        cachedSettings.openTabPins = nextPins
         cachedSettings.activeTabIndex = nextActiveIndex
         write(cachedSettings)
     }
@@ -500,9 +517,12 @@ final class AppSettingsStore {
             settings.lastDomain = defaultURL.host ?? "wkdomains.com"
         }
 
-        settings.openTabs = normalizedOpenTabURLs(settings.openTabs)
+        let normalizedTabs = normalizedOpenTabs(settings.openTabs, pinnedFlags: settings.openTabPins)
+        settings.openTabs = normalizedTabs.urls
+        settings.openTabPins = normalizedTabs.pinnedFlags
         if settings.openTabs.isEmpty {
             settings.openTabs = [settings.lastURL]
+            settings.openTabPins = [false]
         }
         if !settings.openTabs.indices.contains(settings.activeTabIndex) {
             settings.activeTabIndex = 0
@@ -537,6 +557,23 @@ final class AppSettingsStore {
         values.compactMap { value in
             validURL(from: value)?.absoluteString
         }
+    }
+
+    nonisolated private static func normalizedOpenTabs(
+        _ values: [String],
+        pinnedFlags: [Bool]
+    ) -> (urls: [String], pinnedFlags: [Bool]) {
+        var urls: [String] = []
+        var normalizedPinnedFlags: [Bool] = []
+
+        for (index, value) in values.enumerated() {
+            guard let url = validURL(from: value) else { continue }
+
+            urls.append(url.absoluteString)
+            normalizedPinnedFlags.append(pinnedFlags.indices.contains(index) ? pinnedFlags[index] : false)
+        }
+
+        return (urls, normalizedPinnedFlags)
     }
 
     nonisolated private static func normalizedHosts(_ values: [String]) -> [String] {

@@ -61,6 +61,7 @@ final class BrowserModel: NSObject, ObservableObject {
         historyURLs = settingsStore.settings.historyURLs
         bookmarkURLs = settingsStore.bookmarkURLs
         let startupURLs = settingsStore.startupURLs
+        let startupTabPins = settingsStore.startupTabPins
         let startupActiveTabIndex = settingsStore.startupActiveTabIndex
         let initialTabs = startupURLs.enumerated().map { index, startupURL in
             let identityID = index == startupActiveTabIndex
@@ -80,7 +81,8 @@ final class BrowserModel: NSObject, ObservableObject {
             return BrowserTabState(
                 webView: webView,
                 cookiePersistence: BrowserCookiePersistence(directoryURL: settingsStore.directoryURL),
-                identityID: identityID
+                identityID: identityID,
+                isPinned: startupTabPins.indices.contains(index) ? startupTabPins[index] : false
             )
         }
         let initialTab = initialTabs[startupActiveTabIndex]
@@ -178,6 +180,9 @@ final class BrowserModel: NSObject, ObservableObject {
         }
         webView.moveTab = { [weak self] sourceID, targetID in
             self?.moveTab(sourceID, to: targetID)
+        }
+        webView.togglePinnedTab = { [weak self] tabID in
+            self?.togglePinnedTab(tabID)
         }
         syncTitlebarTabState()
         webView.viewportSizeDidChange = { [weak self] in
@@ -584,6 +589,7 @@ final class BrowserModel: NSObject, ObservableObject {
         webView.selectTab = nil
         webView.addTab = nil
         webView.moveTab = nil
+        webView.togglePinnedTab = nil
         webView.viewportSizeDidChange = nil
         webView.removeTitlebarTabsAccessory()
 

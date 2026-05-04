@@ -14,6 +14,7 @@ struct BrowserTitlebarTab: Identifiable, Equatable {
     var url: URL?
     var isActive: Bool
     var isLoading: Bool
+    var isPinned: Bool
     var hasAttemptedNavigation: Bool
 }
 
@@ -47,6 +48,9 @@ extension BrowserWKWebView {
                 existingAccessory.moveTab = { [weak self] sourceID, targetID in
                     self?.moveTab?(sourceID, targetID)
                 }
+                existingAccessory.togglePinnedTab = { [weak self] tabID in
+                    self?.togglePinnedTab?(tabID)
+                }
                 window.addTitlebarAccessoryViewController(existingAccessory)
                 titlebarTabsWindow = window
             }
@@ -63,6 +67,9 @@ extension BrowserWKWebView {
             accessory.moveTab = { [weak self] sourceID, targetID in
                 self?.moveTab?(sourceID, targetID)
             }
+            accessory.togglePinnedTab = { [weak self] tabID in
+                self?.togglePinnedTab?(tabID)
+            }
             titlebarTabsAccessory = accessory
             window.addTitlebarAccessoryViewController(accessory)
             titlebarTabsWindow = window
@@ -77,6 +84,9 @@ extension BrowserWKWebView {
         }
         accessory.moveTab = { [weak self] sourceID, targetID in
             self?.moveTab?(sourceID, targetID)
+        }
+        accessory.togglePinnedTab = { [weak self] tabID in
+            self?.togglePinnedTab?(tabID)
         }
     }
 
@@ -105,12 +115,16 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
     var selectTab: ((UUID) -> Void)?
     var addTab: (() -> Void)?
     var moveTab: ((UUID, UUID) -> Void)?
+    var togglePinnedTab: ((UUID) -> Void)?
 
     private static var cachedFavicons: [String: NSImage] = [:]
     private static var requestedFavicons = Set<String>()
     private static var failedFavicons = Set<String>()
     private static let faviconDidUpdate = Notification.Name("BrowserTabsTitlebarFaviconDidUpdate")
-    private let buttonSize: CGFloat = 24
+    private let pinnedTabWidth: CGFloat = 32
+    private let preferredNormalTabWidth: CGFloat = 216
+    private let minimumNormalTabWidth: CGFloat = 116
+    private let newTabButtonWidth: CGFloat = 28
     private let buttonSpacing: CGFloat = 4
     private let horizontalInset: CGFloat = 8
     private let accessoryHeight: CGFloat = 28
@@ -132,7 +146,8 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
             dragState: dragState,
             selectTab: { _ in },
             addTab: {},
-            moveTab: { _, _ in }
+            moveTab: { _, _ in },
+            togglePinnedTab: { _ in }
         ))
         hostingView.frame = NSRect(x: 0, y: 0, width: 0, height: accessoryHeight)
         hostingView.sizingOptions = []
@@ -156,18 +171,22 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
     private func renderButtons() {
         loadViewIfNeeded()
 
-        let width = accessoryWidth(for: tabs.count)
-        view.setFrameSize(NSSize(width: width, height: accessoryHeight))
+        let tabWidth = normalTabWidth(for: tabs)
 
         let items = tabs.map { tab in
             BrowserTitlebarItem(
                 id: tab.id,
+                title: titlebarTitle(for: tab),
                 image: tab.url.flatMap { favicon(for: $0) } ?? placeholderImage(),
                 tooltip: titlebarTooltip(for: tab),
                 isActive: tab.isActive,
-                isLoading: tab.isLoading
+                isLoading: tab.isLoading,
+                isPinned: tab.isPinned,
+                width: tab.isPinned ? pinnedTabWidth : tabWidth
             )
         }
+
+        view.setFrameSize(NSSize(width: accessoryWidth(for: items), height: accessoryHeight))
 
         hostingView?.rootView = BrowserTabsTitlebarView(
             items: items,
@@ -180,6 +199,9 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
             },
             moveTab: { [weak self] sourceID, targetID in
                 self?.moveTab?(sourceID, targetID)
+            },
+            togglePinnedTab: { [weak self] tabID in
+                self?.togglePinnedTab?(tabID)
             }
         )
     }
@@ -253,6 +275,16 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
         let fragment = url.fragment.map { "#\($0)" } ?? ""
         let title = tab.title == BrowserWKWebView.defaultWindowTitle ? host : tab.title
         return "\(title) - \(host)\(path)\(query)\(fragment)"
+    }
+
+    private func titlebarTitle(for tab: BrowserTitlebarTab) -> String {
+        guard !tab.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              tab.title != BrowserWKWebView.defaultWindowTitle
+        else {
+            return tab.url?.host ?? "New Tab"
+        }
+
+        return tab.title
     }
 
     private static func faviconCacheKey(for url: URL) -> String {
@@ -346,19 +378,44 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
         return undersizedPenalty + abs(pixels - preferredPixels)
     }
 
-    private func accessoryWidth(for tabCount: Int) -> CGFloat {
-        let itemCount = tabCount + 1
+    private func normalTabWidth(for tabs: [BrowserTitlebarTab]) -> CGFloat {
+        let normalCount = tabs.filter { !$0.isPinned }.count
+        guard normalCount > 0 else { return preferredNormalTabWidth }
+
+        let pinnedCount = tabs.count - normalCount
+        let windowWidth = view.window?.frame.width ?? 1000
+        let maximumAccessoryWidth = max(360, min(windowWidth - 240, 980))
+        let spacingCount = max(0, tabs.count)
+        let fixedWidth = (horizontalInset * 2)
+            + newTabButtonWidth
+            + (CGFloat(spacingCount) * buttonSpacing)
+            + (CGFloat(pinnedCount) * pinnedTabWidth)
+        let availableNormalWidth = max(
+            minimumNormalTabWidth,
+            (maximumAccessoryWidth - fixedWidth) / CGFloat(normalCount)
+        )
+        return min(preferredNormalTabWidth, max(minimumNormalTabWidth, availableNormalWidth))
+    }
+
+    private func accessoryWidth(for items: [BrowserTitlebarItem]) -> CGFloat {
+        let itemWidth = items.reduce(CGFloat(0)) { partialResult, item in
+            partialResult + item.width
+        }
+        let itemCount = items.count + 1
         let spacing = CGFloat(max(0, itemCount - 1)) * buttonSpacing
-        return (horizontalInset * 2) + (CGFloat(itemCount) * buttonSize) + spacing
+        return (horizontalInset * 2) + itemWidth + newTabButtonWidth + spacing
     }
 }
 
 private struct BrowserTitlebarItem: Identifiable {
     let id: UUID
+    let title: String
     let image: NSImage?
     let tooltip: String
     let isActive: Bool
     let isLoading: Bool
+    let isPinned: Bool
+    let width: CGFloat
 }
 
 private final class BrowserTabsDragState {
@@ -378,6 +435,7 @@ private struct BrowserTabsTitlebarView: View {
     let selectTab: (UUID) -> Void
     let addTab: () -> Void
     let moveTab: (UUID, UUID) -> Void
+    let togglePinnedTab: (UUID) -> Void
 
     var body: some View {
         HStack(spacing: 4) {
@@ -389,6 +447,11 @@ private struct BrowserTabsTitlebarView: View {
                 }
                 .buttonStyle(.plain)
                 .help(item.tooltip)
+                .contextMenu {
+                    Button(item.isPinned ? "Unpin Tab" : "Pin Tab") {
+                        togglePinnedTab(item.id)
+                    }
+                }
                 .onDrag {
                     dragState.dropTargetTabID = nil
                     dragState.draggingTabID = item.id
@@ -408,7 +471,7 @@ private struct BrowserTabsTitlebarView: View {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
+                    .frame(width: 28, height: 24)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -468,10 +531,49 @@ private struct TabIcon: View {
     let item: BrowserTitlebarItem
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(item.isActive ? Color.accentColor.opacity(0.18) : Color.clear)
+        Group {
+            if item.isPinned {
+                pinnedIcon
+            } else {
+                normalTab
+            }
+        }
+        .frame(width: item.width, height: 24)
+        .contentShape(Rectangle())
+    }
 
+    private var pinnedIcon: some View {
+        ZStack {
+            tabBackground
+            favicon
+        }
+    }
+
+    private var normalTab: some View {
+        HStack(spacing: 7) {
+            favicon
+            Text(item.title)
+                .font(.system(size: 12, weight: item.isActive ? .semibold : .medium))
+                .foregroundStyle(item.isActive ? Color.primary : Color.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 9)
+        .background(tabBackground)
+    }
+
+    private var tabBackground: some View {
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .fill(item.isActive ? Color.primary.opacity(0.12) : Color.clear)
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(item.isActive ? Color.primary.opacity(0.13) : Color.clear, lineWidth: 1)
+            }
+    }
+
+    private var favicon: some View {
+        Group {
             if item.isLoading {
                 ProgressView()
                     .controlSize(.small)
@@ -490,7 +592,6 @@ private struct TabIcon: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(width: 24, height: 24)
-        .contentShape(Rectangle())
+        .frame(width: 16, height: 16)
     }
 }

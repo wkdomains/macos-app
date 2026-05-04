@@ -14,6 +14,7 @@ struct BrowserTabItem: Identifiable, Equatable {
     var url: URL?
     var isActive: Bool
     var isLoading: Bool
+    var isPinned: Bool
     var hasAttemptedNavigation: Bool
 }
 
@@ -30,17 +31,20 @@ final class BrowserTabState {
     var errorMessage: String?
     var navigationFallbacks: [URL] = []
     var title = BrowserWKWebView.defaultWindowTitle
+    var isPinned = false
 
     init(
         id: UUID = UUID(),
         webView: BrowserWKWebView,
         cookiePersistence: BrowserCookiePersistence,
-        identityID: UUID?
+        identityID: UUID?,
+        isPinned: Bool = false
     ) {
         self.id = id
         self.webView = webView
         self.cookiePersistence = cookiePersistence
         self.identityID = identityID
+        self.isPinned = isPinned
     }
 }
 
@@ -192,13 +196,36 @@ extension BrowserModel {
     func moveTab(_ sourceID: UUID, to targetID: UUID) {
         guard let sourceIndex = tabStates.firstIndex(where: { $0.id == sourceID }),
               let targetIndex = tabStates.firstIndex(where: { $0.id == targetID }),
-              sourceIndex != targetIndex
+              sourceIndex != targetIndex,
+              tabStates[sourceIndex].isPinned == tabStates[targetIndex].isPinned
         else {
             return
         }
 
         let movedTab = tabStates.remove(at: sourceIndex)
         tabStates.insert(movedTab, at: targetIndex)
+        refreshPublishedTabs()
+        persistOpenTabs()
+    }
+
+    func togglePinnedTab(_ tabID: UUID) {
+        guard let tab = tabStates.first(where: { $0.id == tabID }) else { return }
+        setTab(tabID, pinned: !tab.isPinned)
+    }
+
+    func setTab(_ tabID: UUID, pinned: Bool) {
+        guard let sourceIndex = tabStates.firstIndex(where: { $0.id == tabID }),
+              tabStates[sourceIndex].isPinned != pinned
+        else {
+            return
+        }
+
+        let tab = tabStates.remove(at: sourceIndex)
+        tab.isPinned = pinned
+
+        let targetIndex = tabStates.firstIndex { !$0.isPinned } ?? tabStates.endIndex
+        tabStates.insert(tab, at: targetIndex)
+
         refreshPublishedTabs()
         persistOpenTabs()
     }
@@ -226,6 +253,7 @@ extension BrowserModel {
                 url: tab.webView.url,
                 isActive: tab.id == activeTabID,
                 isLoading: tab.webView.isLoading,
+                isPinned: tab.isPinned,
                 hasAttemptedNavigation: tab.hasAttemptedNavigation
             )
         }
@@ -235,6 +263,7 @@ extension BrowserModel {
 
     func persistOpenTabs() {
         var openTabURLs: [String] = []
+        var openTabPins: [Bool] = []
         var persistedActiveIndex = 0
 
         for tab in tabStates {
@@ -246,9 +275,10 @@ extension BrowserModel {
                 persistedActiveIndex = openTabURLs.count
             }
             openTabURLs.append(urlString)
+            openTabPins.append(tab.isPinned)
         }
 
-        settingsStore.updateOpenTabs(openTabURLs, activeIndex: persistedActiveIndex)
+        settingsStore.updateOpenTabs(openTabURLs, activeIndex: persistedActiveIndex, pinnedFlags: openTabPins)
     }
 
     func syncTitlebarTabState() {
@@ -259,6 +289,7 @@ extension BrowserModel {
                 url: tab.webView.url,
                 isActive: tab.id == activeTabID,
                 isLoading: tab.webView.isLoading,
+                isPinned: tab.isPinned,
                 hasAttemptedNavigation: tab.hasAttemptedNavigation
             )
         }
