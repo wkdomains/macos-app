@@ -22,6 +22,7 @@ struct macos_appApp: App {
         Window("", id: "main") {
             ContentView(browser: appModel.browser)
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {}
             BrowserTabCommands(browser: appModel.browser)

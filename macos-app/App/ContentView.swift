@@ -23,6 +23,15 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            BrowserTabStripView(
+                items: browser.tabs,
+                selectTab: { browser.selectTab($0) },
+                addTab: { browser.addEmptyTab() },
+                moveTab: { browser.moveTab($0, to: $1) },
+                togglePinnedTab: { browser.togglePinnedTab($0) }
+            )
+            .zIndex(20)
+
             browserToolbar
                 .zIndex(10)
             progressBar
@@ -31,8 +40,9 @@ struct ContentView: View {
                 .zIndex(0)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .background(WindowTitleHider())
+        .background(WindowChromeConfigurator())
         .frame(minWidth: 720, minHeight: 520)
+        .ignoresSafeArea(.container, edges: .top)
         .overlay(alignment: .topLeading) {
             Button {
                 focusAddressBar(selectAll: true)
@@ -147,25 +157,27 @@ struct ContentView: View {
     }
 }
 
-private struct WindowTitleHider: NSViewRepresentable {
+private struct WindowChromeConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
-            hideTitle(for: view)
+            configureWindow(for: view)
         }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
-            hideTitle(for: nsView)
+            configureWindow(for: nsView)
         }
     }
 
-    private func hideTitle(for view: NSView) {
+    private func configureWindow(for view: NSView) {
         guard let window = view.window else { return }
         window.title = ""
         window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
     }
 }
 

@@ -125,6 +125,8 @@ final class BrowserWKWebView: WKWebView {
         guard let window else { return }
         window.title = ""
         window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
     }
 
     func configureForcedDarkPageBackground(_ enabled: Bool) {
