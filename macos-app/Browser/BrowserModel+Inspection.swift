@@ -86,6 +86,92 @@ extension BrowserModel {
         }
     }
 
+    func writeCurrentPageFilesToTemporaryDirectory() {
+        let directoryURL = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+
+        do {
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        } catch {
+            showAlert(message: "Could Not Create Directory", detail: error.localizedDescription)
+            return
+        }
+
+        let path = directoryURL.path
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(path, forType: .string)
+
+        Task { @MainActor [weak self] in
+            await self?.writeCurrentPageFiles(to: directoryURL)
+        }
+    }
+
+    private func writeCurrentPageFiles(to directoryURL: URL) async {
+        let dataReader = WebsiteDataReader(browser: self)
+        var failures: [String] = []
+
+        do {
+            let consoleData = try Self.encodedAPIJSON(dataReader.readConsoleMessages())
+            try consoleData.write(to: directoryURL.appendingPathComponent("console.json"), options: .atomic)
+        } catch {
+            failures.append("console.json: \(error.localizedDescription)")
+        }
+
+        let screenshotResult: Result<Data, Error> = await withCheckedContinuation { continuation in
+            dataReader.readScreenshot { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch screenshotResult {
+        case .success(let pngData):
+            do {
+                try pngData.write(to: directoryURL.appendingPathComponent("screenshot.png"), options: .atomic)
+            } catch {
+                failures.append("screenshot.png: \(error.localizedDescription)")
+            }
+        case .failure(let error):
+            failures.append("screenshot.png: \(error.localizedDescription)")
+        }
+
+        let domResult: Result<Any, Error> = await withCheckedContinuation { continuation in
+            dataReader.readDOM { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        do {
+            let domData: Data
+            switch domResult {
+            case .success(let response):
+                domData = try Self.encodedJSONObject(response)
+            case .failure(let error):
+                failures.append("dom.json: \(error.localizedDescription)")
+                domData = try Self.encodedAPIJSON(APIErrorResponse(error: error.localizedDescription))
+            }
+
+            try domData.write(to: directoryURL.appendingPathComponent("dom.json"), options: .atomic)
+        } catch {
+            failures.append("dom.json: \(error.localizedDescription)")
+        }
+
+        if !failures.isEmpty {
+            showAlert(message: "Some Files Could Not Be Written", detail: failures.joined(separator: "\n"))
+        }
+    }
+
+    private static func encodedAPIJSON<T: Encodable>(_ value: T) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(value)
+    }
+
+    private static func encodedJSONObject(_ value: Any) throws -> Data {
+        try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys])
+    }
+
     func consoleMessages() -> [ConsoleMessageRecord] {
         consoleRecords
     }

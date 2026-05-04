@@ -14,5 +14,10 @@
 	<array>
 		<string>/.config/wkdomains/</string>
 	</array>
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+	<array>
+		<string>/tmp/</string>
+		<string>/private/tmp/</string>
+	</array>
 </dict>
 </plist>

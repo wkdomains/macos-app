@@ -61,6 +61,7 @@ protocol BrowserContextMenuDelegate: AnyObject {
     func toggleDarkThemeForCurrentSite()
     func toggleBookmarkForCurrentPage()
     func openXHRFromContextMenu(at index: Int)
+    func writeCurrentPageFilesToTemporaryDirectory()
     var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] { get }
     var xhrContextMenuItems: [XHRContextMenuItem] { get }
     var currentIdentityName: String { get }
@@ -317,6 +318,16 @@ final class BrowserWKWebView: WKWebView {
         let xhrItem = NSMenuItem(title: "XHR", action: nil, keyEquivalent: "")
         xhrItem.submenu = xhrSubmenu()
         menu.addItem(xhrItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let writeFilesItem = NSMenuItem(
+            title: "Write file to /tmp",
+            action: #selector(writeFilesToTemporaryDirectoryFromContextMenu),
+            keyEquivalent: ""
+        )
+        writeFilesItem.target = self
+        menu.addItem(writeFilesItem)
 
         return menu
     }
@@ -607,6 +618,10 @@ final class BrowserWKWebView: WKWebView {
         pasteboard.clearContents()
         pasteboard.setString(linkURL, forType: .string)
         pasteboard.setString(linkURL, forType: .URL)
+    }
+
+    @objc private func writeFilesToTemporaryDirectoryFromContextMenu() {
+        browserContextMenuDelegate?.writeCurrentPageFilesToTemporaryDirectory()
     }
 
     private func reportViewportSizeIfNeeded(_ size: NSSize) {
