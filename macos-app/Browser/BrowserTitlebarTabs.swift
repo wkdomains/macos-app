@@ -361,7 +361,7 @@ struct BrowserTabStripView: View {
     let togglePinnedTab: (UUID) -> Void
 
     @StateObject private var faviconStore = BrowserTabStripFaviconStore()
-    private let trafficLightInset: CGFloat = 250
+    private let trafficLightInset: CGFloat = 137
     private let trailingInset: CGFloat = 10
     private let tabStripHeight: CGFloat = 48
     private let tabHeight: CGFloat = 36
