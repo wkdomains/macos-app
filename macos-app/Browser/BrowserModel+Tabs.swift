@@ -76,6 +76,7 @@ extension BrowserModel {
         }
 
         tab.title = tabTitle(for: webView)
+        persistOpenTabs()
         refreshPublishedTabs()
 
         guard activeTabID == tab.id else { return }
@@ -145,6 +146,7 @@ extension BrowserModel {
         syncWindowTitle(from: tab.webView)
         refreshPublishedTabs()
         syncTitlebarTabState()
+        persistOpenTabs()
     }
 
     func addEmptyTab() {
@@ -152,6 +154,17 @@ extension BrowserModel {
         tabStates.append(tab)
         attachCookiePersistence(to: tab)
         selectTab(tab.id)
+    }
+
+    func restoreOpenTabs(_ urls: [URL]) {
+        guard !urls.isEmpty else {
+            load(settingsStore.startupURL)
+            return
+        }
+
+        for (tab, url) in zip(tabStates, urls) {
+            load(url, in: tab, fallbackURLs: [])
+        }
     }
 
     func closeActiveTab() {
@@ -173,6 +186,7 @@ extension BrowserModel {
         closingTab.observations.removeAll()
         tabStates.remove(at: closingIndex)
         selectTab(nextTabID)
+        persistOpenTabs()
     }
 
     func moveTab(_ sourceID: UUID, to targetID: UUID) {
@@ -186,6 +200,7 @@ extension BrowserModel {
         let movedTab = tabStates.remove(at: sourceIndex)
         tabStates.insert(movedTab, at: targetIndex)
         refreshPublishedTabs()
+        persistOpenTabs()
     }
 
     func makeTab(initialURL: URL?) -> BrowserTabState {
@@ -216,6 +231,24 @@ extension BrowserModel {
         }
 
         syncTitlebarTabState()
+    }
+
+    func persistOpenTabs() {
+        var openTabURLs: [String] = []
+        var persistedActiveIndex = 0
+
+        for tab in tabStates {
+            let urlString = tab.webView.url?.absoluteString
+                ?? (tab.hasAttemptedNavigation ? tab.displayAddressText : nil)
+            guard let urlString, !urlString.isEmpty else { continue }
+
+            if tab.id == activeTabID {
+                persistedActiveIndex = openTabURLs.count
+            }
+            openTabURLs.append(urlString)
+        }
+
+        settingsStore.updateOpenTabs(openTabURLs, activeIndex: persistedActiveIndex)
     }
 
     func syncTitlebarTabState() {

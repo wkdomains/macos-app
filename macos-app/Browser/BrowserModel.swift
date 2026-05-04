@@ -60,28 +60,44 @@ final class BrowserModel: NSObject, ObservableObject {
         loginStore = LoginStore(directoryURL: settingsStore.directoryURL)
         historyURLs = settingsStore.settings.historyURLs
         bookmarkURLs = settingsStore.bookmarkURLs
-        let initialIdentityID = activeIdentityID ?? settingsStore.activeIdentityID(for: settingsStore.startupURL)
+        let startupURLs = settingsStore.startupURLs
+        let startupActiveTabIndex = settingsStore.startupActiveTabIndex
+        let initialTabs = startupURLs.enumerated().map { index, startupURL in
+            let identityID = index == startupActiveTabIndex
+                ? activeIdentityID ?? settingsStore.activeIdentityID(for: startupURL)
+                : settingsStore.activeIdentityID(for: startupURL)
+            let webViewDataStore: WKWebsiteDataStore
+            if index == startupActiveTabIndex, let dataStore {
+                webViewDataStore = dataStore
+            } else {
+                webViewDataStore = Self.websiteDataStore(for: identityID)
+            }
+            let webView = Self.makeWebView(
+                dataStore: webViewDataStore,
+                usesDarkMode: settingsStore.usesDarkMode(for: startupURL)
+            )
 
-        let initialDataStore = dataStore ?? Self.websiteDataStore(for: initialIdentityID)
-        let initialWebView = Self.makeWebView(
-            dataStore: initialDataStore,
-            usesDarkMode: settingsStore.usesDarkMode(for: settingsStore.startupURL)
-        )
-        let initialTab = BrowserTabState(
-            webView: initialWebView,
-            cookiePersistence: BrowserCookiePersistence(directoryURL: settingsStore.directoryURL),
-            identityID: initialIdentityID
-        )
-        tabStates = [initialTab]
+            return BrowserTabState(
+                webView: webView,
+                cookiePersistence: BrowserCookiePersistence(directoryURL: settingsStore.directoryURL),
+                identityID: identityID
+            )
+        }
+        let initialTab = initialTabs[startupActiveTabIndex]
+        tabStates = initialTabs
         activeTabID = initialTab.id
-        webView = initialWebView
+        webView = initialTab.webView
 
         super.init()
 
-        configure(initialTab)
+        for tab in tabStates {
+            configure(tab)
+        }
         refreshSiteIdentityState()
         refreshPublishedTabs()
-        attachCookiePersistence(to: initialTab)
+        for tab in tabStates {
+            attachCookiePersistence(to: tab)
+        }
     }
 
     static func websiteDataStore(for identityID: UUID?) -> WKWebsiteDataStore {
@@ -414,23 +430,31 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     private func load(_ url: URL, fallbackURLs: [URL]) {
-        prepareForLoad(url, fallbackURLs: fallbackURLs)
+        load(url, in: activeTab, fallbackURLs: fallbackURLs)
+    }
 
-        let tab = activeTab
+    func load(_ url: URL, in tab: BrowserTabState, fallbackURLs: [URL]) {
+        prepareForLoad(url, in: tab, fallbackURLs: fallbackURLs)
+
         guard tab.isCookieStoreReady else {
             tab.pendingLoadRequest = (url, fallbackURLs)
             return
         }
 
-        webView.load(URLRequest(url: url))
+        tab.webView.load(URLRequest(url: url))
     }
 
-    private func prepareForLoad(_ url: URL, fallbackURLs: [URL]) {
-        let tab = activeTab
+    private func prepareForLoad(_ url: URL, in tab: BrowserTabState, fallbackURLs: [URL]) {
         tab.hasAttemptedNavigation = true
         tab.errorMessage = nil
         tab.displayAddressText = url.absoluteString
         tab.navigationFallbacks = fallbackURLs
+
+        guard activeTabID == tab.id else {
+            refreshPublishedTabs()
+            persistOpenTabs()
+            return
+        }
 
         hasAttemptedNavigation = true
         errorMessage = nil
@@ -440,6 +464,7 @@ final class BrowserModel: NSObject, ObservableObject {
         resetXHRTracking(for: url)
         refreshDarkModeState(for: url)
         refreshPublishedTabs()
+        persistOpenTabs()
     }
 
     private func replaceWebView(using identityID: UUID?, loading url: URL) {

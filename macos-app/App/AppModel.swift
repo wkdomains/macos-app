@@ -20,6 +20,6 @@ final class AppModel: ObservableObject {
         browser.setLocalAPIBaseURL("http://localhost:\(settingsStore.settings.port)")
         apiServer = LocalAPIServer(browser: browser, settings: settingsStore.settings)
         apiServer.start()
-        browser.load(settingsStore.startupURL)
+        browser.restoreOpenTabs(settingsStore.startupURLs)
     }
 }

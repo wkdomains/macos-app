@@ -34,6 +34,8 @@ struct AppSettings: Codable {
     var port: UInt16
     var lastURL: String
     var lastDomain: String
+    var openTabs: [String]
+    var activeTabIndex: Int
     var historyURLs: [String]
     var dark: Bool
     var darkDisabledSites: [String]
@@ -46,6 +48,8 @@ struct AppSettings: Codable {
             port: defaultPort,
             lastURL: defaultURL,
             lastDomain: URL(string: defaultURL)?.host ?? "wkdomains.com",
+            openTabs: [defaultURL],
+            activeTabIndex: 0,
             historyURLs: [defaultURL],
             dark: true,
             darkDisabledSites: [],
@@ -59,6 +63,8 @@ struct AppSettings: Codable {
         port: UInt16,
         lastURL: String,
         lastDomain: String,
+        openTabs: [String],
+        activeTabIndex: Int,
         historyURLs: [String],
         dark: Bool,
         darkDisabledSites: [String],
@@ -69,6 +75,8 @@ struct AppSettings: Codable {
         self.port = port
         self.lastURL = lastURL
         self.lastDomain = lastDomain
+        self.openTabs = openTabs
+        self.activeTabIndex = activeTabIndex
         self.historyURLs = historyURLs
         self.dark = dark
         self.darkDisabledSites = darkDisabledSites
@@ -85,6 +93,8 @@ struct AppSettings: Codable {
         lastDomain = try container.decodeIfPresent(String.self, forKey: .lastDomain)
             ?? URL(string: Self.defaultURL)?.host
             ?? "wkdomains.com"
+        openTabs = try container.decodeIfPresent([String].self, forKey: .openTabs) ?? []
+        activeTabIndex = try container.decodeIfPresent(Int.self, forKey: .activeTabIndex) ?? 0
         historyURLs = try container.decodeIfPresent([String].self, forKey: .historyURLs) ?? []
         dark = try container.decodeIfPresent(Bool.self, forKey: .dark) ?? true
         darkDisabledSites = try container.decodeIfPresent([String].self, forKey: .darkDisabledSites) ?? []
@@ -129,6 +139,16 @@ final class AppSettingsStore {
 
     var startupURL: URL {
         Self.validURL(from: cachedSettings.lastURL) ?? URL(string: AppSettings.defaultURL)!
+    }
+
+    var startupURLs: [URL] {
+        let urls = cachedSettings.openTabs.compactMap(Self.validURL)
+        return urls.isEmpty ? [startupURL] : urls
+    }
+
+    var startupActiveTabIndex: Int {
+        guard startupURLs.indices.contains(cachedSettings.activeTabIndex) else { return 0 }
+        return cachedSettings.activeTabIndex
     }
 
     var darkDisabledSites: [String] {
@@ -321,6 +341,22 @@ final class AppSettingsStore {
         write(cachedSettings)
     }
 
+    func updateOpenTabs(_ rawURLs: [String], activeIndex: Int) {
+        let urls = Self.normalizedOpenTabURLs(rawURLs)
+        let nextURLs = urls.isEmpty ? [cachedSettings.lastURL] : urls
+        let nextActiveIndex = nextURLs.indices.contains(activeIndex) ? activeIndex : 0
+
+        guard cachedSettings.openTabs != nextURLs
+            || cachedSettings.activeTabIndex != nextActiveIndex
+        else {
+            return
+        }
+
+        cachedSettings.openTabs = nextURLs
+        cachedSettings.activeTabIndex = nextActiveIndex
+        write(cachedSettings)
+    }
+
     private func identity(withID identityID: UUID) -> SiteIdentity? {
         for identities in cachedSettings.siteIdentities.values {
             if let identity = identities.first(where: { $0.id == identityID }) {
@@ -464,6 +500,14 @@ final class AppSettingsStore {
             settings.lastDomain = defaultURL.host ?? "wkdomains.com"
         }
 
+        settings.openTabs = normalizedOpenTabURLs(settings.openTabs)
+        if settings.openTabs.isEmpty {
+            settings.openTabs = [settings.lastURL]
+        }
+        if !settings.openTabs.indices.contains(settings.activeTabIndex) {
+            settings.activeTabIndex = 0
+        }
+
         settings.historyURLs = historyByPrepending(settings.lastURL, to: settings.historyURLs)
         settings.bookmarks = normalizedBookmarkURLs(settings.bookmarks)
         settings.darkDisabledSites = normalizedHosts(settings.darkDisabledSites)
@@ -487,6 +531,12 @@ final class AppSettingsStore {
         }
 
         return urls
+    }
+
+    nonisolated private static func normalizedOpenTabURLs(_ values: [String]) -> [String] {
+        values.compactMap { value in
+            validURL(from: value)?.absoluteString
+        }
     }
 
     nonisolated private static func normalizedHosts(_ values: [String]) -> [String] {
