@@ -13,6 +13,7 @@ import SwiftUI
 @main
 struct macos_appApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var appModel = AppModel()
     @StateObject private var historyFaviconStore = HistoryFaviconStore()
     @StateObject private var bookmarkFaviconStore = HistoryFaviconStore()
@@ -26,6 +27,10 @@ struct macos_appApp: App {
             BrowserTabCommands(browser: appModel.browser)
             BrowserHistoryCommands(browser: appModel.browser, faviconStore: historyFaviconStore)
             BrowserBookmarksCommands(browser: appModel.browser, faviconStore: bookmarkFaviconStore)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase != .active else { return }
+            appModel.browser.saveAllProfileCookiesNow()
         }
     }
 }
@@ -187,7 +192,36 @@ private final class HistoryFaviconStore: ObservableObject {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var isWaitingForCookieFlush = false
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillResignActive(_ notification: Notification) {
+        BrowserCookiePersistence.saveAllProfileCookies()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isWaitingForCookieFlush else {
+            return .terminateLater
+        }
+
+        isWaitingForCookieFlush = true
+        let finishTermination = { [weak self, weak sender] in
+            guard let self,
+                  self.isWaitingForCookieFlush
+            else {
+                return
+            }
+
+            self.isWaitingForCookieFlush = false
+            sender?.reply(toApplicationShouldTerminate: true)
+        }
+
+        BrowserCookiePersistence.saveAllProfileCookies(completion: finishTermination)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: finishTermination)
+
+        return .terminateLater
     }
 }

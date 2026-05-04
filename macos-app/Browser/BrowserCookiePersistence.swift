@@ -28,6 +28,28 @@ final class BrowserCookiePersistence {
         coordinator?.saveNow()
     }
 
+    static func saveAllProfileCookies(completion: (() -> Void)? = nil) {
+        let coordinators = Array(profileCoordinators.values)
+        guard !coordinators.isEmpty else {
+            DispatchQueue.main.async {
+                completion?()
+            }
+            return
+        }
+
+        let group = DispatchGroup()
+        for coordinator in coordinators {
+            group.enter()
+            coordinator.saveNow {
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) {
+            completion?()
+        }
+    }
+
     func removePersistedCookies(matchingHost host: String) {
         (coordinator ?? Self.coordinator(for: profileID, directoryURL: directoryURL))
             .removePersistedCookies(matchingHost: host)
@@ -93,10 +115,14 @@ final class BrowserCookiePersistence {
             restoreCookies(into: cookieStore)
         }
 
-        func saveNow() {
+        func saveNow(completion: (() -> Void)? = nil) {
             saveTask?.cancel()
-            guard let observedCookieStore else { return }
-            saveCookies(from: observedCookieStore)
+            guard let observedCookieStore else {
+                completion?()
+                return
+            }
+
+            saveCookies(from: observedCookieStore, completion: completion)
         }
 
         func removePersistedCookies(matchingHost host: String) {
@@ -143,7 +169,10 @@ final class BrowserCookiePersistence {
             }
         }
 
-        private func saveCookies(from cookieStore: WKHTTPCookieStore) {
+        private func saveCookies(
+            from cookieStore: WKHTTPCookieStore,
+            completion: (() -> Void)? = nil
+        ) {
             let directoryURL = self.directoryURL
             let profileID = self.profileID
             cookieStore.getAllCookies { cookies in
@@ -158,12 +187,30 @@ final class BrowserCookiePersistence {
                         let backupURL = BrowserCookiePersistence.cookieBackupArchiveURL(in: directoryURL, profileID: profileID)
                         let currentCookies = BrowserCookiePersistence.usableCookies(from: cookies)
                         let existingCookies = BrowserCookiePersistence.loadMergedCookies(primaryURL: archiveURL, backupURL: backupURL)
-                        let cookiesToWrite = BrowserCookiePersistence.cookiesForSaving(currentCookies, preserving: existingCookies)
+                        let shouldPreserveExisting = BrowserCookiePersistence.shouldPreserveExisting(
+                            currentCookies,
+                            preserving: existingCookies
+                        )
+                        let cookiesToWrite = shouldPreserveExisting
+                            ? BrowserCookiePersistence.mergeCookies(currentCookies, preserving: existingCookies)
+                            : currentCookies
+
+                        if shouldPreserveExisting {
+                            BrowserCookiePersistence.logPreservedCookieSnapshot(
+                                profileID: profileID,
+                                currentCookies: currentCookies,
+                                existingCookies: existingCookies
+                            )
+                        }
 
                         try BrowserCookiePersistence.backupArchiveIfNeeded(archiveURL: archiveURL, backupURL: backupURL)
                         try BrowserCookiePersistence.writeCookies(cookiesToWrite, to: archiveURL)
                     } catch {
                         NSLog("Could not persist browser cookies: \(error.localizedDescription)")
+                    }
+
+                    DispatchQueue.main.async {
+                        completion?()
                     }
                 }
             }
@@ -390,17 +437,6 @@ final class BrowserCookiePersistence {
         return Int(digits)
     }
 
-    nonisolated private static func cookiesForSaving(
-        _ currentCookies: [HTTPCookie],
-        preserving existingCookies: [HTTPCookie]
-    ) -> [HTTPCookie] {
-        guard shouldPreserveExisting(currentCookies, preserving: existingCookies) else {
-            return currentCookies
-        }
-
-        return mergeCookies(currentCookies, preserving: existingCookies)
-    }
-
     nonisolated private static func shouldPreserveExisting(
         _ currentCookies: [HTTPCookie],
         preserving existingCookies: [HTTPCookie]
@@ -502,6 +538,21 @@ final class BrowserCookiePersistence {
         }
         .filter { googleAuthCookieNames.contains($0.name) }
         .count
+    }
+
+    nonisolated private static func logPreservedCookieSnapshot(
+        profileID: String,
+        currentCookies: [HTTPCookie],
+        existingCookies: [HTTPCookie]
+    ) {
+        NSLog(
+            """
+            Browser cookie snapshot for profile \(profileID) looked partial; preserving archive cookies. \
+            current=\(currentCookies.count), existing=\(existingCookies.count), \
+            currentGoogleAuth=\(googleAuthCookieCount(in: currentCookies)), \
+            existingGoogleAuth=\(googleAuthCookieCount(in: existingCookies))
+            """
+        )
     }
 
     nonisolated private static func stringValue(_ value: Any?) -> String? {

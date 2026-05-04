@@ -102,7 +102,7 @@ final class BrowserModel: NSObject, ObservableObject {
 
     static func websiteDataStore(for identityID: UUID?) -> WKWebsiteDataStore {
         guard let identityID else {
-            return .default()
+            return defaultWebsiteDataStore
         }
 
         if let dataStore = websiteDataStoresByIdentityID[identityID] {
@@ -114,6 +114,7 @@ final class BrowserModel: NSObject, ObservableObject {
         return dataStore
     }
 
+    private static let defaultWebsiteDataStore = WKWebsiteDataStore.default()
     private static var websiteDataStoresByIdentityID: [UUID: WKWebsiteDataStore] = [:]
 
     static func makeWebView(dataStore: WKWebsiteDataStore, usesDarkMode: Bool) -> BrowserWKWebView {
@@ -264,7 +265,11 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     func saveCookiesNow() {
-        activeTab.cookiePersistence.saveNow()
+        saveAllProfileCookiesNow()
+    }
+
+    func saveAllProfileCookiesNow(completion: (() -> Void)? = nil) {
+        BrowserCookiePersistence.saveAllProfileCookies(completion: completion)
     }
 
     func clearCookiesForCurrentDomain() {
