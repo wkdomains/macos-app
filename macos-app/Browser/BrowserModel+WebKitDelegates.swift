@@ -176,6 +176,36 @@ extension BrowserModel: WKNavigationDelegate {
 extension BrowserModel: WKUIDelegate {
     func webView(
         _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
+    ) {
+        let openPanel = NSOpenPanel()
+        let choosesDirectories = parameters.allowsDirectories
+
+        openPanel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        openPanel.canChooseDirectories = choosesDirectories
+        openPanel.canChooseFiles = !choosesDirectories
+        openPanel.canCreateDirectories = false
+        openPanel.resolvesAliases = true
+        openPanel.prompt = choosesDirectories ? "Choose Folder" : "Choose Files"
+        openPanel.message = choosesDirectories
+            ? "Choose a folder to upload."
+            : "Choose files to upload."
+
+        let handleResponse: (NSApplication.ModalResponse) -> Void = { response in
+            completionHandler(response == .OK ? openPanel.urls : nil)
+        }
+
+        if let window = webView.window {
+            openPanel.beginSheetModal(for: window, completionHandler: handleResponse)
+        } else {
+            handleResponse(openPanel.runModal())
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
