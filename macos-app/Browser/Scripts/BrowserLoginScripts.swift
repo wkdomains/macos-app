@@ -191,7 +191,24 @@ extension BrowserModel {
           const setValue = (field, value) => {
             if (!field) return false;
             field.focus({ preventScroll: true });
-            field.value = value;
+
+            const prototype = field instanceof HTMLInputElement
+              ? HTMLInputElement.prototype
+              : field instanceof HTMLTextAreaElement
+                ? HTMLTextAreaElement.prototype
+                : field instanceof HTMLSelectElement
+                  ? HTMLSelectElement.prototype
+                  : null;
+            const valueSetter = prototype
+              ? Object.getOwnPropertyDescriptor(prototype, "value")?.set
+              : null;
+
+            if (valueSetter) {
+              valueSetter.call(field, value);
+            } else {
+              field.value = value;
+            }
+
             field.dispatchEvent(new InputEvent("input", {
               bubbles: true,
               inputType: "insertReplacementText",

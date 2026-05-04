@@ -361,7 +361,7 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     func fillSavedLoginForCurrentSite() {
-        fillSavedLoginForCurrentSite(reportsMissingLogin: true)
+        fillSavedLoginForCurrentSite(reportsMissingLogin: true, remainingAttempts: 4)
     }
 
     var canToggleDarkThemeForCurrentSite: Bool {
@@ -641,7 +641,7 @@ final class BrowserModel: NSObject, ObservableObject {
         pendingLoginPasswordTarget = nil
     }
 
-    func fillSavedLoginForCurrentSite(reportsMissingLogin: Bool) {
+    func fillSavedLoginForCurrentSite(reportsMissingLogin: Bool, remainingAttempts: Int = 4) {
         guard let entry = loginStore.login(for: webView.url, identityID: activeTab.identityID) else {
             if reportsMissingLogin {
                 showAlert(message: "No Saved Login", detail: "There is no saved login for this site yet.")
@@ -668,8 +668,20 @@ final class BrowserModel: NSObject, ObservableObject {
                     return
                 }
 
+                let filled = Self.intValue(from: value) ?? 0
+                if filled < 2,
+                   remainingAttempts > 0
+                {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                        self?.fillSavedLoginForCurrentSite(
+                            reportsMissingLogin: reportsMissingLogin,
+                            remainingAttempts: remainingAttempts - 1
+                        )
+                    }
+                    return
+                }
+
                 if reportsMissingLogin,
-                   let filled = Self.intValue(from: value),
                    filled == 0
                 {
                     self?.showAlert(

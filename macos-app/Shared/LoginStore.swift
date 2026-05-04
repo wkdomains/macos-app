@@ -68,11 +68,14 @@ final class LoginStore {
 
     func login(for url: URL?, identityID: UUID?) -> SavedLoginEntry? {
         guard let host = Self.normalizedHost(for: url) else { return nil }
-        guard let site = sitesByHost[host],
-              let account = site.accounts.first(where: { Self.identityKey($0.identityID) == Self.identityKey(identityID) })
-        else {
+        guard let site = sitesByHost[host] else {
             return nil
         }
+        let requestedAccountKey = Self.identityKey(identityID)
+        let account = site.accounts.first { Self.identityKey($0.identityID) == requestedAccountKey }
+            ?? site.accounts.first { $0.identityID == nil }
+
+        guard let account else { return nil }
 
         return SavedLoginEntry(
             host: site.host,
