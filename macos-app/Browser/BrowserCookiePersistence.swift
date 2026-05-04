@@ -8,153 +8,230 @@
 import Foundation
 import WebKit
 
-final class BrowserCookiePersistence: NSObject {
+final class BrowserCookiePersistence {
     private let directoryURL: URL
     private var profileID = "default"
-    private var observedCookieStore: WKHTTPCookieStore?
-    private var saveTask: Task<Void, Never>?
-    private var isRestoring = false
+    private var coordinator: ProfileCoordinator?
 
     init(directoryURL: URL) {
         self.directoryURL = directoryURL
     }
 
     func attach(to dataStore: WKWebsiteDataStore, identityID: UUID?, completion: @escaping () -> Void) {
-        saveTask?.cancel()
-        if let observedCookieStore {
-            observedCookieStore.remove(self)
-            saveCookies(from: observedCookieStore)
-        }
-
         profileID = Self.profileID(for: identityID)
-        let cookieStore = dataStore.httpCookieStore
-        observedCookieStore = cookieStore
-        cookieStore.add(self)
-
-        restoreCookies(into: cookieStore, completion: completion)
+        let coordinator = Self.coordinator(for: profileID, directoryURL: directoryURL)
+        self.coordinator = coordinator
+        coordinator.attach(to: dataStore.httpCookieStore, completion: completion)
     }
 
     func saveNow() {
-        saveTask?.cancel()
-        guard let observedCookieStore else { return }
-        saveCookies(from: observedCookieStore)
+        coordinator?.saveNow()
     }
 
     func removePersistedCookies(matchingHost host: String) {
-        saveTask?.cancel()
-
-        let profileID = self.profileID
-        let normalizedHost = Self.normalizedHost(host)
-        Self.persistenceQueue.async { [directoryURL] in
-            let archiveURLs = [
-                Self.cookieArchiveURL(in: directoryURL, profileID: profileID),
-                Self.cookieBackupArchiveURL(in: directoryURL, profileID: profileID)
-            ]
-
-            for archiveURL in archiveURLs {
-                let cookies = Self.loadCookies(from: archiveURL)
-                    .filter { !Self.cookie($0, matchesHost: normalizedHost) }
-
-                do {
-                    try Self.writeCookies(cookies, to: archiveURL)
-                } catch {
-                    NSLog("Could not prune persisted browser cookies: \(error.localizedDescription)")
-                }
-            }
-        }
+        (coordinator ?? Self.coordinator(for: profileID, directoryURL: directoryURL))
+            .removePersistedCookies(matchingHost: host)
     }
 
-    private func scheduleSave(from cookieStore: WKHTTPCookieStore) {
-        guard !isRestoring else { return }
+    private static func coordinator(
+        for profileID: String,
+        directoryURL: URL
+    ) -> ProfileCoordinator {
+        let key = ProfileCoordinatorKey(directoryPath: directoryURL.path, profileID: profileID)
+        if let coordinator = profileCoordinators[key] {
+            return coordinator
+        }
 
-        saveTask?.cancel()
-        saveTask = Task { [weak self, weak cookieStore] in
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard !Task.isCancelled,
-                  let self,
-                  let cookieStore
-            else {
+        let coordinator = ProfileCoordinator(directoryURL: directoryURL, profileID: profileID)
+        profileCoordinators[key] = coordinator
+        return coordinator
+    }
+
+    private struct ProfileCoordinatorKey: Hashable {
+        var directoryPath: String
+        var profileID: String
+    }
+
+    private static var profileCoordinators: [ProfileCoordinatorKey: ProfileCoordinator] = [:]
+
+    private final class ProfileCoordinator: NSObject, WKHTTPCookieStoreObserver {
+        private let directoryURL: URL
+        private let profileID: String
+        private var observedCookieStore: WKHTTPCookieStore?
+        private var restoreCompletions: [() -> Void] = []
+        private var hasRestored = false
+        private var isRestoring = false
+        private var saveTask: Task<Void, Never>?
+
+        init(directoryURL: URL, profileID: String) {
+            self.directoryURL = directoryURL
+            self.profileID = profileID
+        }
+
+        func attach(to cookieStore: WKHTTPCookieStore, completion: @escaping () -> Void) {
+            if observedCookieStore !== cookieStore {
+                saveTask?.cancel()
+                if let observedCookieStore {
+                    observedCookieStore.remove(self)
+                    saveCookies(from: observedCookieStore)
+                }
+
+                observedCookieStore = cookieStore
+                cookieStore.add(self)
+                hasRestored = false
+                isRestoring = false
+            }
+
+            guard !hasRestored else {
+                completion()
                 return
             }
 
-            self.saveCookies(from: cookieStore)
+            restoreCompletions.append(completion)
+            guard !isRestoring else { return }
+
+            restoreCookies(into: cookieStore)
         }
-    }
 
-    private func saveCookies(from cookieStore: WKHTTPCookieStore) {
-        let profileID = self.profileID
-        cookieStore.getAllCookies { [directoryURL] cookies in
-            Self.persistenceQueue.async {
-                do {
-                    try FileManager.default.createDirectory(
-                        at: directoryURL,
-                        withIntermediateDirectories: true
-                    )
+        func saveNow() {
+            saveTask?.cancel()
+            guard let observedCookieStore else { return }
+            saveCookies(from: observedCookieStore)
+        }
 
-                    let archiveURL = Self.cookieArchiveURL(in: directoryURL, profileID: profileID)
-                    let backupURL = Self.cookieBackupArchiveURL(in: directoryURL, profileID: profileID)
-                    let currentCookies = Self.usableCookies(from: cookies)
-                    let existingCookies = Self.loadMergedCookies(primaryURL: archiveURL, backupURL: backupURL)
-                    let cookiesToWrite = Self.cookiesForSaving(currentCookies, preserving: existingCookies)
+        func removePersistedCookies(matchingHost host: String) {
+            saveTask?.cancel()
 
-                    try Self.backupArchiveIfNeeded(archiveURL: archiveURL, backupURL: backupURL)
-                    try Self.writeCookies(cookiesToWrite, to: archiveURL)
-                } catch {
-                    NSLog("Could not persist browser cookies: \(error.localizedDescription)")
+            let normalizedHost = BrowserCookiePersistence.normalizedHost(host)
+            BrowserCookiePersistence.persistenceQueue.async { [directoryURL, profileID] in
+                let archiveURLs = [
+                    BrowserCookiePersistence.cookieArchiveURL(in: directoryURL, profileID: profileID),
+                    BrowserCookiePersistence.cookieBackupArchiveURL(in: directoryURL, profileID: profileID)
+                ]
+
+                for archiveURL in archiveURLs {
+                    let cookies = BrowserCookiePersistence.loadCookies(from: archiveURL)
+                        .filter { !BrowserCookiePersistence.cookie($0, matchesHost: normalizedHost) }
+
+                    do {
+                        try BrowserCookiePersistence.writeCookies(cookies, to: archiveURL)
+                    } catch {
+                        NSLog("Could not prune persisted browser cookies: \(error.localizedDescription)")
+                    }
                 }
             }
         }
-    }
 
-    private func restoreCookies(into cookieStore: WKHTTPCookieStore, completion: @escaping () -> Void) {
-        let profileID = self.profileID
-        Self.persistenceQueue.async { [directoryURL] in
-            let archiveURL = Self.cookieArchiveURL(in: directoryURL, profileID: profileID)
-            let backupURL = Self.cookieBackupArchiveURL(in: directoryURL, profileID: profileID)
-            let cookies = Self.loadMergedCookies(primaryURL: archiveURL, backupURL: backupURL)
+        func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+            scheduleSave(from: cookieStore)
+        }
 
-            DispatchQueue.main.async { [weak self, weak cookieStore] in
-                guard let self,
-                      self.profileID == profileID,
+        private func scheduleSave(from cookieStore: WKHTTPCookieStore) {
+            guard !isRestoring else { return }
+
+            saveTask?.cancel()
+            saveTask = Task { [weak self, weak cookieStore] in
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                guard !Task.isCancelled,
+                      let self,
                       let cookieStore
                 else {
-                    completion()
                     return
                 }
 
-                self.restore(cookies, into: cookieStore, completion: completion)
-            }
-        }
-    }
-
-    private func restore(
-        _ cookies: [HTTPCookie],
-        into cookieStore: WKHTTPCookieStore,
-        completion: @escaping () -> Void
-    ) {
-        guard !cookies.isEmpty else {
-            completion()
-            return
-        }
-
-        isRestoring = true
-        let group = DispatchGroup()
-
-        for cookie in cookies {
-            guard !cookie.isExpired else { continue }
-
-            group.enter()
-            cookieStore.setCookie(cookie) {
-                group.leave()
+                self.saveCookies(from: cookieStore)
             }
         }
 
-        group.notify(queue: .main) { [weak self, weak cookieStore] in
-            self?.isRestoring = false
-            if let cookieStore {
-                self?.scheduleSave(from: cookieStore)
+        private func saveCookies(from cookieStore: WKHTTPCookieStore) {
+            let directoryURL = self.directoryURL
+            let profileID = self.profileID
+            cookieStore.getAllCookies { cookies in
+                BrowserCookiePersistence.persistenceQueue.async {
+                    do {
+                        try FileManager.default.createDirectory(
+                            at: directoryURL,
+                            withIntermediateDirectories: true
+                        )
+
+                        let archiveURL = BrowserCookiePersistence.cookieArchiveURL(in: directoryURL, profileID: profileID)
+                        let backupURL = BrowserCookiePersistence.cookieBackupArchiveURL(in: directoryURL, profileID: profileID)
+                        let currentCookies = BrowserCookiePersistence.usableCookies(from: cookies)
+                        let existingCookies = BrowserCookiePersistence.loadMergedCookies(primaryURL: archiveURL, backupURL: backupURL)
+                        let cookiesToWrite = BrowserCookiePersistence.cookiesForSaving(currentCookies, preserving: existingCookies)
+
+                        try BrowserCookiePersistence.backupArchiveIfNeeded(archiveURL: archiveURL, backupURL: backupURL)
+                        try BrowserCookiePersistence.writeCookies(cookiesToWrite, to: archiveURL)
+                    } catch {
+                        NSLog("Could not persist browser cookies: \(error.localizedDescription)")
+                    }
+                }
             }
-            completion()
+        }
+
+        private func restoreCookies(into cookieStore: WKHTTPCookieStore) {
+            isRestoring = true
+
+            let directoryURL = self.directoryURL
+            let profileID = self.profileID
+            BrowserCookiePersistence.persistenceQueue.async {
+                let archiveURL = BrowserCookiePersistence.cookieArchiveURL(in: directoryURL, profileID: profileID)
+                let backupURL = BrowserCookiePersistence.cookieBackupArchiveURL(in: directoryURL, profileID: profileID)
+                let cookies = BrowserCookiePersistence.loadMergedCookies(primaryURL: archiveURL, backupURL: backupURL)
+
+                DispatchQueue.main.async { [weak self, weak cookieStore] in
+                    guard let self,
+                          let cookieStore,
+                          self.observedCookieStore === cookieStore
+                    else {
+                        return
+                    }
+
+                    self.restore(cookies, into: cookieStore)
+                }
+            }
+        }
+
+        private func restore(
+            _ cookies: [HTTPCookie],
+            into cookieStore: WKHTTPCookieStore
+        ) {
+            guard !cookies.isEmpty else {
+                finishRestore(cookieStore: cookieStore)
+                return
+            }
+
+            let group = DispatchGroup()
+
+            for cookie in cookies {
+                guard !cookie.isExpired else { continue }
+
+                group.enter()
+                cookieStore.setCookie(cookie) {
+                    group.leave()
+                }
+            }
+
+            group.notify(queue: .main) { [weak self, weak cookieStore] in
+                guard let self,
+                      let cookieStore
+                else {
+                    return
+                }
+
+                self.finishRestore(cookieStore: cookieStore)
+            }
+        }
+
+        private func finishRestore(cookieStore: WKHTTPCookieStore) {
+            isRestoring = false
+            hasRestored = true
+
+            let completions = restoreCompletions
+            restoreCompletions.removeAll()
+
+            scheduleSave(from: cookieStore)
+            completions.forEach { $0() }
         }
     }
 
@@ -555,12 +632,6 @@ final class BrowserCookiePersistence: NSObject {
 
             return HTTPCookie(properties: properties)
         }
-    }
-}
-
-extension BrowserCookiePersistence: WKHTTPCookieStoreObserver {
-    func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
-        scheduleSave(from: cookieStore)
     }
 }
 

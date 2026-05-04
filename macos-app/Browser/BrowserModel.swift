@@ -105,8 +105,16 @@ final class BrowserModel: NSObject, ObservableObject {
             return .default()
         }
 
-        return WKWebsiteDataStore(forIdentifier: identityID)
+        if let dataStore = websiteDataStoresByIdentityID[identityID] {
+            return dataStore
+        }
+
+        let dataStore = WKWebsiteDataStore(forIdentifier: identityID)
+        websiteDataStoresByIdentityID[identityID] = dataStore
+        return dataStore
     }
+
+    private static var websiteDataStoresByIdentityID: [UUID: WKWebsiteDataStore] = [:]
 
     static func makeWebView(dataStore: WKWebsiteDataStore, usesDarkMode: Bool) -> BrowserWKWebView {
         let configuration = WKWebViewConfiguration()
