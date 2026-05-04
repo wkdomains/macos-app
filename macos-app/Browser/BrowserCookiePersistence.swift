@@ -19,6 +19,11 @@ final class BrowserCookiePersistence {
 
     func attach(to dataStore: WKWebsiteDataStore, identityID: UUID?, completion: @escaping () -> Void) {
         profileID = Self.profileID(for: identityID)
+        BrowserSessionDiagnostics.log(
+            "cookie attach requested profile=\(profileID)",
+            directoryURL: directoryURL
+        )
+
         let coordinator = Self.coordinator(for: profileID, directoryURL: directoryURL)
         self.coordinator = coordinator
         coordinator.attach(to: dataStore.httpCookieStore, completion: completion)
@@ -35,6 +40,13 @@ final class BrowserCookiePersistence {
                 completion?()
             }
             return
+        }
+
+        for coordinator in coordinators {
+            BrowserSessionDiagnostics.log(
+                "save all profiles requested coordinatorCount=\(coordinators.count)",
+                directoryURL: coordinator.directoryURL
+            )
         }
 
         let group = DispatchGroup()
@@ -88,12 +100,20 @@ final class BrowserCookiePersistence {
         init(directoryURL: URL, profileID: String) {
             self.directoryURL = directoryURL
             self.profileID = profileID
+            BrowserSessionDiagnostics.log(
+                "cookie coordinator created profile=\(profileID)",
+                directoryURL: directoryURL
+            )
         }
 
         func attach(to cookieStore: WKHTTPCookieStore, completion: @escaping () -> Void) {
             if observedCookieStore !== cookieStore {
                 saveTask?.cancel()
                 if let observedCookieStore {
+                    BrowserSessionDiagnostics.log(
+                        "cookie store replaced profile=\(profileID); saving previous store",
+                        directoryURL: directoryURL
+                    )
                     observedCookieStore.remove(self)
                     saveCookies(from: observedCookieStore)
                 }
@@ -102,15 +122,29 @@ final class BrowserCookiePersistence {
                 cookieStore.add(self)
                 hasRestored = false
                 isRestoring = false
+                BrowserSessionDiagnostics.log(
+                    "cookie store attached profile=\(profileID)",
+                    directoryURL: directoryURL
+                )
             }
 
             guard !hasRestored else {
+                BrowserSessionDiagnostics.log(
+                    "cookie restore skipped profile=\(profileID) reason=already-restored",
+                    directoryURL: directoryURL
+                )
                 completion()
                 return
             }
 
             restoreCompletions.append(completion)
-            guard !isRestoring else { return }
+            guard !isRestoring else {
+                BrowserSessionDiagnostics.log(
+                    "cookie restore queued profile=\(profileID) pendingCompletions=\(restoreCompletions.count)",
+                    directoryURL: directoryURL
+                )
+                return
+            }
 
             restoreCookies(into: cookieStore)
         }
@@ -118,10 +152,18 @@ final class BrowserCookiePersistence {
         func saveNow(completion: (() -> Void)? = nil) {
             saveTask?.cancel()
             guard let observedCookieStore else {
+                BrowserSessionDiagnostics.log(
+                    "cookie save skipped profile=\(profileID) reason=no-observed-store",
+                    directoryURL: directoryURL
+                )
                 completion?()
                 return
             }
 
+            BrowserSessionDiagnostics.log(
+                "cookie save requested profile=\(profileID)",
+                directoryURL: directoryURL
+            )
             saveCookies(from: observedCookieStore, completion: completion)
         }
 
@@ -136,12 +178,25 @@ final class BrowserCookiePersistence {
                 ]
 
                 for archiveURL in archiveURLs {
-                    let cookies = BrowserCookiePersistence.loadCookies(from: archiveURL)
-                        .filter { !BrowserCookiePersistence.cookie($0, matchesHost: normalizedHost) }
+                    let previousCookies = BrowserCookiePersistence.loadCookies(from: archiveURL)
+                    let cookies = previousCookies.filter {
+                        !BrowserCookiePersistence.cookie($0, matchesHost: normalizedHost)
+                    }
 
                     do {
                         try BrowserCookiePersistence.writeCookies(cookies, to: archiveURL)
+                        BrowserSessionDiagnostics.log(
+                            """
+                            cookie archive pruned profile=\(profileID) host=\(normalizedHost) \
+                            file=\(archiveURL.lastPathComponent) before=\(previousCookies.count) after=\(cookies.count)
+                            """,
+                            directoryURL: directoryURL
+                        )
                     } catch {
+                        BrowserSessionDiagnostics.log(
+                            "cookie archive prune failed profile=\(profileID) host=\(normalizedHost) file=\(archiveURL.lastPathComponent) error=\(error.localizedDescription)",
+                            directoryURL: directoryURL
+                        )
                         NSLog("Could not prune persisted browser cookies: \(error.localizedDescription)")
                     }
                 }
@@ -198,6 +253,7 @@ final class BrowserCookiePersistence {
                         if shouldPreserveExisting {
                             BrowserCookiePersistence.logPreservedCookieSnapshot(
                                 profileID: profileID,
+                                directoryURL: directoryURL,
                                 currentCookies: currentCookies,
                                 existingCookies: existingCookies
                             )
@@ -205,7 +261,21 @@ final class BrowserCookiePersistence {
 
                         try BrowserCookiePersistence.backupArchiveIfNeeded(archiveURL: archiveURL, backupURL: backupURL)
                         try BrowserCookiePersistence.writeCookies(cookiesToWrite, to: archiveURL)
+                        BrowserSessionDiagnostics.log(
+                            """
+                            cookie save completed profile=\(profileID) current=\(currentCookies.count) \
+                            existing=\(existingCookies.count) written=\(cookiesToWrite.count) \
+                            currentGoogleAuth=\(BrowserCookiePersistence.googleAuthCookieCount(in: currentCookies)) \
+                            writtenGoogleAuth=\(BrowserCookiePersistence.googleAuthCookieCount(in: cookiesToWrite)) \
+                            preserved=\(shouldPreserveExisting)
+                            """,
+                            directoryURL: directoryURL
+                        )
                     } catch {
+                        BrowserSessionDiagnostics.log(
+                            "cookie save failed profile=\(profileID) error=\(error.localizedDescription)",
+                            directoryURL: directoryURL
+                        )
                         NSLog("Could not persist browser cookies: \(error.localizedDescription)")
                     }
 
@@ -224,7 +294,23 @@ final class BrowserCookiePersistence {
             BrowserCookiePersistence.persistenceQueue.async {
                 let archiveURL = BrowserCookiePersistence.cookieArchiveURL(in: directoryURL, profileID: profileID)
                 let backupURL = BrowserCookiePersistence.cookieBackupArchiveURL(in: directoryURL, profileID: profileID)
-                let cookies = BrowserCookiePersistence.loadMergedCookies(primaryURL: archiveURL, backupURL: backupURL)
+                let primaryCookies = BrowserCookiePersistence.loadCookies(from: archiveURL)
+                let backupCookies = BrowserCookiePersistence.loadCookies(from: backupURL)
+                let cookies = BrowserCookiePersistence.shouldPreserveExisting(
+                    primaryCookies,
+                    preserving: backupCookies
+                )
+                    ? BrowserCookiePersistence.mergeCookies(primaryCookies, preserving: backupCookies)
+                    : primaryCookies
+
+                BrowserSessionDiagnostics.log(
+                    """
+                    cookie restore loaded profile=\(profileID) primary=\(primaryCookies.count) \
+                    backup=\(backupCookies.count) merged=\(cookies.count) \
+                    mergedGoogleAuth=\(BrowserCookiePersistence.googleAuthCookieCount(in: cookies))
+                    """,
+                    directoryURL: directoryURL
+                )
 
                 DispatchQueue.main.async { [weak self, weak cookieStore] in
                     guard let self,
@@ -277,6 +363,10 @@ final class BrowserCookiePersistence {
             let completions = restoreCompletions
             restoreCompletions.removeAll()
 
+            BrowserSessionDiagnostics.log(
+                "cookie restore finished profile=\(profileID) completionCount=\(completions.count)",
+                directoryURL: directoryURL
+            )
             scheduleSave(from: cookieStore)
             completions.forEach { $0() }
         }
@@ -542,9 +632,19 @@ final class BrowserCookiePersistence {
 
     nonisolated private static func logPreservedCookieSnapshot(
         profileID: String,
+        directoryURL: URL,
         currentCookies: [HTTPCookie],
         existingCookies: [HTTPCookie]
     ) {
+        BrowserSessionDiagnostics.log(
+            """
+            cookie snapshot preserved profile=\(profileID) current=\(currentCookies.count) \
+            existing=\(existingCookies.count) currentGoogleAuth=\(googleAuthCookieCount(in: currentCookies)) \
+            existingGoogleAuth=\(googleAuthCookieCount(in: existingCookies))
+            """,
+            directoryURL: directoryURL
+        )
+
         NSLog(
             """
             Browser cookie snapshot for profile \(profileID) looked partial; preserving archive cookies. \
@@ -690,5 +790,69 @@ private extension HTTPCookie {
     nonisolated var isExpired: Bool {
         guard let expiresDate else { return false }
         return expiresDate <= Date()
+    }
+}
+
+enum BrowserSessionDiagnostics {
+    nonisolated private static let queue = DispatchQueue(label: "com.wkdomains.browser.session-diagnostics")
+    nonisolated private static let logFileName = "session.log"
+    nonisolated private static let rotatedLogFileName = "session.log.1"
+    nonisolated private static let maxLogFileBytes: UInt64 = 1_000_000
+
+    nonisolated static func log(_ message: String, directoryURL: URL) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let sanitizedMessage = message
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .joined(separator: " ")
+        let line = "\(timestamp) \(sanitizedMessage)\n"
+
+        queue.async {
+            append(line, directoryURL: directoryURL)
+        }
+    }
+
+    nonisolated private static func append(_ line: String, directoryURL: URL) {
+        let fileManager = FileManager.default
+        let logURL = directoryURL.appendingPathComponent(logFileName)
+        let rotatedLogURL = directoryURL.appendingPathComponent(rotatedLogFileName)
+
+        do {
+            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            try rotateLogIfNeeded(logURL: logURL, rotatedLogURL: rotatedLogURL, incomingByteCount: UInt64(line.utf8.count))
+
+            if !fileManager.fileExists(atPath: logURL.path) {
+                fileManager.createFile(atPath: logURL.path, contents: nil)
+            }
+
+            let handle = try FileHandle(forWritingTo: logURL)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            if let data = line.data(using: .utf8) {
+                try handle.write(contentsOf: data)
+            }
+        } catch {
+            NSLog("Could not write browser session diagnostics: \(error.localizedDescription)")
+        }
+    }
+
+    nonisolated private static func rotateLogIfNeeded(
+        logURL: URL,
+        rotatedLogURL: URL,
+        incomingByteCount: UInt64
+    ) throws {
+        let fileManager = FileManager.default
+        guard let fileSize = try? fileManager
+            .attributesOfItem(atPath: logURL.path)[.size] as? UInt64,
+            fileSize + incomingByteCount > maxLogFileBytes
+        else {
+            return
+        }
+
+        if fileManager.fileExists(atPath: rotatedLogURL.path) {
+            try fileManager.removeItem(at: rotatedLogURL)
+        }
+
+        try fileManager.moveItem(at: logURL, to: rotatedLogURL)
     }
 }

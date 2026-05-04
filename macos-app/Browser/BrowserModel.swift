@@ -102,15 +102,27 @@ final class BrowserModel: NSObject, ObservableObject {
 
     static func websiteDataStore(for identityID: UUID?) -> WKWebsiteDataStore {
         guard let identityID else {
+            BrowserSessionDiagnostics.log(
+                "webkit data store selected profile=default kind=default",
+                directoryURL: AppSettingsStore.shared.directoryURL
+            )
             return defaultWebsiteDataStore
         }
 
         if let dataStore = websiteDataStoresByIdentityID[identityID] {
+            BrowserSessionDiagnostics.log(
+                "webkit data store selected profile=\(identityID.uuidString.lowercased()) kind=identity cached=true",
+                directoryURL: AppSettingsStore.shared.directoryURL
+            )
             return dataStore
         }
 
         let dataStore = WKWebsiteDataStore(forIdentifier: identityID)
         websiteDataStoresByIdentityID[identityID] = dataStore
+        BrowserSessionDiagnostics.log(
+            "webkit data store selected profile=\(identityID.uuidString.lowercased()) kind=identity cached=false",
+            directoryURL: AppSettingsStore.shared.directoryURL
+        )
         return dataStore
     }
 
