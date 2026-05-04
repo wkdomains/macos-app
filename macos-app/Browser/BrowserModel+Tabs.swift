@@ -107,12 +107,7 @@ extension BrowserModel {
         refreshPublishedTabs()
 
         guard activeTabID == tab.id else { return }
-
-        if tab.title != BrowserWKWebView.defaultWindowTitle {
-            self.webView.browserWindowTitle = tab.title
-        } else {
-            self.webView.browserWindowTitle = BrowserWKWebView.defaultWindowTitle
-        }
+        self.webView.browserWindowTitle = BrowserWKWebView.defaultWindowTitle
     }
 
     func tabTitle(for webView: WKWebView) -> String {

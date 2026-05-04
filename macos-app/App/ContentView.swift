@@ -31,6 +31,7 @@ struct ContentView: View {
                 .zIndex(0)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .background(WindowTitleHider())
         .frame(minWidth: 720, minHeight: 520)
         .overlay(alignment: .topLeading) {
             Button {
@@ -143,6 +144,28 @@ struct ContentView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .background(.bar)
+    }
+}
+
+private struct WindowTitleHider: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            hideTitle(for: view)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            hideTitle(for: nsView)
+        }
+    }
+
+    private func hideTitle(for view: NSView) {
+        guard let window = view.window else { return }
+        window.title = ""
+        window.titleVisibility = .hidden
     }
 }
 

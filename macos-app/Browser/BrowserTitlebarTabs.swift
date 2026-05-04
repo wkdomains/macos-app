@@ -121,13 +121,13 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
     private static var requestedFavicons = Set<String>()
     private static var failedFavicons = Set<String>()
     private static let faviconDidUpdate = Notification.Name("BrowserTabsTitlebarFaviconDidUpdate")
-    private let pinnedTabWidth: CGFloat = 32
+    private let pinnedTabWidth: CGFloat = 36
     private let preferredNormalTabWidth: CGFloat = 216
     private let minimumNormalTabWidth: CGFloat = 116
-    private let newTabButtonWidth: CGFloat = 28
+    private let newTabButtonWidth: CGFloat = 36
     private let buttonSpacing: CGFloat = 4
     private let horizontalInset: CGFloat = 8
-    private let accessoryHeight: CGFloat = 28
+    private let accessoryHeight: CGFloat = 40
     private static let faviconPointSize: CGFloat = 16
     private static let faviconPixelSize = 32
     private var hostingView: BrowserTabsTitlebarHostingView?
@@ -149,6 +149,7 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
             moveTab: { _, _ in },
             togglePinnedTab: { _ in }
         ))
+        hostingView.preferredContentSize = NSSize(width: 0, height: accessoryHeight)
         hostingView.frame = NSRect(x: 0, y: 0, width: 0, height: accessoryHeight)
         hostingView.sizingOptions = []
         self.hostingView = hostingView
@@ -186,7 +187,10 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
             )
         }
 
-        view.setFrameSize(NSSize(width: accessoryWidth(for: items), height: accessoryHeight))
+        let contentSize = NSSize(width: accessoryWidth(for: items), height: accessoryHeight)
+        preferredContentSize = contentSize
+        hostingView?.preferredContentSize = contentSize
+        view.setFrameSize(contentSize)
 
         hostingView?.rootView = BrowserTabsTitlebarView(
             items: items,
@@ -424,6 +428,16 @@ private final class BrowserTabsDragState {
 }
 
 private final class BrowserTabsTitlebarHostingView: NSHostingView<BrowserTabsTitlebarView> {
+    var preferredContentSize = NSSize.zero {
+        didSet {
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        preferredContentSize
+    }
+
     override var mouseDownCanMoveWindow: Bool {
         false
     }
@@ -471,14 +485,15 @@ private struct BrowserTabsTitlebarView: View {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 24)
+                    .frame(width: 36, height: 34)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("New Tab")
         }
         .padding(.horizontal, 8)
-        .frame(height: 28)
+        .frame(height: 40)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -538,7 +553,7 @@ private struct TabIcon: View {
                 normalTab
             }
         }
-        .frame(width: item.width, height: 24)
+        .frame(width: item.width, height: 34)
         .contentShape(Rectangle())
     }
 
@@ -553,7 +568,7 @@ private struct TabIcon: View {
         HStack(spacing: 7) {
             favicon
             Text(item.title)
-                .font(.system(size: 12, weight: item.isActive ? .semibold : .medium))
+                .font(.system(size: 13, weight: item.isActive ? .semibold : .medium))
                 .foregroundStyle(item.isActive ? Color.primary : Color.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -564,10 +579,10 @@ private struct TabIcon: View {
     }
 
     private var tabBackground: some View {
-        RoundedRectangle(cornerRadius: 7, style: .continuous)
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
             .fill(item.isActive ? Color.primary.opacity(0.12) : Color.clear)
             .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(item.isActive ? Color.primary.opacity(0.13) : Color.clear, lineWidth: 1)
             }
     }

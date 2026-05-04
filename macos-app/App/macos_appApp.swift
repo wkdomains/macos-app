@@ -19,7 +19,7 @@ struct macos_appApp: App {
     @StateObject private var bookmarkFaviconStore = HistoryFaviconStore()
 
     var body: some Scene {
-        Window("wkdomains", id: "main") {
+        Window("", id: "main") {
             ContentView(browser: appModel.browser)
         }
         .commands {

@@ -73,13 +73,13 @@ protocol BrowserContextMenuDelegate: AnyObject {
 }
 
 final class BrowserWKWebView: WKWebView {
-    static let defaultWindowTitle = "wkdomains"
+    static let defaultWindowTitle = ""
 
     weak var browserContextMenuDelegate: BrowserContextMenuDelegate?
     var blocksProgrammaticFocus = false
     var browserWindowTitle = BrowserWKWebView.defaultWindowTitle {
         didSet {
-            window?.title = browserWindowTitle
+            hideWindowTitle()
         }
     }
     var titlebarTabs: [BrowserTitlebarTab] = [] {
@@ -116,9 +116,15 @@ final class BrowserWKWebView: WKWebView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        window?.title = browserWindowTitle
+        hideWindowTitle()
         configureDescendantScrollViewBackgrounds()
         updateTitlebarTabsAccessory()
+    }
+
+    private func hideWindowTitle() {
+        guard let window else { return }
+        window.title = ""
+        window.titleVisibility = .hidden
     }
 
     func configureForcedDarkPageBackground(_ enabled: Bool) {
