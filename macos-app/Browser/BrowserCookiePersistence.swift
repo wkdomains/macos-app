@@ -43,10 +43,7 @@ final class BrowserCookiePersistence {
         }
 
         for coordinator in coordinators {
-            BrowserSessionDiagnostics.log(
-                "save all profiles requested coordinatorCount=\(coordinators.count)",
-                directoryURL: coordinator.directoryURL
-            )
+            coordinator.logSaveAllRequested(coordinatorCount: coordinators.count)
         }
 
         let group = DispatchGroup()
@@ -102,6 +99,13 @@ final class BrowserCookiePersistence {
             self.profileID = profileID
             BrowserSessionDiagnostics.log(
                 "cookie coordinator created profile=\(profileID)",
+                directoryURL: directoryURL
+            )
+        }
+
+        func logSaveAllRequested(coordinatorCount: Int) {
+            BrowserSessionDiagnostics.log(
+                "save all profiles requested coordinatorCount=\(coordinatorCount)",
                 directoryURL: directoryURL
             )
         }
