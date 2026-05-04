@@ -153,8 +153,22 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
-        .background(.bar)
+        .background(BrowserChromeColors.navigationBackground)
     }
+}
+
+enum BrowserChromeColors {
+    static let tabStripBackground = Color(
+        red: 31 / 255,
+        green: 29 / 255,
+        blue: 37 / 255
+    )
+
+    static let navigationBackground = Color(
+        red: 43 / 255,
+        green: 41 / 255,
+        blue: 50 / 255
+    )
 }
 
 private struct WindowChromeConfigurator: NSViewRepresentable {

@@ -427,7 +427,7 @@ struct BrowserTabStripView: View {
             .frame(width: proxy.size.width, height: tabStripHeight, alignment: .leading)
         }
         .frame(height: tabStripHeight)
-        .background(.bar)
+        .background(BrowserChromeColors.tabStripBackground)
     }
 
     private func normalTabWidth(for availableWidth: CGFloat) -> CGFloat {
