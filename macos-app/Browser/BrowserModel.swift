@@ -262,6 +262,7 @@ final class BrowserModel: NSObject, ObservableObject {
     func clearCookiesForCurrentDomain() {
         guard let host = webView.url?.host?.lowercased() else { return }
         let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+        let cookiePersistence = activeTab.cookiePersistence
 
         cookieStore.getAllCookies { cookies in
             let matchingCookies = cookies.filter { cookie in
@@ -277,6 +278,8 @@ final class BrowserModel: NSObject, ObservableObject {
             for cookie in matchingCookies {
                 cookieStore.delete(cookie)
             }
+
+            cookiePersistence.removePersistedCookies(matchingHost: host)
         }
     }
 
