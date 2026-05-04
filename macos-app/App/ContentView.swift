@@ -178,6 +178,28 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
+        positionTrafficLights(in: window)
+    }
+
+    private func positionTrafficLights(in window: NSWindow) {
+        let xPositions: [NSWindow.ButtonType: CGFloat] = [
+            .closeButton: 16,
+            .miniaturizeButton: 46,
+            .zoomButton: 76
+        ]
+
+        for (buttonType, xPosition) in xPositions {
+            guard let button = window.standardWindowButton(buttonType),
+                  let superview = button.superview
+            else {
+                continue
+            }
+
+            button.setFrameOrigin(NSPoint(
+                x: xPosition,
+                y: superview.bounds.height - 32
+            ))
+        }
     }
 }
 

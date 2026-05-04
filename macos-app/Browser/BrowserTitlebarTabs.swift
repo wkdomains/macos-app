@@ -361,9 +361,9 @@ struct BrowserTabStripView: View {
     let togglePinnedTab: (UUID) -> Void
 
     @StateObject private var faviconStore = BrowserTabStripFaviconStore()
-    private let trafficLightInset: CGFloat = 84
+    private let trafficLightInset: CGFloat = 250
     private let trailingInset: CGFloat = 10
-    private let tabStripHeight: CGFloat = 44
+    private let tabStripHeight: CGFloat = 48
     private let tabHeight: CGFloat = 36
     private let tabSpacing: CGFloat = 4
     private let pinnedTabWidth: CGFloat = 36
@@ -483,7 +483,7 @@ private struct BrowserTabStripItemView: View {
             if item.isPinned {
                 faviconView
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: 9) {
                     faviconView
                     Text(title)
                         .font(.system(size: 13, weight: item.isActive ? .semibold : .medium))
@@ -492,7 +492,7 @@ private struct BrowserTabStripItemView: View {
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 13)
             }
         }
         .frame(width: width, height: height)
@@ -530,7 +530,7 @@ private struct BrowserTabStripItemView: View {
             if item.isLoading {
                 ProgressView()
                     .controlSize(.small)
-                    .scaleEffect(0.58)
+                    .scaleEffect(0.64)
             } else if let favicon {
                 Image(nsImage: favicon)
                     .resizable()
@@ -549,7 +549,7 @@ private struct BrowserTabStripItemView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(width: 16, height: 16)
+        .frame(width: 18, height: 18)
     }
 }
 
