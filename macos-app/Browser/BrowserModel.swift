@@ -28,7 +28,6 @@ final class BrowserModel: NSObject, ObservableObject {
         BrowserSiteIdentityMenuItem(id: BrowserSiteIdentityMenuItem.defaultID, title: "Default", isCurrent: true)
     ]
     @Published var viewportMode: BrowserViewportMode = .desktop
-    @Published var webViewID = UUID()
 
     @Published var webView: BrowserWKWebView
     let botTerminal = BotTerminalModel()
@@ -88,6 +87,7 @@ final class BrowserModel: NSObject, ObservableObject {
         let initialTab = initialTabs[startupActiveTabIndex]
         tabStates = initialTabs
         activeTabID = initialTab.id
+        initialTab.webView.isActiveBrowserTab = true
         webView = initialTab.webView
 
         super.init()
@@ -534,7 +534,7 @@ final class BrowserModel: NSObject, ObservableObject {
         tab.webView = nextWebView
         configure(tab)
         webView = nextWebView
-        webViewID = UUID()
+        webView.isActiveBrowserTab = true
         refreshPublishedTabs()
         syncTitlebarTabState()
         attachCookiePersistence(to: tab) { [weak self, weak nextWebView] in
@@ -583,6 +583,7 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     func detach(_ webView: BrowserWKWebView) {
+        webView.isActiveBrowserTab = false
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         webView.browserContextMenuDelegate = nil

@@ -127,9 +127,10 @@ extension BrowserModel {
         }
 
         webView.blocksProgrammaticFocus = false
+        webView.isActiveBrowserTab = false
         activeTabID = tab.id
         webView = tab.webView
-        webViewID = UUID()
+        webView.isActiveBrowserTab = true
         displayAddressText = tab.displayAddressText
         errorMessage = tab.errorMessage
         hasAttemptedNavigation = tab.hasAttemptedNavigation

@@ -38,17 +38,107 @@ struct XHRContextMenuItem: Equatable {
     let title: String
 }
 
-struct BrowserWebView: NSViewRepresentable {
-    let webView: BrowserWKWebView
+struct BrowserWebViewStack: NSViewRepresentable {
+    let tabs: [BrowserTabState]
+    let activeTabID: UUID
     let blocksProgrammaticFocus: Bool
 
-    func makeNSView(context: Context) -> BrowserWKWebView {
-        webView.blocksProgrammaticFocus = blocksProgrammaticFocus
-        return webView
+    func makeNSView(context: Context) -> BrowserWebViewContainer {
+        let container = BrowserWebViewContainer()
+        container.sync(
+            tabs: tabs,
+            activeTabID: activeTabID,
+            blocksProgrammaticFocus: blocksProgrammaticFocus
+        )
+        return container
     }
 
-    func updateNSView(_ nsView: BrowserWKWebView, context: Context) {
-        nsView.blocksProgrammaticFocus = blocksProgrammaticFocus
+    func updateNSView(_ nsView: BrowserWebViewContainer, context: Context) {
+        nsView.sync(
+            tabs: tabs,
+            activeTabID: activeTabID,
+            blocksProgrammaticFocus: blocksProgrammaticFocus
+        )
+    }
+}
+
+final class BrowserWebViewContainer: NSView {
+    private weak var activeWebView: BrowserWKWebView?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    func sync(
+        tabs: [BrowserTabState],
+        activeTabID: UUID,
+        blocksProgrammaticFocus: Bool
+    ) {
+        activeWebView = nil
+        let currentWebViews = tabs.map(\.webView)
+        for subview in subviews {
+            guard let webView = subview as? BrowserWKWebView,
+                  !currentWebViews.contains(where: { $0 === webView })
+            else {
+                continue
+            }
+
+            webView.removeFromSuperview()
+        }
+
+        for (index, tab) in tabs.enumerated() {
+            let webView = tab.webView
+            let isActive = tab.id == activeTabID
+
+            if webView.superview !== self {
+                addSubview(webView)
+            }
+
+            webView.frame = bounds
+            webView.autoresizingMask = [.width, .height]
+            webView.isActiveBrowserTab = isActive
+            webView.blocksProgrammaticFocus = isActive ? blocksProgrammaticFocus : false
+
+            // Keep inactive pages attached and unhidden so tab selection does not
+            // trip WebKit's page visibility lifecycle.
+            webView.wantsLayer = true
+            webView.layer?.zPosition = isActive ? CGFloat(tabs.count + 1) : CGFloat(index)
+
+            if isActive {
+                activeWebView = webView
+            }
+        }
+
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+
+        for subview in subviews {
+            subview.frame = bounds
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard bounds.contains(point),
+              let activeWebView
+        else {
+            return nil
+        }
+
+        let activePoint = activeWebView.convert(point, from: self)
+        return activeWebView.hitTest(activePoint)
     }
 }
 
@@ -76,6 +166,7 @@ final class BrowserWKWebView: WKWebView {
     static let defaultWindowTitle = ""
 
     weak var browserContextMenuDelegate: BrowserContextMenuDelegate?
+    var isActiveBrowserTab = false
     var blocksProgrammaticFocus = false
     var browserWindowTitle = BrowserWKWebView.defaultWindowTitle {
         didSet {
@@ -103,10 +194,14 @@ final class BrowserWKWebView: WKWebView {
     weak var titlebarTabsWindow: NSWindow?
 
     override var acceptsFirstResponder: Bool {
-        !blocksProgrammaticFocus || isHandlingDirectUserFocus
+        isActiveBrowserTab && (!blocksProgrammaticFocus || isHandlingDirectUserFocus)
     }
 
     override func becomeFirstResponder() -> Bool {
+        guard isActiveBrowserTab else {
+            return false
+        }
+
         guard !blocksProgrammaticFocus || isHandlingDirectUserFocus else {
             return false
         }
@@ -176,6 +271,10 @@ final class BrowserWKWebView: WKWebView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard isActiveBrowserTab else {
+            return
+        }
+
         if event.modifierFlags.contains(.control) {
             showBrowserContextMenu(with: event)
         } else {
@@ -185,7 +284,27 @@ final class BrowserWKWebView: WKWebView {
         }
     }
 
+    override func keyDown(with event: NSEvent) {
+        guard isActiveBrowserTab else {
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard isActiveBrowserTab else {
+            return false
+        }
+
+        return super.performKeyEquivalent(with: event)
+    }
+
     func focusFromBrowserChrome() {
+        guard isActiveBrowserTab else {
+            return
+        }
+
         blocksProgrammaticFocus = false
         guard !isLoading else {
             resignBrowserChromeFocus()

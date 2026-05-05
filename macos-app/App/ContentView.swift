@@ -86,8 +86,7 @@ struct ContentView: View {
             if browser.hasAttemptedNavigation {
                 isAddressEditing = false
                 isAddressFocused = false
-                shouldFocusBrowserAfterLoad = true
-                focusBrowserContentWhenReady()
+                shouldFocusBrowserAfterLoad = false
             } else {
                 focusAddressBar(selectAll: false)
             }

@@ -32,12 +32,11 @@ extension ContentView {
             Color(nsColor: browser.viewportMode == .desktop ? .textBackgroundColor : .windowBackgroundColor)
 
             ZStack {
-                BrowserWebView(
-                    webView: browser.webView,
+                BrowserWebViewStack(
+                    tabs: browser.tabStates,
+                    activeTabID: browser.activeTabID,
                     blocksProgrammaticFocus: isAddressFocused
                 )
-                    .id(browser.webViewID)
-                    .opacity(browser.hasAttemptedNavigation ? 1 : 0)
 
                 if !browser.hasAttemptedNavigation {
                     EmptyBrowserState()
