@@ -204,6 +204,29 @@ extension BrowserModel {
         persistOpenTabs()
     }
 
+    func moveTab(_ sourceID: UUID, toDropIndex rawDropIndex: Int) {
+        guard let sourceIndex = tabStates.firstIndex(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        let isPinned = tabStates[sourceIndex].isPinned
+        let groupStart = isPinned ? 0 : (tabStates.firstIndex { !$0.isPinned } ?? tabStates.endIndex)
+        let groupEnd = isPinned
+            ? (tabStates.firstIndex { !$0.isPinned } ?? tabStates.endIndex)
+            : tabStates.endIndex
+        let dropIndex = min(max(rawDropIndex, groupStart), groupEnd)
+        let insertionIndex = sourceIndex < dropIndex ? dropIndex - 1 : dropIndex
+
+        guard insertionIndex != sourceIndex else {
+            return
+        }
+
+        let movedTab = tabStates.remove(at: sourceIndex)
+        tabStates.insert(movedTab, at: insertionIndex)
+        refreshPublishedTabs()
+        persistOpenTabs()
+    }
+
     func togglePinnedTab(_ tabID: UUID) {
         guard let tab = tabStates.first(where: { $0.id == tabID }) else { return }
         setTab(tabID, pinned: !tab.isPinned)

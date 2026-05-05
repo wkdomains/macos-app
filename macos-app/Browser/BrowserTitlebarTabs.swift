@@ -353,14 +353,69 @@ final class BrowserTabsTitlebarAccessoryViewController: NSTitlebarAccessoryViewC
     }
 }
 
+@MainActor
+final class BrowserTabStripMouseEventBridge: ObservableObject {
+    private var mouseDownHandler: ((CGPoint) -> Bool)?
+    private var mouseDraggedHandler: ((CGPoint) -> Bool)?
+    private var mouseUpHandler: ((CGPoint) -> Bool)?
+    private var windowDragHandler: ((CGPoint) -> Bool)?
+    private var cancelHandler: (() -> Void)?
+
+    func configure(
+        mouseDown: @escaping (CGPoint) -> Bool,
+        mouseDragged: @escaping (CGPoint) -> Bool,
+        mouseUp: @escaping (CGPoint) -> Bool,
+        shouldDragWindow: @escaping (CGPoint) -> Bool,
+        cancel: @escaping () -> Void
+    ) {
+        mouseDownHandler = mouseDown
+        mouseDraggedHandler = mouseDragged
+        mouseUpHandler = mouseUp
+        windowDragHandler = shouldDragWindow
+        cancelHandler = cancel
+    }
+
+    func clear() {
+        mouseDownHandler = nil
+        mouseDraggedHandler = nil
+        mouseUpHandler = nil
+        windowDragHandler = nil
+        cancelHandler = nil
+    }
+
+    func mouseDown(at point: CGPoint) -> Bool {
+        mouseDownHandler?(point) ?? false
+    }
+
+    func mouseDragged(to point: CGPoint) -> Bool {
+        mouseDraggedHandler?(point) ?? false
+    }
+
+    func mouseUp(at point: CGPoint) -> Bool {
+        mouseUpHandler?(point) ?? false
+    }
+
+    func shouldDragWindow(at point: CGPoint) -> Bool {
+        windowDragHandler?(point) ?? false
+    }
+
+    func cancel() {
+        cancelHandler?()
+    }
+}
+
 struct BrowserTabStripView: View {
     let items: [BrowserTabItem]
     let selectTab: (UUID) -> Void
     let addTab: () -> Void
-    let moveTab: (UUID, UUID) -> Void
+    let moveTab: (UUID, Int) -> Void
     let togglePinnedTab: (UUID) -> Void
+    let mouseBridge: BrowserTabStripMouseEventBridge?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var faviconStore = BrowserTabStripFaviconStore()
+    @StateObject private var dragState = BrowserTabStripDragState()
+    @State private var tabFrames: [UUID: CGRect] = [:]
     private let trafficLightInset: CGFloat = 120
     private let trailingInset: CGFloat = 10
     private let tabStripHeight: CGFloat = 44
@@ -370,14 +425,15 @@ struct BrowserTabStripView: View {
     private let newTabWidth: CGFloat = 36
     private let minimumTabWidth: CGFloat = 76
     private let maximumTabWidth: CGFloat = 225
-    private let dragState = BrowserTabStripDragState()
+    private let dragActivationDistance: CGFloat = 5
+    private static let coordinateSpaceName = "BrowserTabStripCoordinateSpace"
 
     var body: some View {
         GeometryReader { proxy in
             let tabWidth = normalTabWidth(for: proxy.size.width)
 
             HStack(spacing: tabSpacing) {
-                ForEach(items) { item in
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     Button {
                         selectTab(item.id)
                     } label: {
@@ -387,27 +443,33 @@ struct BrowserTabStripView: View {
                             width: item.isPinned ? pinnedTabWidth : tabWidth,
                             height: tabHeight
                         )
+                        .background(tabFrameReader(for: item.id))
                     }
                     .buttonStyle(.plain)
+                    .offset(x: dragState.offset(for: item, at: index, spacing: tabSpacing))
+                    .scaleEffect(dragState.draggingTabID == item.id ? 1.018 : 1)
+                    .opacity(dragState.draggingTabID == item.id ? 0.97 : 1)
+                    .shadow(
+                        color: dragState.draggingTabID == item.id ? Color.black.opacity(0.28) : Color.clear,
+                        radius: 9,
+                        x: 0,
+                        y: 5
+                    )
+                    .zIndex(dragState.draggingTabID == item.id ? 10 : 0)
+                    .animation(reduceMotion ? nil : BrowserTabStripDragState.gapAnimation, value: dragState.dropIndex)
                     .help(tooltip(for: item))
                     .contextMenu {
                         Button(item.isPinned ? "Unpin Tab" : "Pin Tab") {
                             togglePinnedTab(item.id)
                         }
                     }
-                    .onDrag {
-                        dragState.dropTargetTabID = nil
-                        dragState.draggingTabID = item.id
-                        return NSItemProvider(object: item.id.uuidString as NSString)
+                    .gesture(tabDragGesture(for: item, at: index))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(accessibilityLabel(for: item))
+                    .accessibilityAddTraits(item.isActive ? [.isButton, .isSelected] : [.isButton])
+                    .accessibilityAction {
+                        selectTab(item.id)
                     }
-                    .onDrop(
-                        of: [UTType.text],
-                        delegate: BrowserContentTabDropDelegate(
-                            item: item,
-                            dragState: dragState,
-                            moveTab: moveTab
-                        )
-                    )
                 }
 
                 Button(action: addTab) {
@@ -425,9 +487,227 @@ struct BrowserTabStripView: View {
             .padding(.leading, trafficLightInset)
             .padding(.trailing, trailingInset)
             .frame(width: proxy.size.width, height: tabStripHeight, alignment: .center)
+            .coordinateSpace(name: Self.coordinateSpaceName)
+            .onPreferenceChange(BrowserTabFramePreferenceKey.self) { frames in
+                tabFrames = frames
+                configureMouseBridge(with: frames)
+            }
         }
         .frame(height: tabStripHeight)
         .background(BrowserChromeColors.tabStripBackground)
+        .onAppear {
+            configureMouseBridge(with: tabFrames)
+        }
+        .onChange(of: items) { _, _ in
+            configureMouseBridge(with: tabFrames)
+        }
+        .onDisappear {
+            mouseBridge?.clear()
+            dragState.cancel()
+        }
+    }
+
+    private func tabFrameReader(for tabID: UUID) -> some View {
+        GeometryReader { proxy in
+            Color.clear.preference(
+                key: BrowserTabFramePreferenceKey.self,
+                value: [tabID: proxy.frame(in: .named(Self.coordinateSpaceName))]
+            )
+        }
+    }
+
+    private func tabDragGesture(for item: BrowserTabItem, at index: Int) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.coordinateSpaceName))
+            .onChanged { value in
+                let layouts = dragLayouts()
+                logTabDrag(
+                    "changed tab=\(shortID(item.id)) title=\"\(title(for: item))\" translation=\(format(value.translation.width)),\(format(value.translation.height)) layouts=\(layouts.count) active=\(dragState.draggingTabID.map(shortID) ?? "nil")"
+                )
+
+                if dragState.draggingTabID == nil {
+                    guard dragDistance(for: value) >= dragActivationDistance else {
+                        logTabDrag(
+                            "waiting-for-threshold tab=\(shortID(item.id)) distance=\(format(dragDistance(for: value))) threshold=\(format(dragActivationDistance))"
+                        )
+                        return
+                    }
+
+                    logTabDrag("begin tab=\(shortID(item.id)) index=\(index)")
+                    dragState.beginDragging(item: item, at: index, layouts: layouts)
+                }
+
+                dragState.updateDragging(value: value, layouts: layouts, reduceMotion: reduceMotion)
+            }
+            .onEnded { _ in
+                let result = dragState.dropResult()
+                logTabDrag(
+                    "ended tab=\(shortID(item.id)) result=\(result.map { "\(shortID($0.tabID))->\($0.dropIndex)" } ?? "nil")"
+                )
+
+                withAnimation(reduceMotion ? nil : BrowserTabStripDragState.settleAnimation) {
+                    dragState.cancel()
+
+                    if let result {
+                        moveTab(result.tabID, result.dropIndex)
+                    } else {
+                        selectTab(item.id)
+                    }
+                }
+            }
+    }
+
+    private func dragDistance(for value: DragGesture.Value) -> CGFloat {
+        hypot(value.translation.width, value.translation.height)
+    }
+
+    private func logTabDrag(_ message: String) {
+        NSLog("[wkdomains-tabs] \(message)")
+    }
+
+    private func shortID(_ id: UUID) -> String {
+        String(id.uuidString.prefix(8))
+    }
+
+    private func format(_ value: CGFloat) -> String {
+        String(format: "%.1f", Double(value))
+    }
+
+    private func dragLayouts() -> [BrowserTabDragLayoutItem] {
+        dragLayouts(from: tabFrames)
+    }
+
+    private func dragLayouts(from frames: [UUID: CGRect]) -> [BrowserTabDragLayoutItem] {
+        items.enumerated().compactMap { index, item in
+            guard let frame = frames[item.id], frame.width > 0 else {
+                return nil
+            }
+
+            return BrowserTabDragLayoutItem(
+                id: item.id,
+                index: index,
+                isPinned: item.isPinned,
+                frame: frame
+            )
+        }
+    }
+
+    private func configureMouseBridge(with frames: [UUID: CGRect]) {
+        mouseBridge?.configure(
+            mouseDown: { point in
+                bridgeMouseDown(at: point, frames: frames)
+            },
+            mouseDragged: { point in
+                bridgeMouseDragged(to: point, frames: frames)
+            },
+            mouseUp: { point in
+                bridgeMouseUp(at: point, frames: frames)
+            },
+            shouldDragWindow: { point in
+                bridgeShouldDragWindow(at: point, frames: frames)
+            },
+            cancel: {
+                dragState.cancel()
+            }
+        )
+    }
+
+    private func bridgeMouseDown(at point: CGPoint, frames: [UUID: CGRect]) -> Bool {
+        let layouts = dragLayouts(from: frames)
+        guard let hitLayout = tabLayout(at: point, layouts: layouts),
+              let item = items[safe: hitLayout.index]
+        else {
+            logTabDrag("bridge-down missed point=\(describe(point)) layouts=\(layouts.count)")
+            return false
+        }
+
+        logTabDrag("bridge-down tab=\(shortID(item.id)) index=\(hitLayout.index) point=\(describe(point))")
+        dragState.prepareDragging(item: item, at: hitLayout.index, startPoint: point)
+        return true
+    }
+
+    private func bridgeMouseDragged(to point: CGPoint, frames: [UUID: CGRect]) -> Bool {
+        guard let pendingTabID = dragState.pendingTabID else {
+            return false
+        }
+
+        let layouts = dragLayouts(from: frames)
+        let translation = dragState.pendingTranslation(to: point)
+        logTabDrag(
+            "bridge-drag tab=\(shortID(pendingTabID)) point=\(describe(point)) translation=\(format(translation.width)),\(format(translation.height)) layouts=\(layouts.count)"
+        )
+        dragState.updatePendingDrag(
+            to: point,
+            activationDistance: dragActivationDistance,
+            layouts: layouts,
+            reduceMotion: reduceMotion
+        )
+        return true
+    }
+
+    private func bridgeMouseUp(at point: CGPoint, frames: [UUID: CGRect]) -> Bool {
+        guard let pendingTabID = dragState.pendingTabID else {
+            return false
+        }
+
+        let layouts = dragLayouts(from: frames)
+        dragState.updatePendingDrag(
+            to: point,
+            activationDistance: dragActivationDistance,
+            layouts: layouts,
+            reduceMotion: reduceMotion
+        )
+
+        let result = dragState.dropResult()
+        logTabDrag(
+            "bridge-up tab=\(shortID(pendingTabID)) result=\(result.map { "\(shortID($0.tabID))->\($0.dropIndex)" } ?? "nil")"
+        )
+
+        withAnimation(reduceMotion ? nil : BrowserTabStripDragState.settleAnimation) {
+            dragState.cancel()
+
+            if let result {
+                moveTab(result.tabID, result.dropIndex)
+            } else {
+                selectTab(pendingTabID)
+            }
+        }
+        return true
+    }
+
+    private func bridgeShouldDragWindow(at point: CGPoint, frames: [UUID: CGRect]) -> Bool {
+        let layouts = dragLayouts(from: frames)
+        guard tabLayout(at: point, layouts: layouts) == nil,
+              !newTabFrame(from: layouts).insetBy(dx: -4, dy: -4).contains(point)
+        else {
+            return false
+        }
+
+        return point.y >= 0 && point.y <= tabStripHeight
+    }
+
+    private func tabLayout(
+        at point: CGPoint,
+        layouts: [BrowserTabDragLayoutItem]
+    ) -> BrowserTabDragLayoutItem? {
+        layouts.first { layout in
+            layout.frame.insetBy(dx: 0, dy: -4).contains(point)
+        }
+    }
+
+    private func newTabFrame(from layouts: [BrowserTabDragLayoutItem]) -> CGRect {
+        let orderedLayouts = layouts.sorted { $0.index < $1.index }
+        let minY = orderedLayouts.first?.frame.minY ?? ((tabStripHeight - tabHeight) / 2)
+        let leadingX: CGFloat
+        if let lastLayout = orderedLayouts.last {
+            leadingX = lastLayout.frame.maxX + tabSpacing
+        } else {
+            leadingX = trafficLightInset
+        }
+        return CGRect(x: leadingX, y: minY, width: newTabWidth, height: tabHeight)
+    }
+
+    private func describe(_ point: CGPoint) -> String {
+        "x=\(format(point.x)) y=\(format(point.y))"
     }
 
     private func normalTabWidth(for availableWidth: CGFloat) -> CGFloat {
@@ -467,6 +747,279 @@ struct BrowserTabStripView: View {
         }
 
         return item.url?.host ?? "New Tab"
+    }
+
+    private func accessibilityLabel(for item: BrowserTabItem) -> String {
+        let pinPrefix = item.isPinned ? "Pinned tab" : "Tab"
+        let activeSuffix = item.isActive ? ", selected" : ""
+        return "\(pinPrefix), \(title(for: item))\(activeSuffix)"
+    }
+}
+
+struct BrowserNonDraggableChromeHost<Content: View>: NSViewRepresentable {
+    private let content: Content
+    private let mouseBridge: BrowserTabStripMouseEventBridge?
+    private let height: CGFloat = 44
+
+    init(
+        mouseBridge: BrowserTabStripMouseEventBridge? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.mouseBridge = mouseBridge
+        self.content = content()
+    }
+
+    func makeNSView(context: Context) -> BrowserNonDraggableChromeContainerView<Content> {
+        BrowserNonDraggableChromeContainerView(
+            rootView: content,
+            height: height,
+            mouseBridge: mouseBridge
+        )
+    }
+
+    func updateNSView(_ nsView: BrowserNonDraggableChromeContainerView<Content>, context: Context) {
+        nsView.update(rootView: content, mouseBridge: mouseBridge)
+    }
+}
+
+final class BrowserNonDraggableChromeContainerView<Content: View>: NSView {
+    private let preferredHeight: CGFloat
+    private let hostingView: BrowserNonDraggableHostingView<Content>
+
+    init(
+        rootView: Content,
+        height: CGFloat,
+        mouseBridge: BrowserTabStripMouseEventBridge?
+    ) {
+        preferredHeight = height
+        hostingView = BrowserNonDraggableHostingView(rootView: rootView)
+        super.init(frame: NSRect(x: 0, y: 0, width: 0, height: height))
+
+        wantsLayer = true
+        hostingView.mouseBridge = mouseBridge
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        hostingView.sizingOptions = []
+        addSubview(hostingView)
+
+        NSLayoutConstraint.activate([
+            hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: preferredHeight)
+    }
+
+    override var fittingSize: NSSize {
+        NSSize(width: super.fittingSize.width, height: preferredHeight)
+    }
+
+    override var safeAreaInsets: NSEdgeInsets {
+        NSEdgeInsetsZero
+    }
+
+    override var safeAreaRect: NSRect {
+        bounds
+    }
+
+    override var mouseDownCanMoveWindow: Bool {
+        false
+    }
+
+    func update(
+        rootView: Content,
+        mouseBridge: BrowserTabStripMouseEventBridge?
+    ) {
+        hostingView.rootView = rootView
+        hostingView.mouseBridge = mouseBridge
+        invalidateIntrinsicContentSize()
+        hostingView.invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+}
+
+final class BrowserNonDraggableHostingView<Content: View>: NSHostingView<Content> {
+    private let preferredHeight: CGFloat = 44
+    var mouseBridge: BrowserTabStripMouseEventBridge?
+    private var forwardsTabMouseEvents = false
+    private var forwardedTabPoint: CGPoint?
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: preferredHeight)
+    }
+
+    override var safeAreaInsets: NSEdgeInsets {
+        NSEdgeInsetsZero
+    }
+
+    override var safeAreaRect: NSRect {
+        bounds
+    }
+
+    override var mouseDownCanMoveWindow: Bool {
+        NSLog("[wkdomains-tabs] chrome-host mouseDownCanMoveWindow=false")
+        return false
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        NSLog("[wkdomains-tabs] chrome-host mouseDown button=\(event.buttonNumber) location=\(Self.describe(event.locationInWindow))")
+        let point = tabStripPoint(for: event)
+        if event.buttonNumber == 0,
+           mouseBridge?.mouseDown(at: point) == true {
+            forwardsTabMouseEvents = true
+            forwardedTabPoint = point
+            trackForwardedTabDrag()
+            return
+        }
+
+        if event.buttonNumber == 0,
+           mouseBridge?.shouldDragWindow(at: point) == true {
+            dragWindowManually(with: event)
+            return
+        }
+
+        forwardsTabMouseEvents = false
+        forwardedTabPoint = nil
+        super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        NSLog("[wkdomains-tabs] chrome-host mouseDragged delta=\(Self.format(event.deltaX)),\(Self.format(event.deltaY))")
+        if forwardsTabMouseEvents {
+            _ = mouseBridge?.mouseDragged(to: forwardedPoint(byApplying: event))
+            return
+        }
+
+        super.mouseDragged(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        NSLog("[wkdomains-tabs] chrome-host mouseUp button=\(event.buttonNumber) location=\(Self.describe(event.locationInWindow))")
+        if forwardsTabMouseEvents {
+            forwardsTabMouseEvents = false
+            _ = mouseBridge?.mouseUp(at: forwardedTabPoint ?? tabStripPoint(for: event))
+            forwardedTabPoint = nil
+            return
+        }
+
+        super.mouseUp(with: event)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        if window == nil {
+            forwardsTabMouseEvents = false
+            forwardedTabPoint = nil
+            mouseBridge?.cancel()
+        }
+    }
+
+    private func trackForwardedTabDrag() {
+        guard let window else { return }
+
+        while forwardsTabMouseEvents {
+            guard let event = window.nextEvent(
+                matching: [.leftMouseDragged, .leftMouseUp]
+            ) else {
+                break
+            }
+
+            switch event.type {
+            case .leftMouseDragged:
+                NSLog("[wkdomains-tabs] chrome-host mouseDragged delta=\(Self.format(event.deltaX)),\(Self.format(event.deltaY))")
+                _ = mouseBridge?.mouseDragged(to: forwardedPoint(byApplying: event))
+            case .leftMouseUp:
+                NSLog("[wkdomains-tabs] chrome-host mouseUp button=\(event.buttonNumber) location=\(Self.describe(event.locationInWindow))")
+                forwardsTabMouseEvents = false
+                _ = mouseBridge?.mouseUp(at: forwardedTabPoint ?? tabStripPoint(for: event))
+                forwardedTabPoint = nil
+            default:
+                break
+            }
+        }
+
+        forwardsTabMouseEvents = false
+        forwardedTabPoint = nil
+    }
+
+    private func forwardedPoint(byApplying event: NSEvent) -> CGPoint {
+        var point = forwardedTabPoint ?? tabStripPoint(for: event)
+        point.x += event.deltaX
+        point.y -= event.deltaY
+        forwardedTabPoint = point
+        return point
+    }
+
+    private func dragWindowManually(with mouseDownEvent: NSEvent) {
+        guard let window else { return }
+
+        let initialMouseLocation = NSEvent.mouseLocation
+        let initialWindowOrigin = window.frame.origin
+
+        while true {
+            guard let event = window.nextEvent(
+                matching: [.leftMouseDragged, .leftMouseUp]
+            ) else {
+                return
+            }
+
+            switch event.type {
+            case .leftMouseDragged:
+                let currentMouseLocation = NSEvent.mouseLocation
+                var nextOrigin = NSPoint(
+                    x: initialWindowOrigin.x + currentMouseLocation.x - initialMouseLocation.x,
+                    y: initialWindowOrigin.y + currentMouseLocation.y - initialMouseLocation.y
+                )
+
+                if let visibleFrame = window.screen?.visibleFrame {
+                    nextOrigin.y = min(
+                        nextOrigin.y,
+                        visibleFrame.maxY - window.frame.height
+                    )
+                }
+
+                window.setFrameOrigin(nextOrigin)
+            case .leftMouseUp:
+                return
+            default:
+                break
+            }
+        }
+    }
+
+    private func tabStripPoint(for event: NSEvent) -> CGPoint {
+        let localPoint = convert(event.locationInWindow, from: nil)
+        return CGPoint(x: localPoint.x, y: bounds.height - localPoint.y)
+    }
+
+    private static func describe(_ point: NSPoint) -> String {
+        "x=\(format(point.x)) y=\(format(point.y))"
+    }
+
+    private static func format(_ value: CGFloat) -> String {
+        String(format: "%.1f", Double(value))
+    }
+}
+
+private extension Array {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 
@@ -731,54 +1284,249 @@ private final class BrowserTabStripFaviconStore: ObservableObject {
     }
 }
 
-private final class BrowserTabStripDragState {
-    var draggingTabID: UUID?
-    var dropTargetTabID: UUID?
+private struct BrowserTabFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
 }
 
-private struct BrowserContentTabDropDelegate: DropDelegate {
-    let item: BrowserTabItem
-    let dragState: BrowserTabStripDragState
-    let moveTab: (UUID, UUID) -> Void
+private struct BrowserTabDragLayoutItem {
+    let id: UUID
+    let index: Int
+    let isPinned: Bool
+    let frame: CGRect
+}
 
-    func dropEntered(info: DropInfo) {
-        guard let draggingTabID = dragState.draggingTabID,
-              draggingTabID != item.id
+private struct BrowserTabDragResult {
+    let tabID: UUID
+    let dropIndex: Int
+}
+
+private final class BrowserTabStripDragState: ObservableObject {
+    static let gapAnimation = Animation.interactiveSpring(response: 0.18, dampingFraction: 0.86)
+    static let settleAnimation = Animation.interactiveSpring(response: 0.22, dampingFraction: 0.88)
+
+    @Published private(set) var draggingTabID: UUID?
+    @Published private(set) var dropIndex: Int?
+    @Published private var dragOffsetX: CGFloat = 0
+
+    private var sourceIndex: Int?
+    private var sourceIsPinned = false
+    private var sourceFrame = CGRect.zero
+    private var draggedWidth: CGFloat = 0
+    private var pendingItem: BrowserTabItem?
+    private var pendingIndex: Int?
+    private var pendingStartPoint = CGPoint.zero
+
+    var isDragging: Bool {
+        draggingTabID != nil
+    }
+
+    var pendingTabID: UUID? {
+        pendingItem?.id ?? draggingTabID
+    }
+
+    func prepareDragging(item: BrowserTabItem, at index: Int, startPoint: CGPoint) {
+        cancel()
+        pendingItem = item
+        pendingIndex = index
+        pendingStartPoint = startPoint
+    }
+
+    func pendingTranslation(to point: CGPoint) -> CGSize {
+        CGSize(
+            width: point.x - pendingStartPoint.x,
+            height: point.y - pendingStartPoint.y
+        )
+    }
+
+    func updatePendingDrag(
+        to point: CGPoint,
+        activationDistance: CGFloat,
+        layouts: [BrowserTabDragLayoutItem],
+        reduceMotion: Bool
+    ) {
+        guard let pendingItem,
+              let pendingIndex
         else {
             return
         }
 
-        dragState.dropTargetTabID = item.id
+        let translation = pendingTranslation(to: point)
+        if draggingTabID == nil {
+            let distance = hypot(translation.width, translation.height)
+            guard distance >= activationDistance else {
+                NSLog(
+                    "[wkdomains-tabs] bridge-waiting tab=\(String(pendingItem.id.uuidString.prefix(8))) distance=\(Self.format(distance)) threshold=\(Self.format(activationDistance))"
+                )
+                return
+            }
+
+            NSLog("[wkdomains-tabs] bridge-begin tab=\(String(pendingItem.id.uuidString.prefix(8))) index=\(pendingIndex)")
+            beginDragging(item: pendingItem, at: pendingIndex, layouts: layouts)
+        }
+
+        updateDragging(
+            translationWidth: translation.width,
+            layouts: layouts,
+            reduceMotion: reduceMotion
+        )
     }
 
-    func dropExited(info: DropInfo) {
-        if dragState.dropTargetTabID == item.id {
-            dragState.dropTargetTabID = nil
+    func beginDragging(item: BrowserTabItem, at index: Int, layouts: [BrowserTabDragLayoutItem]) {
+        guard draggingTabID == nil,
+              let layout = layouts.first(where: { $0.id == item.id })
+        else {
+            NSLog("[wkdomains-tabs] begin-failed tab=\(String(item.id.uuidString.prefix(8))) index=\(index) layouts=\(layouts.count)")
+            return
+        }
+
+        NSLog("[wkdomains-tabs] state-begin tab=\(String(item.id.uuidString.prefix(8))) index=\(index) frame=\(Self.describe(layout.frame))")
+        draggingTabID = item.id
+        sourceIndex = index
+        sourceIsPinned = item.isPinned
+        sourceFrame = layout.frame
+        draggedWidth = layout.frame.width
+        dropIndex = index + 1
+        dragOffsetX = 0
+    }
+
+    func updateDragging(value: DragGesture.Value, layouts: [BrowserTabDragLayoutItem], reduceMotion: Bool) {
+        updateDragging(
+            translationWidth: value.translation.width,
+            layouts: layouts,
+            reduceMotion: reduceMotion
+        )
+    }
+
+    private func updateDragging(
+        translationWidth: CGFloat,
+        layouts: [BrowserTabDragLayoutItem],
+        reduceMotion: Bool
+    ) {
+        guard let draggingTabID,
+              !layouts.isEmpty
+        else {
+            return
+        }
+
+        let groupLayouts = layouts
+            .filter { $0.isPinned == sourceIsPinned }
+            .sorted { $0.index < $1.index }
+
+        guard let firstLayout = groupLayouts.first,
+              let lastLayout = groupLayouts.last
+        else {
+            NSLog("[wkdomains-tabs] update-failed no-group-layouts dragging=\(String(draggingTabID.uuidString.prefix(8)))")
+            return
+        }
+
+        let minimumOffset = firstLayout.frame.minX - sourceFrame.minX
+        let maximumOffset = lastLayout.frame.maxX - sourceFrame.maxX
+        let clampedOffset = min(max(translationWidth, minimumOffset), maximumOffset)
+        dragOffsetX = clampedOffset
+
+        let draggedMidX = sourceFrame.midX + clampedOffset
+        let nextDropIndex = dropIndex(forDraggedMidX: draggedMidX, draggingTabID: draggingTabID, layouts: groupLayouts)
+        guard nextDropIndex != dropIndex else {
+            NSLog("[wkdomains-tabs] update-stable dragging=\(String(draggingTabID.uuidString.prefix(8))) offset=\(Self.format(clampedOffset)) dropIndex=\(dropIndex.map(String.init) ?? "nil")")
+            return
+        }
+
+        NSLog("[wkdomains-tabs] update-drop-index dragging=\(String(draggingTabID.uuidString.prefix(8))) offset=\(Self.format(clampedOffset)) midX=\(Self.format(draggedMidX)) dropIndex=\(dropIndex.map(String.init) ?? "nil")->\(nextDropIndex)")
+        guard !reduceMotion else {
+            dropIndex = nextDropIndex
+            return
+        }
+
+        withAnimation(Self.gapAnimation) {
+            dropIndex = nextDropIndex
         }
     }
 
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
+    func offset(for item: BrowserTabItem, at index: Int, spacing: CGFloat) -> CGFloat {
+        guard let draggingTabID,
+              let sourceIndex,
+              let dropIndex,
+              item.isPinned == sourceIsPinned
+        else {
+            return 0
+        }
+
+        if item.id == draggingTabID {
+            return dragOffsetX
+        }
+
+        let gapWidth = draggedWidth + spacing
+        if dropIndex > sourceIndex,
+           index > sourceIndex,
+           index < dropIndex {
+            return -gapWidth
+        }
+
+        if dropIndex < sourceIndex,
+           index >= dropIndex,
+           index < sourceIndex {
+            return gapWidth
+        }
+
+        return 0
     }
 
-    func performDrop(info: DropInfo) -> Bool {
-        guard let draggingTabID = dragState.draggingTabID else {
-            dragState.dropTargetTabID = nil
-            return true
+    func dropResult() -> BrowserTabDragResult? {
+        guard let draggingTabID,
+              let sourceIndex,
+              let dropIndex
+        else {
+            return nil
         }
 
-        let targetTabID = dragState.dropTargetTabID ?? item.id
-        dragState.draggingTabID = nil
-        dragState.dropTargetTabID = nil
-
-        guard draggingTabID != targetTabID else {
-            return true
+        let insertionIndex = sourceIndex < dropIndex ? dropIndex - 1 : dropIndex
+        guard insertionIndex != sourceIndex else {
+            return nil
         }
 
-        DispatchQueue.main.async {
-            moveTab(draggingTabID, targetTabID)
+        return BrowserTabDragResult(tabID: draggingTabID, dropIndex: dropIndex)
+    }
+
+    func cancel() {
+        draggingTabID = nil
+        dropIndex = nil
+        dragOffsetX = 0
+        sourceIndex = nil
+        sourceIsPinned = false
+        sourceFrame = .zero
+        draggedWidth = 0
+        pendingItem = nil
+        pendingIndex = nil
+        pendingStartPoint = .zero
+    }
+
+    private func dropIndex(
+        forDraggedMidX draggedMidX: CGFloat,
+        draggingTabID: UUID,
+        layouts: [BrowserTabDragLayoutItem]
+    ) -> Int {
+        var resolvedIndex = (layouts.last?.index ?? 0) + 1
+
+        for layout in layouts where layout.id != draggingTabID {
+            if draggedMidX <= layout.frame.midX {
+                resolvedIndex = layout.index
+                break
+            }
         }
-        return true
+
+        return resolvedIndex
+    }
+
+    private static func describe(_ frame: CGRect) -> String {
+        "x=\(format(frame.minX)) y=\(format(frame.minY)) w=\(format(frame.width)) h=\(format(frame.height))"
+    }
+
+    private static func format(_ value: CGFloat) -> String {
+        String(format: "%.1f", Double(value))
     }
 }
 

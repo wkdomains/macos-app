@@ -20,16 +20,22 @@ struct ContentView: View {
     @State var shouldFocusBrowserAfterLoad = false
     @State var suggestionTask: Task<Void, Never>?
     @State var suggestions: [AddressSuggestion] = []
+    @StateObject private var tabStripMouseBridge = BrowserTabStripMouseEventBridge()
 
     var body: some View {
         VStack(spacing: 0) {
-            BrowserTabStripView(
-                items: browser.tabs,
-                selectTab: { browser.selectTab($0) },
-                addTab: { browser.addEmptyTab() },
-                moveTab: { browser.moveTab($0, to: $1) },
-                togglePinnedTab: { browser.togglePinnedTab($0) }
-            )
+            BrowserNonDraggableChromeHost(mouseBridge: tabStripMouseBridge) {
+                BrowserTabStripView(
+                    items: browser.tabs,
+                    selectTab: { browser.selectTab($0) },
+                    addTab: { browser.addEmptyTab() },
+                    moveTab: { browser.moveTab($0, toDropIndex: $1) },
+                    togglePinnedTab: { browser.togglePinnedTab($0) },
+                    mouseBridge: tabStripMouseBridge
+                )
+                .frame(height: 44)
+            }
+            .frame(height: 44)
             .zIndex(20)
 
             browserToolbar
@@ -191,6 +197,8 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
+        window.isMovable = false
+        window.isMovableByWindowBackground = false
         positionTrafficLights(in: window)
     }
 
