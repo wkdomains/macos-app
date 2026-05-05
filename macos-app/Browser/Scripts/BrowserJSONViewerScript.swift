@@ -217,7 +217,14 @@ extension BrowserModel {
 
         const caption = document.createElement("div");
         caption.className = "json-list-caption";
-        caption.textContent = `${listData.key} - ${listData.rows.length} rows - ${listColumns.length} columns`;
+
+        const captionText = document.createElement("span");
+        const hiddenColumns = new Set();
+
+        const resetColumns = document.createElement("button");
+        resetColumns.className = "json-column-reset";
+        resetColumns.type = "button";
+        resetColumns.textContent = "Reset columns";
 
         const scroller = document.createElement("div");
         scroller.className = "json-table-scroll";
@@ -225,12 +232,42 @@ extension BrowserModel {
         const table = document.createElement("table");
         table.className = "json-table";
 
+        const updateHiddenColumns = () => {
+          table.querySelectorAll("[data-column-index]").forEach((cell) => {
+            cell.hidden = hiddenColumns.has(cell.dataset.columnIndex);
+          });
+
+          const visibleColumns = listColumns.length - hiddenColumns.size;
+          captionText.textContent = `${listData.key} - ${listData.rows.length} rows - ${visibleColumns} of ${listColumns.length} columns`;
+          resetColumns.hidden = hiddenColumns.size === 0;
+        };
+
         const thead = document.createElement("thead");
         const headerRow = document.createElement("tr");
-        listColumns.forEach((key) => {
+        listColumns.forEach((key, columnIndex) => {
           const th = document.createElement("th");
           th.scope = "col";
-          th.textContent = key;
+          th.dataset.columnIndex = String(columnIndex);
+
+          const headerContent = document.createElement("span");
+          headerContent.className = "json-table-heading";
+
+          const label = document.createElement("span");
+          label.textContent = key;
+
+          const hideColumn = document.createElement("button");
+          hideColumn.className = "json-column-hide";
+          hideColumn.type = "button";
+          hideColumn.textContent = "x";
+          hideColumn.title = `Hide ${key}`;
+          hideColumn.setAttribute("aria-label", `Hide ${key} column`);
+          hideColumn.addEventListener("click", () => {
+            hiddenColumns.add(String(columnIndex));
+            updateHiddenColumns();
+          });
+
+          headerContent.append(label, hideColumn);
+          th.appendChild(headerContent);
           headerRow.appendChild(th);
         });
         thead.appendChild(headerRow);
@@ -238,8 +275,9 @@ extension BrowserModel {
         const tbody = document.createElement("tbody");
         listData.rows.forEach((row) => {
           const tr = document.createElement("tr");
-          listColumns.forEach((key) => {
+          listColumns.forEach((key, columnIndex) => {
             const td = document.createElement("td");
+            td.dataset.columnIndex = String(columnIndex);
             const value = row && typeof row === "object" && !Array.isArray(row) ? row[key] : undefined;
             const type = typeOf(value);
             td.className = `json-table-value is-${type}`;
@@ -250,9 +288,16 @@ extension BrowserModel {
           tbody.appendChild(tr);
         });
 
+        resetColumns.addEventListener("click", () => {
+          hiddenColumns.clear();
+          updateHiddenColumns();
+        });
+
+        caption.append(captionText, resetColumns);
         table.append(thead, tbody);
         scroller.appendChild(table);
         section.append(caption, scroller);
+        updateHiddenColumns();
         return section;
       };
 
@@ -438,10 +483,33 @@ extension BrowserModel {
         }
 
         .json-list-caption {
+          display: flex;
+          align-items: center;
+          gap: 10px;
           margin-bottom: 12px;
           color: var(--json-muted);
           font-size: 12px;
           font-weight: 600;
+        }
+
+        .json-column-reset {
+          min-height: 24px;
+          border: 1px solid var(--json-border);
+          border-radius: 6px;
+          padding: 0 8px;
+          background: var(--json-surface);
+          color: var(--json-text);
+          font: inherit;
+          cursor: pointer;
+        }
+
+        .json-column-reset:hover {
+          background: color-mix(in srgb, var(--json-accent) 8%, var(--json-surface));
+        }
+
+        .json-column-reset:focus-visible {
+          outline: 3px solid color-mix(in srgb, var(--json-accent) 28%, transparent);
+          outline-offset: 1px;
         }
 
         .json-table-scroll {
@@ -481,6 +549,44 @@ extension BrowserModel {
           background: color-mix(in srgb, var(--json-surface) 94%, var(--json-bg));
           color: var(--json-text);
           font-weight: 650;
+        }
+
+        .json-table-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          min-width: 0;
+        }
+
+        .json-table-heading > span {
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .json-column-hide {
+          width: 22px;
+          height: 22px;
+          flex: 0 0 22px;
+          border: 1px solid transparent;
+          border-radius: 999px;
+          background: transparent;
+          color: var(--json-muted);
+          font: inherit;
+          font-size: 11px;
+          line-height: 1;
+          cursor: pointer;
+        }
+
+        .json-column-hide:hover {
+          border-color: var(--json-border);
+          background: color-mix(in srgb, var(--json-accent) 9%, var(--json-surface));
+          color: var(--json-text);
+        }
+
+        .json-column-hide:focus-visible {
+          outline: 3px solid color-mix(in srgb, var(--json-accent) 28%, transparent);
+          outline-offset: 1px;
         }
 
         .json-table th:last-child,
