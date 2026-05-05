@@ -156,6 +156,14 @@ extension BrowserModel {
         selectTab(tab.id)
     }
 
+    func addTab(loading url: URL) {
+        let tab = makeTab(initialURL: url)
+        tabStates.append(tab)
+        load(url, in: tab, fallbackURLs: [])
+        attachCookiePersistence(to: tab)
+        selectTab(tab.id)
+    }
+
     func restoreOpenTabs(_ urls: [URL]) {
         guard !urls.isEmpty else {
             load(settingsStore.startupURL)

@@ -273,8 +273,13 @@ extension BrowserModel: WKUIDelegate {
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        if navigationAction.targetFrame == nil {
-            webView.load(navigationAction.request)
+        if navigationAction.targetFrame == nil,
+           let url = navigationAction.request.url {
+            if let scheme = url.scheme?.lowercased(), ["http", "https", "about"].contains(scheme) {
+                addTab(loading: url)
+            } else {
+                NSWorkspace.shared.open(url)
+            }
         }
 
         return nil

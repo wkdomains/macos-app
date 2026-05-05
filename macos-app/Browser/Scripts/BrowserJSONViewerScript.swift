@@ -101,6 +101,17 @@ extension BrowserModel {
         return displayText(value);
       };
 
+      const urlString = (value) => {
+        if (typeof value !== "string") return null;
+        try {
+          const url = new URL(value);
+          if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+          return url.href;
+        } catch (_) {
+          return null;
+        }
+      };
+
       const findRootList = (value) => {
         if (Array.isArray(value)) return { key: "root", rows: value };
         if (!value || typeof value !== "object") return null;
@@ -281,8 +292,20 @@ extension BrowserModel {
             const value = row && typeof row === "object" && !Array.isArray(row) ? row[key] : undefined;
             const type = typeOf(value);
             td.className = `json-table-value is-${type}`;
-            td.textContent = value === undefined ? "" : displayText(value);
             td.title = value === undefined ? "" : titleText(value);
+
+            const href = urlString(value);
+            if (href) {
+              const link = document.createElement("a");
+              link.href = href;
+              link.target = "_blank";
+              link.rel = "noopener noreferrer";
+              link.textContent = displayText(value);
+              td.appendChild(link);
+            } else {
+              td.textContent = value === undefined ? "" : displayText(value);
+            }
+
             tr.appendChild(td);
           });
           tbody.appendChild(tr);
@@ -610,6 +633,22 @@ extension BrowserModel {
         .json-table-value.is-array {
           color: var(--json-muted);
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
+
+        .json-table-value a {
+          color: var(--json-accent);
+          text-decoration: none;
+        }
+
+        .json-table-value a:hover {
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
+
+        .json-table-value a:focus-visible {
+          border-radius: 4px;
+          outline: 3px solid color-mix(in srgb, var(--json-accent) 28%, transparent);
+          outline-offset: 1px;
         }
 
         .json-list-empty {
