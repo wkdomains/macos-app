@@ -152,7 +152,7 @@ struct ContentView: View {
             botControls
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 5)
+        .frame(height: 40)
         .background(BrowserChromeColors.navigationBackground)
     }
 }
@@ -211,7 +211,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
 
             button.setFrameOrigin(NSPoint(
                 x: xPosition,
-                y: superview.bounds.height - 32
+                y: superview.bounds.height - 29
             ))
         }
     }

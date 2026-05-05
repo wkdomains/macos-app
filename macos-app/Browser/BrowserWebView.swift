@@ -142,7 +142,7 @@ final class BrowserWKWebView: WKWebView {
 
             button.setFrameOrigin(NSPoint(
                 x: xPosition,
-                y: superview.bounds.height - 32
+                y: superview.bounds.height - 29
             ))
         }
     }

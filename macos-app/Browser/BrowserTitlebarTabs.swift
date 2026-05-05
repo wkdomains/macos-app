@@ -361,9 +361,9 @@ struct BrowserTabStripView: View {
     let togglePinnedTab: (UUID) -> Void
 
     @StateObject private var faviconStore = BrowserTabStripFaviconStore()
-    private let trafficLightInset: CGFloat = 137
+    private let trafficLightInset: CGFloat = 120
     private let trailingInset: CGFloat = 10
-    private let tabStripHeight: CGFloat = 48
+    private let tabStripHeight: CGFloat = 44
     private let tabHeight: CGFloat = 36
     private let tabSpacing: CGFloat = 4
     private let pinnedTabWidth: CGFloat = 36
@@ -424,7 +424,7 @@ struct BrowserTabStripView: View {
             }
             .padding(.leading, trafficLightInset)
             .padding(.trailing, trailingInset)
-            .frame(width: proxy.size.width, height: tabStripHeight, alignment: .leading)
+            .frame(width: proxy.size.width, height: tabStripHeight, alignment: .center)
         }
         .frame(height: tabStripHeight)
         .background(BrowserChromeColors.tabStripBackground)
