@@ -527,16 +527,16 @@ private struct BrowserTabStripItemView: View {
 
     private var faviconView: some View {
         Group {
-            if item.isLoading {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.64)
-            } else if let favicon {
+            if let favicon {
                 Image(nsImage: favicon)
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            } else if item.isLoading {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.64)
             } else if let image = NSImage(named: NSImage.Name("AppIcon")) {
                 Image(nsImage: image)
                     .resizable()
@@ -558,12 +558,22 @@ private final class BrowserTabStripFaviconStore: ObservableObject {
     @Published private var images: [String: NSImage] = [:]
     private var requestedURLs = Set<String>()
     private var failedURLs = Set<String>()
+    private static let cacheLifetime: TimeInterval = 24 * 60 * 60
+
+    init() {
+        Self.createCacheDirectoryIfNeeded()
+    }
 
     func image(for url: URL?) -> NSImage? {
         guard let url else { return nil }
 
-        let key = Self.cacheKey(for: url)
+        let key = Self.domainKey(for: url)
         if images[key] == nil {
+            if let cachedImage = Self.cachedImage(for: key) {
+                images[key] = cachedImage
+                return cachedImage
+            }
+
             requestImage(for: url, cacheKey: key)
         }
 
@@ -585,6 +595,7 @@ private final class BrowserTabStripFaviconStore: ObservableObject {
                     continue
                 }
 
+                Self.writeCachedData(data, for: cacheKey)
                 images[cacheKey] = image
                 return
             }
@@ -593,18 +604,81 @@ private final class BrowserTabStripFaviconStore: ObservableObject {
         }
     }
 
-    private static func cacheKey(for url: URL) -> String {
-        guard let scheme = url.scheme?.lowercased(),
-              let host = url.host?.lowercased()
+    private static func domainKey(for url: URL) -> String {
+        url.host?.lowercased() ?? url.absoluteString.lowercased()
+    }
+
+    private static func cachedImage(for cacheKey: String) -> NSImage? {
+        let fileURL = cacheFileURL(for: cacheKey)
+        guard isFreshCacheFile(at: fileURL),
+              let data = try? Data(contentsOf: fileURL)
         else {
-            return url.absoluteString
+            return nil
         }
 
-        var key = "\(scheme)://\(host)"
-        if let port = url.port {
-            key += ":\(port)"
+        return image(from: data)
+    }
+
+    private static func writeCachedData(_ data: Data, for cacheKey: String) {
+        let fileURL = cacheFileURL(for: cacheKey)
+        do {
+            try ensureCacheDirectoryExists()
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            NSLog("Could not cache favicon for \(cacheKey): \(error.localizedDescription)")
         }
-        return key
+    }
+
+    private static func ensureCacheDirectoryExists() throws {
+        try FileManager.default.createDirectory(
+            at: cacheDirectoryURL,
+            withIntermediateDirectories: true
+        )
+    }
+
+    private static func createCacheDirectoryIfNeeded() {
+        do {
+            try ensureCacheDirectoryExists()
+        } catch {
+            NSLog("Could not create favicon cache directory: \(error.localizedDescription)")
+        }
+    }
+
+    private static func isFreshCacheFile(at fileURL: URL) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+              let modificationDate = attributes[.modificationDate] as? Date
+        else {
+            return false
+        }
+
+        return Date().timeIntervalSince(modificationDate) < cacheLifetime
+    }
+
+    private static var cacheDirectoryURL: URL {
+        realHomeDirectoryURL(fileManager: .default)
+            .appendingPathComponent(".cache/wkdomains/favicons", isDirectory: true)
+    }
+
+    private static func realHomeDirectoryURL(fileManager: FileManager) -> URL {
+        guard let passwd = getpwuid(getuid()),
+              let homePath = passwd.pointee.pw_dir
+        else {
+            return fileManager.homeDirectoryForCurrentUser
+        }
+
+        return URL(fileURLWithPath: String(cString: homePath), isDirectory: true)
+    }
+
+    private static func cacheFileURL(for cacheKey: String) -> URL {
+        cacheDirectoryURL.appendingPathComponent("\(safeCacheFileName(for: cacheKey)).favicon")
+    }
+
+    private static func safeCacheFileName(for value: String) -> String {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_")
+        let scalars = value.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? String(scalar) : "_"
+        }
+        return String(scalars.joined()).trimmingCharacters(in: CharacterSet(charactersIn: "."))
     }
 
     private static func faviconURLs(for url: URL) -> [URL] {
