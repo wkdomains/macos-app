@@ -23,6 +23,7 @@ final class BrowserModel: NSObject, ObservableObject {
     @Published var activeTabID: UUID
     @Published var isLoading = false
     @Published var isSecurePage = false
+    @Published var pageFindRequestID = UUID()
     @Published var currentIdentityName = "Default"
     @Published var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] = [
         BrowserSiteIdentityMenuItem(id: BrowserSiteIdentityMenuItem.defaultID, title: "Default", isCurrent: true)
@@ -241,6 +242,30 @@ final class BrowserModel: NSObject, ObservableObject {
     func searchWeb(for query: String) {
         guard let url = AddressResolver.searchURL(for: query) else { return }
         load(url)
+    }
+
+    func findInPage(
+        _ query: String,
+        backwards: Bool = false,
+        completion: ((Bool) -> Void)? = nil
+    ) {
+        let configuration = WKFindConfiguration()
+        configuration.backwards = backwards
+        configuration.caseSensitive = false
+        configuration.wraps = true
+
+        webView.find(query, configuration: configuration) { result in
+            completion?(result.matchFound)
+        }
+    }
+
+    func clearPageFind() {
+        let configuration = WKFindConfiguration()
+        webView.find("", configuration: configuration) { _ in }
+    }
+
+    func requestPageFind() {
+        pageFindRequestID = UUID()
     }
 
     func goBack() {

@@ -152,6 +152,7 @@ protocol BrowserContextMenuDelegate: AnyObject {
     func toggleBookmarkForCurrentPage()
     func openXHRFromContextMenu(at index: Int)
     func writeCurrentPageFilesToTemporaryDirectory()
+    func requestPageFind()
     var siteIdentityMenuItems: [BrowserSiteIdentityMenuItem] { get }
     var xhrContextMenuItems: [XHRContextMenuItem] { get }
     var currentIdentityName: String { get }
@@ -295,6 +296,14 @@ final class BrowserWKWebView: WKWebView {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard isActiveBrowserTab else {
             return false
+        }
+
+        let modifierFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifierFlags == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "f"
+        {
+            browserContextMenuDelegate?.requestPageFind()
+            return true
         }
 
         return super.performKeyEquivalent(with: event)

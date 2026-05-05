@@ -5,6 +5,7 @@
 //  Created by aa on 5/2/26.
 //
 
+import AppKit
 import SwiftUI
 import WebKit
 
@@ -35,7 +36,7 @@ extension ContentView {
                 BrowserWebViewStack(
                     tabs: browser.tabStates,
                     activeTabID: browser.activeTabID,
-                    blocksProgrammaticFocus: isAddressFocused
+                    blocksProgrammaticFocus: isAddressFocused || isPageFindFocused
                 )
 
                 if !browser.hasAttemptedNavigation {
@@ -47,6 +48,14 @@ extension ContentView {
                         browser.reload()
                     }
                 }
+
+                if isPageFindVisible {
+                    pageFindBar
+                        .padding(.top, 12)
+                        .padding(.trailing, 12)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
             .frame(width: browser.viewportMode.width)
             .frame(
@@ -56,6 +65,82 @@ extension ContentView {
             .background(Color(nsColor: .textBackgroundColor))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    var pageFindBar: some View {
+        HStack(spacing: 6) {
+            PageFindTextField(
+                text: $pageFindDraft,
+                isFocused: $isPageFindFocused,
+                selectAllOnFocus: $shouldSelectPageFindText,
+                onSubmit: { findPageText(backwards: false) },
+                onSubmitBackwards: { findPageText(backwards: true) },
+                onCancel: hidePageFindBar
+            )
+            .frame(minWidth: 140, maxWidth: 220, minHeight: 30, maxHeight: 30)
+            .layoutPriority(1)
+
+            if let pageFindMatchFound {
+                Text(pageFindMatchFound ? "Found" : "No results")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(pageFindMatchFound ? .secondary : Color(nsColor: .systemRed))
+                    .frame(width: 62, alignment: .leading)
+            }
+
+            Button {
+                findPageText(backwards: true)
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(pageFindDraft.isEmpty)
+            .foregroundStyle(pageFindDraft.isEmpty ? .tertiary : .primary)
+            .accessibilityLabel("Previous match")
+            .help("Previous match")
+
+            Button {
+                findPageText(backwards: false)
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(pageFindDraft.isEmpty)
+            .foregroundStyle(pageFindDraft.isEmpty ? .tertiary : .primary)
+            .accessibilityLabel("Next match")
+            .help("Next match")
+
+            Button {
+                hidePageFindBar()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Close find")
+            .help("Close find")
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(height: 38)
+        .frame(maxWidth: 360)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
+        )
     }
 
     var viewportControls: some View {
@@ -127,6 +212,44 @@ extension ContentView {
         }
         .frame(height: 2)
     }
+
+    func showPageFindBar() {
+        hideSuggestions()
+        isAddressEditing = false
+        isAddressFocused = false
+        isPageFindVisible = true
+        isPageFindFocused = true
+        shouldSelectPageFindText = true
+        shouldFocusBrowserAfterLoad = false
+
+        if !pageFindDraft.isEmpty {
+            findPageText()
+        }
+    }
+
+    func hidePageFindBar() {
+        isPageFindFocused = false
+        isPageFindVisible = false
+        pageFindMatchFound = nil
+        browser.clearPageFind()
+        focusBrowserContent()
+    }
+
+    func findPageText(backwards: Bool = false) {
+        guard isPageFindVisible else { return }
+
+        if pageFindDraft.isEmpty {
+            pageFindMatchFound = nil
+            browser.clearPageFind()
+            return
+        }
+
+        let query = pageFindDraft
+        browser.findInPage(query, backwards: backwards) { matchFound in
+            guard pageFindDraft == query else { return }
+            pageFindMatchFound = matchFound
+        }
+    }
 }
 
 struct BrowserToolbarButton: View {
@@ -146,5 +269,153 @@ struct BrowserToolbarButton: View {
         .foregroundStyle(isDisabled ? .tertiary : .primary)
         .disabled(isDisabled)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct PageFindTextField: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+    @Binding var selectAllOnFocus: Bool
+
+    let onSubmit: () -> Void
+    let onSubmitBackwards: () -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> BrowserPageFindNSTextField {
+        let textField = BrowserPageFindNSTextField()
+        textField.delegate = context.coordinator
+        textField.onKeyDown = { event in
+            context.coordinator.handleKeyDown(event)
+        }
+        textField.placeholderString = "Find in page"
+        textField.isBordered = false
+        textField.isBezeled = false
+        textField.drawsBackground = false
+        textField.focusRingType = .none
+        textField.font = NSFont.systemFont(ofSize: 13)
+        textField.lineBreakMode = .byTruncatingTail
+        textField.cell?.sendsActionOnEndEditing = false
+
+        return textField
+    }
+
+    func updateNSView(_ nsView: BrowserPageFindNSTextField, context: Context) {
+        context.coordinator.parent = self
+
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+
+        guard isFocused else { return }
+
+        DispatchQueue.main.async {
+            guard nsView.window != nil,
+                  nsView.window?.firstResponder !== nsView.currentEditor()
+            else {
+                context.coordinator.selectAllIfNeeded(in: nsView)
+                return
+            }
+
+            nsView.window?.makeFirstResponder(nsView)
+            context.coordinator.selectAllIfNeeded(in: nsView)
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: PageFindTextField
+
+        init(_ parent: PageFindTextField) {
+            self.parent = parent
+        }
+
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            parent.isFocused = true
+
+            if let textField = notification.object as? BrowserPageFindNSTextField {
+                DispatchQueue.main.async {
+                    self.selectAllIfNeeded(in: textField)
+                }
+            }
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let textField = notification.object as? NSTextField else { return }
+
+            parent.selectAllOnFocus = false
+            parent.text = textField.stringValue
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            parent.isFocused = false
+        }
+
+        func control(
+            _ control: NSControl,
+            textView: NSTextView,
+            doCommandBy commandSelector: Selector
+        ) -> Bool {
+            switch commandSelector {
+            case #selector(NSResponder.insertNewline(_:)),
+                 #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
+                if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
+                    parent.onSubmitBackwards()
+                } else {
+                    parent.onSubmit()
+                }
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                parent.onCancel()
+                return true
+            default:
+                return false
+            }
+        }
+
+        func handleKeyDown(_ event: NSEvent) -> Bool {
+            let modifierFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+            if event.keyCode == 53 {
+                parent.onCancel()
+                return true
+            }
+
+            guard event.keyCode == 36 || event.keyCode == 76 else {
+                return false
+            }
+
+            if modifierFlags.subtracting(.shift).isEmpty {
+                modifierFlags.contains(.shift) ? parent.onSubmitBackwards() : parent.onSubmit()
+                return true
+            }
+
+            return false
+        }
+
+        func selectAllIfNeeded(in textField: BrowserPageFindNSTextField) {
+            guard parent.selectAllOnFocus,
+                  let editor = textField.currentEditor()
+            else {
+                return
+            }
+
+            parent.selectAllOnFocus = false
+            editor.selectAll(nil)
+        }
+    }
+}
+
+private final class BrowserPageFindNSTextField: NSTextField {
+    var onKeyDown: ((NSEvent) -> Bool)?
+
+    override func keyDown(with event: NSEvent) {
+        if onKeyDown?(event) == true {
+            return
+        }
+
+        super.keyDown(with: event)
     }
 }

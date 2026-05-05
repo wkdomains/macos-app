@@ -15,6 +15,11 @@ struct ContentView: View {
     @State var isAddressEditing = false
     @State var isAddressFocused = false
     @State var isBotPanelVisible = false
+    @State var isPageFindFocused = false
+    @State var isPageFindVisible = false
+    @State var pageFindDraft = ""
+    @State var pageFindMatchFound: Bool?
+    @State var shouldSelectPageFindText = false
     @State var selectedSuggestionIndex: Int?
     @State var shouldSelectAddressText = false
     @State var shouldFocusBrowserAfterLoad = false
@@ -60,11 +65,26 @@ struct ContentView: View {
             .opacity(0)
             .accessibilityHidden(true)
         }
+        .overlay(alignment: .topLeading) {
+            Button {
+                showPageFindBar()
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .accessibilityHidden(true)
+        }
         .onAppear {
             addressDraft = browser.displayAddressText
             isAddressEditing = false
             isAddressFocused = false
+            isPageFindFocused = false
+            isPageFindVisible = false
+            pageFindMatchFound = nil
             shouldSelectAddressText = false
+            shouldSelectPageFindText = false
             shouldFocusBrowserAfterLoad = true
             hideSuggestions()
             focusBrowserContentWhenReady()
@@ -88,6 +108,12 @@ struct ContentView: View {
         .onChange(of: browser.activeTabID) { _, _ in
             addressDraft = browser.displayAddressText
             hideSuggestions()
+            pageFindMatchFound = nil
+            if isPageFindVisible {
+                DispatchQueue.main.async {
+                    findPageText()
+                }
+            }
 
             if browser.hasAttemptedNavigation {
                 isAddressEditing = false
@@ -98,11 +124,24 @@ struct ContentView: View {
             }
         }
         .onChange(of: browser.isLoading) { _, isLoading in
-            guard shouldFocusBrowserAfterLoad, !isLoading else { return }
-            focusPendingBrowserContent()
+            guard !isLoading else { return }
+
+            if shouldFocusBrowserAfterLoad {
+                focusPendingBrowserContent()
+            }
+
+            if isPageFindVisible, !pageFindDraft.isEmpty {
+                findPageText()
+            }
+        }
+        .onChange(of: browser.pageFindRequestID) { _, _ in
+            showPageFindBar()
+        }
+        .onChange(of: pageFindDraft) { _, _ in
+            findPageText()
         }
         .onChange(of: isAddressFocused) { _, isFocused in
-            browser.webView.blocksProgrammaticFocus = isFocused
+            browser.webView.blocksProgrammaticFocus = isFocused || isPageFindFocused
 
             if isFocused {
                 if shouldSelectAddressText || !shouldFocusBrowserAfterLoad {
@@ -118,6 +157,9 @@ struct ContentView: View {
                     addressDraft = browser.displayAddressText
                 }
             }
+        }
+        .onChange(of: isPageFindFocused) { _, isFocused in
+            browser.webView.blocksProgrammaticFocus = isFocused || isAddressFocused
         }
     }
 
