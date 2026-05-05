@@ -156,8 +156,7 @@ extension BrowserModel {
         }
       })();
 
-      const style = document.createElement("style");
-      style.textContent = `
+      const cssText = `
         :root {
           color-scheme: light dark;
           --json-bg: #fbfbfa;
@@ -454,6 +453,26 @@ extension BrowserModel {
         }
       `;
 
+      const installStyles = () => {
+        try {
+          if (window.CSSStyleSheet && "adoptedStyleSheets" in Document.prototype) {
+            const sheet = new CSSStyleSheet();
+            sheet.replaceSync(cssText);
+            sheet.__wkdomainsJSONViewerStyleSheet = true;
+            const currentSheets = Array.from(document.adoptedStyleSheets || [])
+              .filter((existingSheet) => !existingSheet.__wkdomainsJSONViewerStyleSheet);
+            document.adoptedStyleSheets = [...currentSheets, sheet];
+            return;
+          }
+        } catch (_) {}
+
+        try {
+          const style = document.createElement("style");
+          style.textContent = cssText;
+          (document.head || document.documentElement).appendChild(style);
+        } catch (_) {}
+      };
+
       const shell = document.createElement("main");
       shell.className = "json-shell";
       shell.dataset.view = "tree";
@@ -546,7 +565,7 @@ extension BrowserModel {
       toolbar.append(title, searchLabel, search, expandAll, collapseAll, toggleRaw, copyRaw);
       shell.append(toolbar, tree, raw);
 
-      document.head.appendChild(style);
+      installStyles();
       document.title = document.title || "JSON";
       document.body.replaceChildren(shell);
       document.documentElement.classList.add("wkdomains-json-document");
