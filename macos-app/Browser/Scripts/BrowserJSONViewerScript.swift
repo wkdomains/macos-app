@@ -82,6 +82,52 @@ extension BrowserModel {
         return scalarText(value);
       };
 
+      const displayText = (value) => {
+        const type = typeOf(value);
+        if (type === "string") return value;
+        if (type === "array" || type === "object") return compactPreview(value);
+        return scalarText(value);
+      };
+
+      const titleText = (value) => {
+        const type = typeOf(value);
+        if (type === "array" || type === "object") {
+          try {
+            return JSON.stringify(value);
+          } catch (_) {
+            return compactPreview(value);
+          }
+        }
+        return displayText(value);
+      };
+
+      const findRootList = (value) => {
+        if (Array.isArray(value)) return { key: "root", rows: value };
+        if (!value || typeof value !== "object") return null;
+
+        const key = Object.keys(value).find((candidate) => Array.isArray(value[candidate]));
+        if (!key) return null;
+        return { key, rows: value[key] };
+      };
+
+      const listData = findRootList(rootValue);
+
+      const inferColumns = (rows) => {
+        const columns = [];
+        const seen = new Set();
+        rows.forEach((row) => {
+          if (!row || typeof row !== "object" || Array.isArray(row)) return;
+          Object.keys(row).forEach((key) => {
+            if (seen.has(key)) return;
+            seen.add(key);
+            columns.push(key);
+          });
+        });
+        return columns;
+      };
+
+      const listColumns = listData ? inferColumns(listData.rows) : [];
+
       const makeScalarRow = (key, value, depth) => {
         const row = document.createElement("div");
         const type = typeOf(value);
@@ -146,6 +192,68 @@ extension BrowserModel {
 
         details.appendChild(children);
         return details;
+      };
+
+      const makeListTable = () => {
+        const section = document.createElement("section");
+        section.className = "json-list";
+        section.setAttribute("aria-label", "JSON list");
+
+        if (!listData || !listData.rows.length) {
+          const empty = document.createElement("div");
+          empty.className = "json-list-empty";
+          empty.textContent = "No root array found";
+          section.appendChild(empty);
+          return section;
+        }
+
+        if (!listColumns.length) {
+          const empty = document.createElement("div");
+          empty.className = "json-list-empty";
+          empty.textContent = `${listData.key} has ${listData.rows.length} items, but no object columns`;
+          section.appendChild(empty);
+          return section;
+        }
+
+        const caption = document.createElement("div");
+        caption.className = "json-list-caption";
+        caption.textContent = `${listData.key} - ${listData.rows.length} rows - ${listColumns.length} columns`;
+
+        const scroller = document.createElement("div");
+        scroller.className = "json-table-scroll";
+
+        const table = document.createElement("table");
+        table.className = "json-table";
+
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        listColumns.forEach((key) => {
+          const th = document.createElement("th");
+          th.scope = "col";
+          th.textContent = key;
+          headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+
+        const tbody = document.createElement("tbody");
+        listData.rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          listColumns.forEach((key) => {
+            const td = document.createElement("td");
+            const value = row && typeof row === "object" && !Array.isArray(row) ? row[key] : undefined;
+            const type = typeOf(value);
+            td.className = `json-table-value is-${type}`;
+            td.textContent = value === undefined ? "" : displayText(value);
+            td.title = value === undefined ? "" : titleText(value);
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+
+        table.append(thead, tbody);
+        scroller.appendChild(table);
+        section.append(caption, scroller);
+        return section;
       };
 
       const prettyText = (() => {
@@ -281,13 +389,23 @@ extension BrowserModel {
           background: color-mix(in srgb, var(--json-accent) 8%, var(--json-surface));
         }
 
+        .json-button:disabled {
+          cursor: default;
+          opacity: 0.48;
+        }
+
+        .json-button:disabled:hover {
+          background: var(--json-surface);
+        }
+
         .json-button:focus-visible {
           outline: 3px solid color-mix(in srgb, var(--json-accent) 28%, transparent);
           outline-offset: 1px;
         }
 
         .json-tree,
-        .json-raw {
+        .json-raw,
+        .json-list {
           padding: 18px 22px 24px;
           overflow-x: auto;
         }
@@ -299,12 +417,101 @@ extension BrowserModel {
           line-height: 1.55;
         }
 
-        .json-shell[data-view="raw"] .json-tree {
+        .json-list {
+          display: none;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        .json-shell[data-view="raw"] .json-tree,
+        .json-shell[data-view="raw"] .json-list,
+        .json-shell[data-view="list"] .json-tree,
+        .json-shell[data-view="list"] .json-raw {
           display: none;
         }
 
         .json-shell[data-view="raw"] .json-raw {
           display: block;
+        }
+
+        .json-shell[data-view="list"] .json-list {
+          display: block;
+        }
+
+        .json-list-caption {
+          margin-bottom: 12px;
+          color: var(--json-muted);
+          font-size: 12px;
+          font-weight: 600;
+        }
+
+        .json-table-scroll {
+          overflow: auto;
+          border: 1px solid var(--json-border);
+          border-radius: 8px;
+        }
+
+        .json-table {
+          width: max-content;
+          min-width: 100%;
+          border-collapse: separate;
+          border-spacing: 0;
+          font-size: 12px;
+          line-height: 1.45;
+        }
+
+        .json-table th,
+        .json-table td {
+          width: 220px;
+          min-width: 120px;
+          max-width: 320px;
+          padding: 8px 10px;
+          border-right: 1px solid var(--json-border);
+          border-bottom: 1px solid var(--json-border);
+          overflow: hidden;
+          text-align: left;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          vertical-align: top;
+        }
+
+        .json-table th {
+          position: sticky;
+          top: 0;
+          z-index: 1;
+          background: color-mix(in srgb, var(--json-surface) 94%, var(--json-bg));
+          color: var(--json-text);
+          font-weight: 650;
+        }
+
+        .json-table th:last-child,
+        .json-table td:last-child {
+          border-right: 0;
+        }
+
+        .json-table tbody tr:last-child td {
+          border-bottom: 0;
+        }
+
+        .json-table tbody tr:hover td {
+          background: color-mix(in srgb, var(--json-accent) 6%, transparent);
+        }
+
+        .json-table-value.is-string { color: var(--json-string); }
+        .json-table-value.is-number { color: var(--json-number); }
+        .json-table-value.is-boolean { color: var(--json-boolean); font-weight: 650; }
+        .json-table-value.is-null { color: var(--json-null); font-weight: 650; }
+        .json-table-value.is-object,
+        .json-table-value.is-array {
+          color: var(--json-muted);
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        }
+
+        .json-list-empty {
+          min-height: 160px;
+          display: grid;
+          place-items: center;
+          color: var(--json-muted);
+          font-size: 13px;
         }
 
         .json-line,
@@ -446,9 +653,15 @@ extension BrowserModel {
             flex: 1 1 auto;
           }
 
-          .json-tree,
-          .json-raw {
+        .json-tree,
+        .json-raw,
+        .json-list {
             padding: 14px 12px 18px;
+          }
+
+          .json-table th,
+          .json-table td {
+            max-width: 220px;
           }
         }
       `;
@@ -518,6 +731,8 @@ extension BrowserModel {
       raw.className = "json-raw";
       raw.textContent = prettyText;
 
+      const list = makeListTable();
+
       const expandAll = button("Expand all", () => {
         tree.querySelectorAll("details").forEach((details) => { details.open = true; });
       });
@@ -528,10 +743,24 @@ extension BrowserModel {
         if (root) root.open = true;
       });
 
+      const toggleList = button("List", () => {
+        const isList = shell.dataset.view === "list";
+        shell.dataset.view = isList ? "tree" : "list";
+        toggleList.textContent = isList ? "List" : "Tree";
+        toggleRaw.textContent = "Raw";
+      });
+      toggleList.disabled = !listData || !listColumns.length;
+      if (listData && listColumns.length) {
+        toggleList.title = `Show ${listData.key} as a table`;
+      } else {
+        toggleList.title = "No root array with object rows found";
+      }
+
       const toggleRaw = button("Raw", () => {
         const isRaw = shell.dataset.view === "raw";
         shell.dataset.view = isRaw ? "tree" : "raw";
         toggleRaw.textContent = isRaw ? "Raw" : "Tree";
+        toggleList.textContent = "List";
       });
 
       const copyRaw = button("Copy", () => {
@@ -562,8 +791,8 @@ extension BrowserModel {
         });
       });
 
-      toolbar.append(title, searchLabel, search, expandAll, collapseAll, toggleRaw, copyRaw);
-      shell.append(toolbar, tree, raw);
+      toolbar.append(title, searchLabel, search, expandAll, collapseAll, toggleList, toggleRaw, copyRaw);
+      shell.append(toolbar, tree, raw, list);
 
       installStyles();
       document.title = document.title || "JSON";
