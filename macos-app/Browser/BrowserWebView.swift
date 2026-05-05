@@ -129,8 +129,8 @@ final class BrowserWKWebView: WKWebView {
         window.styleMask.insert(.fullSizeContentView)
         let xPositions: [NSWindow.ButtonType: CGFloat] = [
             .closeButton: 16,
-            .miniaturizeButton: 46,
-            .zoomButton: 76
+            .miniaturizeButton: 39,
+            .zoomButton: 62
         ]
 
         for (buttonType, xPosition) in xPositions {
