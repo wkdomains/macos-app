@@ -142,6 +142,31 @@ extension BrowserModel {
         return false;
       };
 
+      const COMPUTED_SURFACE_TAGS = new Set([
+        "DIV", "MAIN", "SECTION", "ARTICLE", "ASIDE", "HEADER", "FOOTER",
+        "TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH", "UL", "OL", "LI"
+      ]);
+
+      const shouldAnalyzeComputedSurface = (element, tag, style) => {
+        if (!COMPUTED_SURFACE_TAGS.has(tag) || !style) return false;
+        if (hasMediaBackdrop(element, style)) return false;
+
+        const background = parseColor(style.backgroundColor);
+        if (!background || background.a <= 0.08 || relativeLuminance(background) <= 0.56) {
+          return false;
+        }
+
+        const rect = visibleRectFor(element);
+        if (rect.area < 1600) return false;
+
+        const viewportArea = Math.max(1, innerWidth * innerHeight);
+        if (rect.area / viewportArea > 0.92 && element !== document.body && element !== document.documentElement) {
+          return false;
+        }
+
+        return true;
+      };
+
       const shouldSkipElement = (element) => {
         if (!element || !element.tagName || SKIP_TAGS.has(element.tagName.toUpperCase())) return true;
         if (element.classList && element.classList.contains(INLINE_CLASS)) return true;
@@ -239,6 +264,9 @@ extension BrowserModel {
         for (const override of BORDER_OVERRIDES) {
           setOverride(element, override.attr, override.prop, null);
         }
+        for (const override of SHORTHAND_OVERRIDES) {
+          setOverride(element, override.attr, override.prop, null);
+        }
         removeGeneratedInlineVariables(element);
       };
 
@@ -316,7 +344,8 @@ extension BrowserModel {
           } else if (lower === "background") {
             const transformed = transformCSSValue(property, value, element);
             if (transformed) {
-              setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", transformed);
+              const shorthand = SHORTHAND_OVERRIDES.find((override) => override.css === "background");
+              setOverride(element, shorthand.attr, shorthand.prop, transformed);
             } else {
               COLOR_RE.lastIndex = 0;
               const match = COLOR_RE.exec(value);
@@ -337,6 +366,11 @@ extension BrowserModel {
           } else if (lower === "box-shadow") {
             setInlineCustomProp(element, BOX_SHADOW_ATTRIBUTE, "--wkdomains-forced-dark-box-shadow", "box-shadow", property, value);
           } else {
+            for (const override of SHORTHAND_OVERRIDES) {
+              if (lower === override.css) {
+                setInlineCustomProp(element, override.attr, override.prop, override.css, property, value);
+              }
+            }
             for (const override of BORDER_OVERRIDES) {
               if (lower === override.css) {
                 setInlineCustomProp(element, override.attr, override.prop, override.css, property, value);
@@ -361,14 +395,19 @@ extension BrowserModel {
           return;
         }
 
+        let style = null;
         const shouldFallbackToComputedStyle = hasInlineColors
           || SVG_TAGS.has(tag)
-          || element.matches("input, textarea, select, button, [contenteditable='true'], [role='textbox']");
+          || element.matches("input, textarea, select, button, [contenteditable='true'], [role='textbox']")
+          || (COMPUTED_SURFACE_TAGS.has(tag) && (() => {
+            style = captureSourceStyle(element) || getComputedStyle(element);
+            return shouldAnalyzeComputedSurface(element, tag, style);
+          })());
         if (!shouldFallbackToComputedStyle) {
           return;
         }
 
-        const style = captureSourceStyle(element) || getComputedStyle(element);
+        style = style || captureSourceStyle(element) || getComputedStyle(element);
 
         if (!SVG_TAGS.has(tag)) {
           const color = transformForeground(parseColor(style.color), element);

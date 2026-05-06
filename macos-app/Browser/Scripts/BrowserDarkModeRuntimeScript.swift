@@ -482,13 +482,7 @@ extension BrowserModel {
         scheduled = false;
         if (!document.documentElement || !document.body) return;
 
-        if (forced !== true) {
-          forced = !withFallbackDisabled(isPageAlreadyDark);
-          if (!forced) {
-            removeBaseStyle();
-            return;
-          }
-        }
+        forced = true;
 
         applying = true;
         ensureBaseStyle();

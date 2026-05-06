@@ -51,6 +51,16 @@ extension BrowserModel {
         { js: "columnRuleColor", css: "column-rule-color", attr: "data-wkdomains-forced-dark-column-rule", prop: "--wkdomains-forced-dark-column-rule" },
         { js: "textDecorationColor", css: "text-decoration-color", attr: "data-wkdomains-forced-dark-text-decoration", prop: "--wkdomains-forced-dark-text-decoration" }
       ];
+      const SHORTHAND_OVERRIDES = [
+        { css: "background", attr: "data-wkdomains-forced-dark-bg-short", prop: "--wkdomains-forced-dark-bg-short" },
+        { css: "border", attr: "data-wkdomains-forced-dark-border-short", prop: "--wkdomains-forced-dark-border-short" },
+        { css: "border-top", attr: "data-wkdomains-forced-dark-border-top-short", prop: "--wkdomains-forced-dark-border-top-short" },
+        { css: "border-right", attr: "data-wkdomains-forced-dark-border-right-short", prop: "--wkdomains-forced-dark-border-right-short" },
+        { css: "border-bottom", attr: "data-wkdomains-forced-dark-border-bottom-short", prop: "--wkdomains-forced-dark-border-bottom-short" },
+        { css: "border-left", attr: "data-wkdomains-forced-dark-border-left-short", prop: "--wkdomains-forced-dark-border-left-short" },
+        { css: "outline", attr: "data-wkdomains-forced-dark-outline-short", prop: "--wkdomains-forced-dark-outline-short" },
+        { css: "column-rule", attr: "data-wkdomains-forced-dark-column-rule-short", prop: "--wkdomains-forced-dark-column-rule-short" }
+      ];
       const ATTRIBUTES_OWNED_BY_DARK_MODE = [
         COLOR_ATTRIBUTE,
         BACKGROUND_ATTRIBUTE,
@@ -58,7 +68,8 @@ extension BrowserModel {
         FILL_ATTRIBUTE,
         STROKE_ATTRIBUTE,
         BOX_SHADOW_ATTRIBUTE,
-        ...BORDER_OVERRIDES.map((override) => override.attr)
+        ...BORDER_OVERRIDES.map((override) => override.attr),
+        ...SHORTHAND_OVERRIDES.map((override) => override.attr)
       ];
       const COLOR_RE = /(?:rgba?|hsla?|hwb|color)\([^)]*\)|#[0-9a-f]{3,8}\b|\b(?:aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blue|brown|coral|crimson|cyan|fuchsia|gold|gray|green|grey|indigo|ivory|khaki|lavender|lime|magenta|maroon|navy|olive|orange|orchid|pink|plum|purple|red|salmon|silver|tan|teal|tomato|transparent|violet|white|yellow)\b/gi;
       const STYLE_SELECTOR = "style, link[rel*='stylesheet' i]:not([disabled])";

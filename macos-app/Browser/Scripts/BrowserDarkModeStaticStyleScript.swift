@@ -116,7 +116,8 @@ extension BrowserModel {
           [FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", "fill"],
           [STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", "stroke"],
           [BOX_SHADOW_ATTRIBUTE, "--wkdomains-forced-dark-box-shadow", "box-shadow"],
-          ...BORDER_OVERRIDES.map((override) => [override.attr, override.prop, override.css])
+          ...BORDER_OVERRIDES.map((override) => [override.attr, override.prop, override.css]),
+          ...SHORTHAND_OVERRIDES.map((override) => [override.attr, override.prop, override.css])
         ];
 
         return inlineOverrides.map(([attribute, property, cssProperty]) => [
