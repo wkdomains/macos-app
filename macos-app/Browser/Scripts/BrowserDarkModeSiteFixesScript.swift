@@ -330,6 +330,21 @@ extension BrowserModel {
         return host === normalized || host.endsWith(`.${normalized}`);
       };
 
+      const siteFixPatternSpecificity = (pattern) => {
+        const normalized = String(pattern || "").toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        if (!normalized || normalized === "*") return 0;
+        const wildcardPenalty = normalized.includes("*") ? 1000 : 0;
+        const exactBonus = String(location.hostname || "").toLowerCase() === normalized ? 10000 : 0;
+        return exactBonus + normalized.replaceAll("*", "").length - wildcardPenalty;
+      };
+
+      const siteFixSpecificity = (fix) => {
+        if (!fix || !Array.isArray(fix.url)) return 0;
+        return fix.url
+          .filter(siteFixMatchesPattern)
+          .reduce((best, pattern) => Math.max(best, siteFixPatternSpecificity(pattern)), 0);
+      };
+
       const combineSiteFixes = (fixes) => {
         if (!fixes.length) return null;
         const combined = {
@@ -363,7 +378,7 @@ extension BrowserModel {
       const genericSiteFix = matchingSiteFixes.find((fix) => fix.url.includes("*")) || null;
       const specificSiteFixes = matchingSiteFixes.filter((fix) => !fix.url.includes("*"));
       const mostSpecificSiteFix = specificSiteFixes.reduce((best, fix) => {
-        const specificity = String(fix.url[0] || "").length;
+        const specificity = siteFixSpecificity(fix);
         if (!best || specificity > best.specificity) {
           return { fix, specificity };
         }

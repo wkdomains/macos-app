@@ -11,8 +11,52 @@ extension BrowserModel {
       const scale = (value, inLow, inHigh, outLow, outHigh) => outLow + ((value - inLow) / (inHigh - inLow)) * (outHigh - outLow);
       const colorParseCache = new Map();
       const colorProbe = document.createElement("span");
+      const NAMED_COLORS = {
+        aliceblue: { r: 240, g: 248, b: 255, a: 1 },
+        antiquewhite: { r: 250, g: 235, b: 215, a: 1 },
+        aqua: { r: 0, g: 255, b: 255, a: 1 },
+        aquamarine: { r: 127, g: 255, b: 212, a: 1 },
+        azure: { r: 240, g: 255, b: 255, a: 1 },
+        beige: { r: 245, g: 245, b: 220, a: 1 },
+        bisque: { r: 255, g: 228, b: 196, a: 1 },
+        black: { r: 0, g: 0, b: 0, a: 1 },
+        blue: { r: 0, g: 0, b: 255, a: 1 },
+        brown: { r: 165, g: 42, b: 42, a: 1 },
+        coral: { r: 255, g: 127, b: 80, a: 1 },
+        crimson: { r: 220, g: 20, b: 60, a: 1 },
+        cyan: { r: 0, g: 255, b: 255, a: 1 },
+        fuchsia: { r: 255, g: 0, b: 255, a: 1 },
+        gold: { r: 255, g: 215, b: 0, a: 1 },
+        gray: { r: 128, g: 128, b: 128, a: 1 },
+        green: { r: 0, g: 128, b: 0, a: 1 },
+        grey: { r: 128, g: 128, b: 128, a: 1 },
+        indigo: { r: 75, g: 0, b: 130, a: 1 },
+        ivory: { r: 255, g: 255, b: 240, a: 1 },
+        khaki: { r: 240, g: 230, b: 140, a: 1 },
+        lavender: { r: 230, g: 230, b: 250, a: 1 },
+        lime: { r: 0, g: 255, b: 0, a: 1 },
+        magenta: { r: 255, g: 0, b: 255, a: 1 },
+        maroon: { r: 128, g: 0, b: 0, a: 1 },
+        navy: { r: 0, g: 0, b: 128, a: 1 },
+        olive: { r: 128, g: 128, b: 0, a: 1 },
+        orange: { r: 255, g: 165, b: 0, a: 1 },
+        orchid: { r: 218, g: 112, b: 214, a: 1 },
+        pink: { r: 255, g: 192, b: 203, a: 1 },
+        plum: { r: 221, g: 160, b: 221, a: 1 },
+        purple: { r: 128, g: 0, b: 128, a: 1 },
+        red: { r: 255, g: 0, b: 0, a: 1 },
+        salmon: { r: 250, g: 128, b: 114, a: 1 },
+        silver: { r: 192, g: 192, b: 192, a: 1 },
+        tan: { r: 210, g: 180, b: 140, a: 1 },
+        teal: { r: 0, g: 128, b: 128, a: 1 },
+        tomato: { r: 255, g: 99, b: 71, a: 1 },
+        transparent: { r: 0, g: 0, b: 0, a: 0 },
+        violet: { r: 238, g: 130, b: 238, a: 1 },
+        white: { r: 255, g: 255, b: 255, a: 1 },
+        yellow: { r: 255, g: 255, b: 0, a: 1 }
+      };
 
-      const parseComponent = (value, isAlpha = false) => {
+      const parseComponent = (value, isAlpha = false, scaleUnitInterval = false) => {
         if (!value) return isAlpha ? 1 : 0;
         const token = String(value).trim();
         if (token.endsWith("%")) {
@@ -24,7 +68,7 @@ extension BrowserModel {
         const parsed = Number.parseFloat(token);
         if (!Number.isFinite(parsed)) return isAlpha ? 1 : 0;
         if (isAlpha) return clamp(parsed, 0, 1);
-        return clamp(parsed <= 1 ? parsed * 255 : parsed, 0, 255);
+        return clamp(scaleUnitInterval && parsed <= 1 ? parsed * 255 : parsed, 0, 255);
       };
 
       const parseRGBLike = (value) => {
@@ -46,15 +90,68 @@ extension BrowserModel {
           .map((part) => part.trim())
           .filter(Boolean);
 
-        const offset = functionName.includes("color") && Number.isNaN(Number.parseFloat(parts[0])) ? 1 : 0;
+        const isColorFunction = functionName.includes("color");
+        const offset = isColorFunction && Number.isNaN(Number.parseFloat(parts[0])) ? 1 : 0;
         if (parts.length - offset < 3) return null;
 
         return {
-          r: parseComponent(parts[offset]),
-          g: parseComponent(parts[offset + 1]),
-          b: parseComponent(parts[offset + 2]),
+          r: parseComponent(parts[offset], false, isColorFunction),
+          g: parseComponent(parts[offset + 1], false, isColorFunction),
+          b: parseComponent(parts[offset + 2], false, isColorFunction),
           a: parseComponent(parts[offset + 3], true)
         };
+      };
+
+      const parseHexColor = (value) => {
+        const match = String(value || "").trim().toLowerCase().match(/^#([0-9a-f]{3,8})$/);
+        if (!match) return null;
+        let hex = match[1];
+        if (hex.length === 3 || hex.length === 4) {
+          hex = Array.from(hex).map((char) => `${char}${char}`).join("");
+        }
+        if (hex.length !== 6 && hex.length !== 8) return null;
+        return {
+          r: Number.parseInt(hex.slice(0, 2), 16),
+          g: Number.parseInt(hex.slice(2, 4), 16),
+          b: Number.parseInt(hex.slice(4, 6), 16),
+          a: hex.length === 8 ? Number.parseInt(hex.slice(6, 8), 16) / 255 : 1
+        };
+      };
+
+      const RAW_COLOR_RE = /^\s*(-?(?:\d+|\d*\.\d+)%?)\s*(?:,|\s)\s*(-?(?:\d+|\d*\.\d+)%?)\s*(?:,|\s)\s*(-?(?:\d+|\d*\.\d+)%?)(?:\s*(?:\/|,)\s*(-?(?:\d+|\d*\.\d+)%?))?\s*$/;
+
+      const parseRawColorValue = (value) => {
+        if (!value || String(value).includes("var(") || String(value).includes("calc(")) return null;
+        const match = String(value).trim().match(RAW_COLOR_RE);
+        if (!match) return null;
+        return {
+          r: parseComponent(match[1]),
+          g: parseComponent(match[2]),
+          b: parseComponent(match[3]),
+          a: parseComponent(match[4], true)
+        };
+      };
+
+      const replaceRawColorValue = (value, transformer) => {
+        const color = parseRawColorValue(value);
+        if (!color) return null;
+        const transformed = transformer(color);
+        if (!transformed) return null;
+        const parsed = parseColor(transformed);
+        if (!parsed) return transformed;
+        const alpha = color.a == null ? 1 : color.a;
+        const rawText = String(value || "");
+        const r = Math.round(parsed.r);
+        const g = Math.round(parsed.g);
+        const b = Math.round(parsed.b);
+        if (rawText.includes(",") && !rawText.includes("/")) {
+          return alpha >= 0.995
+            ? `${r}, ${g}, ${b}`
+            : `${r}, ${g}, ${b}, ${Math.round(alpha * 1000) / 1000}`;
+        }
+        return alpha >= 0.995
+          ? `${r} ${g} ${b}`
+          : `${r} ${g} ${b} / ${Math.round(alpha * 1000) / 1000}`;
       };
 
       const normalizeColor = (value) => {
@@ -75,8 +172,16 @@ extension BrowserModel {
       };
 
       const parseColor = (value) => {
+        const text = String(value || "").trim().toLowerCase();
+        const hex = parseHexColor(text);
+        if (hex) return hex;
+        if (NAMED_COLORS[text]) return NAMED_COLORS[text];
         const normalized = normalizeColor(value);
-        return normalized ? parseRGBLike(normalized) : parseRGBLike(value);
+        if (normalized) {
+          const parsed = parseRGBLike(normalized) || parseHexColor(normalized) || NAMED_COLORS[String(normalized).trim().toLowerCase()];
+          if (parsed) return parsed;
+        }
+        return parseRGBLike(value);
       };
 
       const toRGBA = (color) => {

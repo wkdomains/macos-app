@@ -258,7 +258,9 @@ extension BrowserModel {
 
         const fallbackStyle = createOrUpdateStyle("wkdomains-darkreader--fallback", document);
         fallbackStyle.id = STYLE_ID;
-        fallbackStyle.textContent = getFallbackStyle();
+        if (!fallbackWasCleared || loadingStyles.size > 0) {
+          fallbackStyle.textContent = getFallbackStyle();
+        }
         injectStaticStyle(fallbackStyle, null, "fallback");
 
         const userAgentStyle = createOrUpdateStyle("wkdomains-darkreader--user-agent", document);

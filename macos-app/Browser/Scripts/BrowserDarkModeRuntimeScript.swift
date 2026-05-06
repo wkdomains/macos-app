@@ -19,6 +19,9 @@ extension BrowserModel {
       let customElementRegistryProxyActive = false;
       const INLINE_STYLE_MUTATION_ATTRIBUTES = new Set(INLINE_STYLE_ATTRS);
       const STYLE_SHEET_MUTATION_ATTRIBUTES = new Set(["href", "media", "disabled"]);
+      let queuedMutations = [];
+      let mutationFlushScheduled = false;
+      let mutationFlushTimer = null;
       const installedAt = (() => {
         try { return performance.now(); } catch (_) { return Date.now(); }
       })();
@@ -361,9 +364,53 @@ extension BrowserModel {
         }
       };
 
+      const walkElementSubtree = (root, iterate, limit = Number.POSITIVE_INFINITY) => {
+        if (!root) return false;
+        let count = 0;
+        const visit = (element) => {
+          count += 1;
+          iterate(element);
+          return count >= limit;
+        };
+
+        if (root.nodeType === Node.ELEMENT_NODE && visit(root)) {
+          return true;
+        }
+
+        const walkerRoot = root.nodeType === Node.DOCUMENT_NODE ? root.documentElement : root;
+        if (!walkerRoot || !document.createTreeWalker) return false;
+
+        const showElement = window.NodeFilter ? NodeFilter.SHOW_ELEMENT : 1;
+        const walker = document.createTreeWalker(walkerRoot, showElement);
+        let node = walker.nextNode();
+        while (node) {
+          if (visit(node)) return true;
+          node = walker.nextNode();
+        }
+        return false;
+      };
+
+      const discoverExistingShadowRoots = (root = document, limit = Number.POSITIVE_INFINITY) => {
+        return walkElementSubtree(root, (element) => {
+          if (element.shadowRoot) discoverShadowRoot(element.shadowRoot);
+        }, limit);
+      };
+
+      const discoverShadowRootsForAddedNode = (node) => {
+        if (!node) return;
+        if (node.nodeType === Node.ELEMENT_NODE && node.shadowRoot) {
+          discoverShadowRoot(node.shadowRoot);
+        }
+        const deferred = discoverExistingShadowRoots(node, 512);
+        if (deferred) {
+          window.setTimeout(() => discoverExistingShadowRoots(node), 0);
+        }
+      };
+
       const handleMutations = (mutations) => {
         if (applying) return;
         let stylesChanged = false;
+        let inlineChanged = false;
 
         for (const mutation of mutations) {
           if (mutation.type === "attributes") {
@@ -373,6 +420,7 @@ extension BrowserModel {
             if (INLINE_STYLE_MUTATION_ATTRIBUTES.has(mutation.attributeName)) {
               clearCachedSourceFor(mutation.target);
               markDirty(mutation.target);
+              inlineChanged = true;
             }
             if (
               STYLE_SHEET_MUTATION_ATTRIBUTES.has(mutation.attributeName)
@@ -385,15 +433,17 @@ extension BrowserModel {
 
           for (const node of mutation.addedNodes) {
             if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) continue;
-            markDirty(node);
             if (shouldManageStyle(node)) stylesChanged = true;
             if (node.querySelector && node.querySelector(STYLE_SELECTOR)) stylesChanged = true;
-            if (node.shadowRoot) discoverShadowRoot(node.shadowRoot);
-            if (node.querySelectorAll) {
-              for (const host of node.querySelectorAll("*")) {
-                if (host.shadowRoot) discoverShadowRoot(host.shadowRoot);
-              }
+            if (
+              node.nodeType === Node.DOCUMENT_FRAGMENT_NODE
+              || (node.matches && node.matches(STYLE_OVERRIDE_SELECTOR))
+              || (node.querySelector && node.querySelector(STYLE_OVERRIDE_SELECTOR))
+            ) {
+              markDirty(node);
+              inlineChanged = true;
             }
+            discoverShadowRootsForAddedNode(node);
           }
 
           for (const node of mutation.removedNodes) {
@@ -402,7 +452,21 @@ extension BrowserModel {
         }
 
         if (stylesChanged) scheduleStyleSync(0);
-        schedule(0);
+        if (inlineChanged) schedule(0);
+      };
+
+      const queueMutations = (mutations) => {
+        if (applying || !mutations || mutations.length === 0) return;
+        queuedMutations.push(...mutations);
+        if (mutationFlushScheduled) return;
+        mutationFlushScheduled = true;
+        mutationFlushTimer = window.setTimeout(() => {
+          mutationFlushScheduled = false;
+          mutationFlushTimer = null;
+          const mutationsToHandle = queuedMutations;
+          queuedMutations = [];
+          handleMutations(mutationsToHandle);
+        }, 16);
       };
 
       const watchRoot = (root) => {
@@ -410,7 +474,7 @@ extension BrowserModel {
         const target = root.nodeType === Node.DOCUMENT_NODE ? document.documentElement : root;
         if (!target) return;
 
-        const observer = new MutationObserver(handleMutations);
+        const observer = new MutationObserver(queueMutations);
         observer.observe(target, {
           attributes: true,
           attributeFilter: [
@@ -466,13 +530,6 @@ extension BrowserModel {
         } catch (_) {}
       };
 
-      const discoverExistingShadowRoots = (root = document) => {
-        if (!root || !root.querySelectorAll) return;
-        for (const element of root.querySelectorAll("*")) {
-          if (element.shadowRoot) discoverShadowRoot(element.shadowRoot);
-        }
-      };
-
       const run = () => {
         scheduled = false;
         if (!document.documentElement || !document.body) return;
@@ -481,10 +538,10 @@ extension BrowserModel {
 
         applying = true;
         ensureBaseStyle();
-        updateManageableStyles(document);
+        discoverExistingShadowRoots(document);
+        syncAllStyles();
         ensureSiteFixStyle();
         tryInvertPDF();
-        discoverExistingShadowRoots(document);
 
         const roots = dirtyRoots.size > 0 ? Array.from(dirtyRoots) : [document];
         dirtyRoots.clear();
@@ -577,8 +634,10 @@ extension BrowserModel {
         applying = false;
         readyFinalized = false;
         dynamicStyleStarted = false;
+        fallbackWasCleared = false;
         shadowProxyActive = false;
         customElementRegistryProxyActive = false;
+        cancelStyleSync();
         stopStylesheetProxy();
         stopStylePositionWatchers();
         for (const observer of rootObservers.values()) {
@@ -586,6 +645,12 @@ extension BrowserModel {
         }
         rootObservers.clear();
         dirtyRoots.clear();
+        queuedMutations = [];
+        if (mutationFlushTimer) {
+          window.clearTimeout(mutationFlushTimer);
+          mutationFlushTimer = null;
+        }
+        mutationFlushScheduled = false;
       };
 
       const removeDynamicTheme = () => {

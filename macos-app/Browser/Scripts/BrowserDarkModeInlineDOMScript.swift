@@ -448,10 +448,6 @@ extension BrowserModel {
         for (const element of root.querySelectorAll(STYLE_OVERRIDE_SELECTOR)) {
           applyElement(element);
         }
-
-        for (const element of root.querySelectorAll("*")) {
-          if (element.shadowRoot) discoverShadowRoot(element.shadowRoot);
-        }
       };
 
       const clearCachedSourceFor = (node) => {
@@ -466,7 +462,7 @@ extension BrowserModel {
         discoveredShadowRoots.add(root);
         createShadowStaticStyleOverrides(root);
         applyRoot(root);
-        updateManageableStyles(root);
+        scheduleStyleSync(0);
         watchRoot(root);
       };
 

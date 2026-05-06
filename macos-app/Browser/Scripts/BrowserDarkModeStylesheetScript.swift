@@ -12,7 +12,13 @@ extension BrowserModel {
       const managedStyleElements = new Set();
       const managedAdoptedRoots = new Set();
       let stylesheetSyncScheduled = false;
+      let stylesheetSyncTimer = null;
       let stylesheetProxyActive = false;
+      let loadingStylesCounter = 0;
+      const loadingStyles = new Set();
+      const loadingStyleIDsByElement = new WeakMap();
+      const loadingStyleListenersByElement = new WeakMap();
+      let fallbackWasCleared = false;
 
       const cssURLMatchesPattern = (url, pattern) => {
         const value = String(url || "");
@@ -57,6 +63,65 @@ extension BrowserModel {
           return sheet && sheet.cssRules ? sheet.cssRules : null;
         } catch (_) {
           return null;
+        }
+      };
+
+      const fallbackStyleElement = () => (
+        findStaticStyle("wkdomains-darkreader--fallback", document)
+        || createOrUpdateStyle("wkdomains-darkreader--fallback", document)
+      );
+
+      const ensureFallbackStyleText = () => {
+        const fallbackStyle = fallbackStyleElement();
+        fallbackStyle.id = STYLE_ID;
+        if (!fallbackStyle.textContent) {
+          fallbackStyle.textContent = getFallbackStyle();
+        }
+        injectStaticStyle(fallbackStyle, null, "fallback");
+        fallbackWasCleared = false;
+      };
+
+      const cleanFallbackStyle = () => {
+        if (loadingStyles.size > 0) return;
+        const fallbackStyle = fallbackStyleElement();
+        fallbackStyle.textContent = "";
+        fallbackWasCleared = true;
+      };
+
+      const loadingIDForElement = (element) => {
+        let id = loadingStyleIDsByElement.get(element);
+        if (!id) {
+          id = ++loadingStylesCounter;
+          loadingStyleIDsByElement.set(element, id);
+        }
+        return id;
+      };
+
+      const markStyleLoading = (element) => {
+        if (!element) return;
+        const id = loadingIDForElement(element);
+        loadingStyles.add(id);
+        ensureFallbackStyleText();
+
+        if (element instanceof HTMLLinkElement && !loadingStyleListenersByElement.has(element)) {
+          const done = () => {
+            markStyleLoaded(element);
+            scheduleStyleSync(0);
+          };
+          element.addEventListener("load", done, { once: true });
+          element.addEventListener("error", done, { once: true });
+          loadingStyleListenersByElement.set(element, done);
+        }
+      };
+
+      const markStyleLoaded = (element) => {
+        if (!element) return;
+        const id = loadingStyleIDsByElement.get(element);
+        if (id) {
+          loadingStyles.delete(id);
+        }
+        if (loadingStyles.size === 0 && document.readyState !== "loading") {
+          cleanFallbackStyle();
         }
       };
 
@@ -133,6 +198,30 @@ extension BrowserModel {
         || property.includes("shadow")
       );
 
+      const shouldTreatCustomPropertyAsRawColor = (property) => {
+        const prop = String(property || "").toLowerCase();
+        return prop.includes("color")
+          || prop.includes("colour")
+          || prop.includes("background")
+          || prop.includes("bg")
+          || prop.includes("surface")
+          || prop.includes("canvas")
+          || prop.includes("border")
+          || prop.includes("outline")
+          || prop.includes("divider")
+          || prop.includes("fill")
+          || prop.includes("stroke")
+          || prop.includes("text")
+          || prop.includes("content")
+          || prop.includes("tone")
+          || prop.includes("neutral")
+          || prop.includes("primary")
+          || prop.includes("secondary")
+          || prop.includes("accent")
+          || prop.includes("brand")
+          || prop.includes("link");
+      };
+
       const varReferenceRegex = /var\(\s*(--[-_a-zA-Z0-9]+)\s*(?:,\s*([^()]*|\([^)]*\)))?\)/g;
       const wrappedVariableName = (type, name) => `${DARK_VAR_PREFIX}-${type}-${name.slice(2)}`;
       const VAR_TYPE_BG = 1 << 0;
@@ -157,6 +246,27 @@ extension BrowserModel {
           return "border";
         }
         return "text";
+      };
+
+      const shouldTransformVariableDependentProperty = (property) => {
+        const prop = String(property || "").toLowerCase();
+        return prop === "color"
+          || prop === "-webkit-text-fill-color"
+          || prop === "text-emphasis-color"
+          || prop === "caret-color"
+          || prop === "fill"
+          || prop === "stroke"
+          || prop === "stop-color"
+          || prop === "box-shadow"
+          || prop === "text-shadow"
+          || prop === "outline"
+          || prop === "outline-color"
+          || prop === "column-rule"
+          || prop === "column-rule-color"
+          || prop === "text-decoration-color"
+          || prop.startsWith("background")
+          || prop.startsWith("border")
+          || (prop.includes("color") && prop !== "-webkit-print-color-adjust");
       };
 
       const variableTypeNumberForProperty = (property, value = "") => {
@@ -190,6 +300,8 @@ extension BrowserModel {
         const varRefs = new Map();
         const rulesQueue = new Set();
         const inlineQueue = [];
+        let versionNumber = 0;
+        let lastTypeSignature = "";
 
         const clear = () => {
           varTypes.clear();
@@ -230,7 +342,9 @@ extension BrowserModel {
           COLOR_RE.lastIndex = 0;
           const hasColor = COLOR_RE.test(text);
           COLOR_RE.lastIndex = 0;
-          if (hasColor || /^\s*(rgb|hsl)a?\(/i.test(text)) {
+          const hasColorLikeName = shouldTreatCustomPropertyAsRawColor(property);
+          const hasNamedRawColor = parseRawColorValue(text) && hasColorLikeName;
+          if (hasColor || /^\s*(rgb|hsl)a?\(/i.test(text) || hasNamedRawColor || (text.includes("var(") && hasColorLikeName)) {
             if (shouldTreatCustomPropertyAsBackground(property)) {
               resolveType(property, VAR_TYPE_BG);
             } else if (shouldTreatCustomPropertyAsBorder(property)) {
@@ -247,6 +361,7 @@ extension BrowserModel {
 
         const inspectVarDependent = (property, value) => {
           if (!value || !String(value).includes("var(")) return;
+          if (!property.startsWith("--") && !shouldTransformVariableDependentProperty(property)) return;
           const type = property.startsWith("--")
             ? 0
             : variableTypeNumberForProperty(property, value);
@@ -308,13 +423,24 @@ extension BrowserModel {
           }
         };
 
+        const updateVersion = () => {
+          const nextSignature = Array.from(varTypes.entries())
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([name, type]) => `${name}:${type}`)
+            .join("|");
+          if (nextSignature !== lastTypeSignature) {
+            lastTypeSignature = nextSignature;
+            versionNumber += 1;
+          }
+        };
+
         const matchVariablesAndDependents = () => {
-          if (rulesQueue.size === 0 && inlineQueue.length === 0) return;
           for (const rules of rulesQueue) inspectRules(rules);
           for (const style of inlineQueue) inspectDeclarations(style);
           rulesQueue.clear();
           inlineQueue.splice(0);
           propagateTypes();
+          updateVersion();
         };
 
         const typesForVariable = (name) => varTypes.get(name) || 0;
@@ -329,16 +455,16 @@ extension BrowserModel {
             if (!property.startsWith("--")) return;
             const type = typesForVariable(property);
             if (!type) return;
-            if (type & VAR_TYPE_BG) {
-              const transformed = transformCustomPropertyValue(property, value, "bg", modifyBackgroundColor);
+            if (type & (VAR_TYPE_BG | VAR_TYPE_BG_IMG)) {
+              const transformed = transformCustomPropertyValue(property, value, "bg", modifyBackgroundColor, true);
               if (transformed) declarations.push([wrappedVariableName("bg", property), transformed]);
             }
             if (type & VAR_TYPE_TEXT) {
-              const transformed = transformCustomPropertyValue(property, value, "text", modifyForegroundColor);
+              const transformed = transformCustomPropertyValue(property, value, "text", modifyForegroundColor, true);
               if (transformed) declarations.push([wrappedVariableName("text", property), transformed]);
             }
             if (type & VAR_TYPE_BORDER) {
-              const transformed = transformCustomPropertyValue(property, value, "border", modifyBorderColor);
+              const transformed = transformCustomPropertyValue(property, value, "border", modifyBorderColor, true);
               if (transformed) declarations.push([wrappedVariableName("border", property), transformed]);
             }
           });
@@ -353,11 +479,12 @@ extension BrowserModel {
           matchVariablesAndDependents,
           typesForVariable,
           isVarType,
+          version: () => versionNumber,
           rootDeclarations
         };
       })();
 
-      const transformCustomPropertyValue = (property, value, type, transformer) => {
+      const transformCustomPropertyValue = (property, value, type, transformer, allowRawColor = false) => {
         if (!value || property.startsWith(DARK_VAR_PREFIX)) return null;
         if (String(value).includes("var(")) {
           const rewritten = replaceCSSVariableReferences(value, type);
@@ -368,7 +495,7 @@ extension BrowserModel {
         COLOR_RE.lastIndex = 0;
         if (!COLOR_RE.test(value)) {
           COLOR_RE.lastIndex = 0;
-          return null;
+          return allowRawColor ? replaceRawColorValue(value, transformer) : null;
         }
         COLOR_RE.lastIndex = 0;
         const transformed = replaceCSSColors(value, transformer);
@@ -387,7 +514,10 @@ extension BrowserModel {
           const transformer = type === "bg"
             ? modifyBackgroundColor
             : (type === "border" ? modifyBorderColor : modifyForegroundColor);
-          const modifiedFallback = replaceCSSColors(fallbackValue, transformer);
+          const colorFallback = replaceCSSColors(fallbackValue, transformer);
+          const modifiedFallback = colorFallback === fallbackValue
+            ? (replaceRawColorValue(fallbackValue, transformer) || colorFallback)
+            : colorFallback;
           return `var(${wrapped}, ${modifiedFallback})`;
         });
       };
@@ -404,12 +534,13 @@ extension BrowserModel {
         const declarations = [];
         const inferredTypes = variablesStore.typesForVariable(property);
 
+        const allowRawColor = inferredTypes !== 0 || shouldTreatCustomPropertyAsRawColor(property);
         const makeValue = (type, transformer) => {
-          return transformCustomPropertyValue(property, value, type, transformer);
+          return transformCustomPropertyValue(property, value, type, transformer, allowRawColor);
         };
 
         const shouldEmitFallbackTypes = inferredTypes === 0;
-        const bgValue = (shouldEmitFallbackTypes || (inferredTypes & VAR_TYPE_BG)) ? makeValue("bg", modifyBackgroundColor) : null;
+        const bgValue = (shouldEmitFallbackTypes || (inferredTypes & (VAR_TYPE_BG | VAR_TYPE_BG_IMG))) ? makeValue("bg", modifyBackgroundColor) : null;
         const textValue = (shouldEmitFallbackTypes || (inferredTypes & VAR_TYPE_TEXT)) ? makeValue("text", modifyForegroundColor) : null;
         const borderValue = (shouldEmitFallbackTypes || (inferredTypes & VAR_TYPE_BORDER)) ? makeValue("border", modifyBorderColor) : null;
 
@@ -430,7 +561,7 @@ extension BrowserModel {
           return transformCustomPropertyDeclarations(prop, text);
         }
 
-        if (text.includes("var(")) {
+        if (text.includes("var(") && shouldTransformVariableDependentProperty(prop)) {
           const variableValue = transformVariableDependentValue(prop, text);
           if (variableValue) return variableValue;
         }
@@ -543,9 +674,36 @@ extension BrowserModel {
         return chunks.join("\n");
       };
 
+      const hashString = (value) => {
+        const text = String(value || "");
+        let hash = 2166136261;
+        for (let index = 0; index < text.length; index += 1) {
+          hash ^= text.charCodeAt(index);
+          hash = Math.imul(hash, 16777619);
+        }
+        return (hash >>> 0).toString(36);
+      };
+
+      const signatureForRules = (rules) => {
+        if (!rules) return "no-rules";
+        const parts = [rules.length, variablesStore.version()];
+        for (let index = 0; index < rules.length; index += 1) {
+          try {
+            parts.push(hashString(rules[index].cssText));
+          } catch (_) {
+            parts.push("x");
+          }
+        }
+        return parts.join(":");
+      };
+
       const renderStyleManager = (element) => {
         const rules = safeGetRules(element.sheet);
-        if (!rules) return;
+        if (!rules) {
+          markStyleLoading(element);
+          return;
+        }
+        markStyleLoaded(element);
 
         let manager = styleManagers.get(element);
         if (!manager) {
@@ -560,24 +718,18 @@ extension BrowserModel {
 
           if (window.MutationObserver) {
             manager.observer = new MutationObserver(() => scheduleStyleSync(0));
+            const isLink = element instanceof HTMLLinkElement;
             manager.observer.observe(element, {
               attributes: true,
-              childList: true,
-              subtree: true,
-              characterData: true
+              attributeFilter: isLink ? ["href", "media", "disabled"] : ["media", "disabled"],
+              childList: !isLink,
+              subtree: !isLink,
+              characterData: !isLink
             });
           }
         }
 
-        const ruleSignature = [];
-        for (let index = 0; index < rules.length; index += 1) {
-          try {
-            ruleSignature.push(rules[index].cssText.length);
-          } catch (_) {
-            ruleSignature.push("x");
-          }
-        }
-        const signature = `${rules.length}:${ruleSignature.join(",")}:${element.textContent ? element.textContent.length : ""}:${element.href || ""}`;
+        const signature = `${signatureForRules(rules)}:${hashString(element.textContent || "")}:${element.href || ""}`;
         if (manager.signature === signature && manager.syncStyle.textContent) {
           if (manager.syncStyle.parentNode !== element.parentNode && element.parentNode) {
             element.parentNode.insertBefore(manager.syncStyle, element.nextSibling);
@@ -602,7 +754,16 @@ extension BrowserModel {
       };
 
       const renderAdoptedStyleSheets = (root) => {
-        if (!root || !root.adoptedStyleSheets || !root.adoptedStyleSheets.length) return;
+        if (!root || !root.adoptedStyleSheets) return;
+        if (!root.adoptedStyleSheets.length) {
+          const existing = adoptedStyleManagers.get(root);
+          if (existing) {
+            existing.style.remove();
+            adoptedStyleManagers.delete(root);
+            managedAdoptedRoots.delete(root);
+          }
+          return;
+        }
         let manager = adoptedStyleManagers.get(root);
         if (!manager) {
           const style = document.createElement("style");
@@ -618,15 +779,7 @@ extension BrowserModel {
         for (const sheet of root.adoptedStyleSheets) {
           const rules = safeGetRules(sheet);
           if (!rules) continue;
-          const sheetSignature = [rules.length];
-          for (let index = 0; index < rules.length; index += 1) {
-            try {
-              sheetSignature.push(rules[index].cssText.length);
-            } catch (_) {
-              sheetSignature.push("x");
-            }
-          }
-          signature.push(sheetSignature.join(":"));
+          signature.push(signatureForRules(rules));
           const css = convertCSSRules(rules);
           if (css) chunks.push(css);
         }
@@ -664,10 +817,18 @@ extension BrowserModel {
 
       const removeStyleManager = (element) => {
         const manager = styleManagers.get(element);
-        if (!manager) return;
-        if (manager.observer) manager.observer.disconnect();
-        manager.syncStyle.remove();
-        styleManagers.delete(element);
+        const listener = loadingStyleListenersByElement.get(element);
+        if (listener && element instanceof HTMLLinkElement) {
+          element.removeEventListener("load", listener);
+          element.removeEventListener("error", listener);
+          loadingStyleListenersByElement.delete(element);
+        }
+        markStyleLoaded(element);
+        if (manager) {
+          if (manager.observer) manager.observer.disconnect();
+          manager.syncStyle.remove();
+          styleManagers.delete(element);
+        }
         managedStyleElements.delete(element);
       };
 
@@ -679,29 +840,52 @@ extension BrowserModel {
         }
       };
 
+      const removeAdoptedStyleManager = (root) => {
+        const manager = adoptedStyleManagers.get(root);
+        if (manager) {
+          manager.style.remove();
+          adoptedStyleManagers.delete(root);
+        }
+        managedAdoptedRoots.delete(root);
+      };
+
+      const pruneAdoptedStyleManagers = () => {
+        for (const root of Array.from(managedAdoptedRoots)) {
+          if (root !== document && root.host && !root.host.isConnected) {
+            removeAdoptedStyleManager(root);
+          }
+        }
+      };
+
       const destroyStyleManagers = () => {
         for (const element of Array.from(managedStyleElements)) {
           removeStyleManager(element);
         }
+        loadingStyles.clear();
         for (const root of Array.from(managedAdoptedRoots)) {
-          const manager = adoptedStyleManagers.get(root);
-          if (manager) {
-            manager.style.remove();
-            adoptedStyleManagers.delete(root);
-          }
-          managedAdoptedRoots.delete(root);
+          removeAdoptedStyleManager(root);
         }
         for (const style of document.querySelectorAll(`style.${STYLE_SYNC_CLASS}, style.${ADOPTED_STYLE_CLASS}`)) {
           style.remove();
         }
       };
 
-      const updateManageableStyles = (root = document) => {
-        pruneStyleManagers();
-        const styles = getManageableStyles(root);
-        if (root === document) {
-          variablesStore.clear();
+      const getStylesheetSyncRoots = () => {
+        const roots = [document];
+        for (const root of Array.from(discoveredShadowRoots)) {
+          if (!root) continue;
+          if (root.host && !root.host.isConnected) {
+            discoveredShadowRoots.delete(root);
+            removeAdoptedStyleManager(root);
+            continue;
+          }
+          roots.push(root);
         }
+        return roots;
+      };
+
+      const collectVariableInputs = (root) => {
+        const styles = getManageableStyles(root);
         for (const style of styles) {
           variablesStore.addRulesForMatching(safeGetRules(style.sheet));
         }
@@ -709,25 +893,60 @@ extension BrowserModel {
         if (root === document && document.documentElement) {
           variablesStore.addInlineStyleForMatching(document.documentElement.style);
         }
-        variablesStore.matchVariablesAndDependents();
-        updateRootVariableStyle();
+        return styles;
+      };
+
+      const renderManageableStyles = (root, styles) => {
         for (const style of styles) {
           renderStyleManager(style);
         }
         renderAdoptedStyleSheets(root);
       };
 
+      const syncAllStyles = () => {
+        pruneStyleManagers();
+        pruneAdoptedStyleManagers();
+        variablesStore.clear();
+
+        const roots = getStylesheetSyncRoots();
+        const stylesByRoot = new Map();
+        for (const root of roots) {
+          stylesByRoot.set(root, collectVariableInputs(root));
+        }
+
+        variablesStore.matchVariablesAndDependents();
+        updateRootVariableStyle();
+
+        for (const root of roots) {
+          renderManageableStyles(root, stylesByRoot.get(root) || []);
+        }
+
+        if (loadingStyles.size === 0 && document.readyState !== "loading") {
+          cleanFallbackStyle();
+        }
+      };
+
+      const updateManageableStyles = () => {
+        syncAllStyles();
+      };
+
       const scheduleStyleSync = (delay = 30) => {
         if (stylesheetSyncScheduled) return;
         stylesheetSyncScheduled = true;
-        window.setTimeout(() => {
+        stylesheetSyncTimer = window.setTimeout(() => {
           stylesheetSyncScheduled = false;
-          updateManageableStyles(document);
-          for (const root of discoveredShadowRoots) {
-            updateManageableStyles(root);
-          }
+          stylesheetSyncTimer = null;
+          syncAllStyles();
           ensureSiteFixStyle();
         }, delay);
+      };
+
+      const cancelStyleSync = () => {
+        if (stylesheetSyncTimer) {
+          window.clearTimeout(stylesheetSyncTimer);
+          stylesheetSyncTimer = null;
+        }
+        stylesheetSyncScheduled = false;
       };
 
       const installStylesheetProxy = () => {
@@ -738,14 +957,24 @@ extension BrowserModel {
         const proto = CSSStyleSheet.prototype;
         const nativeInsertRule = proto.insertRule;
         const nativeDeleteRule = proto.deleteRule;
+        const nativeAddRule = proto.addRule;
+        const nativeRemoveRule = proto.removeRule;
         const nativeReplace = proto.replace;
         const nativeReplaceSync = proto.replaceSync;
+        const isOwnGeneratedCSS = (text) => {
+          const value = String(text || "");
+          return value.includes(DARK_VAR_PREFIX)
+            || value.includes("--wkdomains-forced-dark")
+            || value.includes(INLINE_CLASS)
+            || value.includes(STYLE_SYNC_CLASS)
+            || value.includes(ADOPTED_STYLE_CLASS);
+        };
 
         Object.defineProperty(proto, "__wkdomainsDarkModeProxy", { value: true, configurable: true });
         if (nativeInsertRule) {
           proto.insertRule = function(rule, index) {
             const result = nativeInsertRule.call(this, rule, index);
-            if (stylesheetProxyActive) scheduleStyleSync(0);
+            if (stylesheetProxyActive && !isOwnGeneratedCSS(rule)) scheduleStyleSync(0);
             return result;
           };
         }
@@ -756,10 +985,24 @@ extension BrowserModel {
             return result;
           };
         }
+        if (nativeAddRule) {
+          proto.addRule = function(selector, style, index) {
+            const result = nativeAddRule.call(this, selector, style, index);
+            if (stylesheetProxyActive && !isOwnGeneratedCSS(`${selector || ""}{${style || ""}}`)) scheduleStyleSync(0);
+            return result;
+          };
+        }
+        if (nativeRemoveRule) {
+          proto.removeRule = function(index) {
+            const result = nativeRemoveRule.call(this, index);
+            if (stylesheetProxyActive) scheduleStyleSync(0);
+            return result;
+          };
+        }
         if (nativeReplace) {
           proto.replace = function(text) {
             return nativeReplace.call(this, text).then((sheet) => {
-              if (stylesheetProxyActive) scheduleStyleSync(0);
+              if (stylesheetProxyActive && !isOwnGeneratedCSS(text)) scheduleStyleSync(0);
               return sheet;
             });
           };
@@ -767,7 +1010,7 @@ extension BrowserModel {
         if (nativeReplaceSync) {
           proto.replaceSync = function(text) {
             const result = nativeReplaceSync.call(this, text);
-            if (stylesheetProxyActive) scheduleStyleSync(0);
+            if (stylesheetProxyActive && !isOwnGeneratedCSS(text)) scheduleStyleSync(0);
             return result;
           };
         }
