@@ -11,6 +11,7 @@ extension BrowserModel {
         const varTypes = new Map();
         const varValues = new Map();
         const varRefs = new Map();
+        const reverseVarRefs = new Map();
         const rulesQueue = new Set();
         const inlineQueue = [];
         let versionNumber = 0;
@@ -20,6 +21,7 @@ extension BrowserModel {
           varTypes.clear();
           varValues.clear();
           varRefs.clear();
+          reverseVarRefs.clear();
           rulesQueue.clear();
           inlineQueue.splice(0);
         };
@@ -41,6 +43,8 @@ extension BrowserModel {
           if (!owner || !ref) return;
           if (!varRefs.has(owner)) varRefs.set(owner, new Set());
           varRefs.get(owner).add(ref);
+          if (!reverseVarRefs.has(ref)) reverseVarRefs.set(ref, new Set());
+          reverseVarRefs.get(ref).add(owner);
         };
 
         const inspectVariable = (property, value) => {
@@ -129,6 +133,19 @@ extension BrowserModel {
                 const next = before | ownerType;
                 if (next !== before) {
                   varTypes.set(ref, next);
+                  changed = true;
+                }
+              }
+            }
+            for (const [ref, owners] of reverseVarRefs) {
+              const refType = varTypes.get(ref) || 0;
+              if (!refType) continue;
+              for (const owner of owners) {
+                if (!shouldTreatCustomPropertyAsRawColor(owner)) continue;
+                const before = varTypes.get(owner) || 0;
+                const next = before | refType;
+                if (next !== before) {
+                  varTypes.set(owner, next);
                   changed = true;
                 }
               }

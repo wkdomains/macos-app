@@ -11,6 +11,7 @@ extension BrowserModel {
       const adoptedStyleManagers = new WeakMap();
       const managedStyleElements = new Set();
       const managedAdoptedRoots = new Set();
+      const adoptedStyleListenersByRoot = new WeakMap();
       let stylesheetSyncScheduled = false;
       let stylesheetSyncTimer = null;
       let stylesheetProxyActive = false;
@@ -19,6 +20,10 @@ extension BrowserModel {
       const loadingStyleIDsByElement = new WeakMap();
       const loadingStyleListenersByElement = new WeakMap();
       let fallbackWasCleared = false;
+      const STYLE_UPDATE_EVENT = "__darkreader__updateSheet";
+      const ADOPTED_STYLE_CHANGE_EVENT = "__darkreader__adoptedStyleSheetChange";
+      const ADOPTED_STYLES_CHANGE_EVENT = "__darkreader__adoptedStyleSheetsChange";
+      const ADOPTED_DECLARATION_CHANGE_EVENT = "__darkreader__adoptedStyleDeclarationChange";
 
       const cssURLMatchesPattern = (url, pattern) => {
         const value = String(url || "");

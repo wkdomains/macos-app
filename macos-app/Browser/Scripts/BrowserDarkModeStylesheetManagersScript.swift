@@ -22,9 +22,11 @@ extension BrowserModel {
             : document.createElement("style");
           syncStyle.classList.add(INLINE_CLASS, "darkreader", STYLE_SYNC_CLASS);
           syncStyle.media = "screen";
-          manager = { syncStyle, signature: "", observer: null };
+          const onSheetChange = () => scheduleStyleSync(0);
+          manager = { syncStyle, signature: "", observer: null, onSheetChange };
           styleManagers.set(element, manager);
           managedStyleElements.add(element);
+          element.addEventListener(STYLE_UPDATE_EVENT, onSheetChange);
 
           if (window.MutationObserver) {
             manager.observer = new MutationObserver(() => scheduleStyleSync(0));
@@ -63,6 +65,31 @@ extension BrowserModel {
         }
       };
 
+      const adoptedStyleTargetForRoot = (root) => {
+        if (root === document) {
+          return document.head || document.documentElement;
+        }
+        return root;
+      };
+
+      const ensureAdoptedStyleListeners = (root) => {
+        if (!root || adoptedStyleListenersByRoot.has(root)) return;
+        const onChange = () => scheduleStyleSync(0);
+        root.addEventListener(ADOPTED_STYLE_CHANGE_EVENT, onChange);
+        root.addEventListener(ADOPTED_STYLES_CHANGE_EVENT, onChange);
+        root.addEventListener(ADOPTED_DECLARATION_CHANGE_EVENT, onChange);
+        adoptedStyleListenersByRoot.set(root, onChange);
+      };
+
+      const removeAdoptedStyleListeners = (root) => {
+        const listener = adoptedStyleListenersByRoot.get(root);
+        if (!listener) return;
+        root.removeEventListener(ADOPTED_STYLE_CHANGE_EVENT, listener);
+        root.removeEventListener(ADOPTED_STYLES_CHANGE_EVENT, listener);
+        root.removeEventListener(ADOPTED_DECLARATION_CHANGE_EVENT, listener);
+        adoptedStyleListenersByRoot.delete(root);
+      };
+
       const renderAdoptedStyleSheets = (root) => {
         if (!root || !root.adoptedStyleSheets) return;
         if (!root.adoptedStyleSheets.length) {
@@ -82,6 +109,7 @@ extension BrowserModel {
           manager = { style, signature: "" };
           adoptedStyleManagers.set(root, manager);
           managedAdoptedRoots.add(root);
+          ensureAdoptedStyleListeners(root);
         }
 
         const chunks = [];
@@ -100,11 +128,12 @@ extension BrowserModel {
           manager.style.textContent = chunks.join("\n");
         }
 
-        if (manager.style.textContent && manager.style.parentNode !== root) {
+        const target = adoptedStyleTargetForRoot(root);
+        if (manager.style.textContent && target && manager.style.parentNode !== target) {
           try {
-            root.insertBefore(manager.style, root.firstChild);
+            target.insertBefore(manager.style, target.firstChild);
           } catch (_) {
-            root.appendChild(manager.style);
+            target.appendChild(manager.style);
           }
         }
       };
@@ -135,6 +164,7 @@ extension BrowserModel {
         }
         markStyleLoaded(element);
         if (manager) {
+          element.removeEventListener(STYLE_UPDATE_EVENT, manager.onSheetChange);
           if (manager.observer) manager.observer.disconnect();
           manager.syncStyle.remove();
           styleManagers.delete(element);
@@ -156,6 +186,7 @@ extension BrowserModel {
           manager.style.remove();
           adoptedStyleManagers.delete(root);
         }
+        removeAdoptedStyleListeners(root);
         managedAdoptedRoots.delete(root);
       };
 
