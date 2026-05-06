@@ -71,7 +71,6 @@ extension BrowserModel {
         ...BORDER_OVERRIDES.map((override) => override.attr),
         ...SHORTHAND_OVERRIDES.map((override) => override.attr)
       ];
-      const COLOR_RE = /(?:rgba?|hsla?|hwb|color)\([^)]*\)|#[0-9a-f]{3,8}\b|\b(?:aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blue|brown|coral|crimson|cyan|fuchsia|gold|gray|green|grey|indigo|ivory|khaki|lavender|lime|magenta|maroon|navy|olive|orange|orchid|pink|plum|purple|red|salmon|silver|tan|teal|tomato|transparent|violet|white|yellow)\b/gi;
       const STYLE_SELECTOR = "style, link[rel*='stylesheet' i]:not([disabled])";
       const STYLE_SYNC_CLASS = "wkdomains-darkreader--sync";
       const SHADOW_STYLE_CLASS = "wkdomains-darkreader--shadow";

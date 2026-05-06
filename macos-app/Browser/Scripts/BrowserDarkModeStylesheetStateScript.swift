@@ -14,6 +14,7 @@ extension BrowserModel {
       const adoptedStyleListenersByRoot = new WeakMap();
       let stylesheetSyncScheduled = false;
       let stylesheetSyncTimer = null;
+      let stylesheetSyncNeeded = true;
       let stylesheetProxyActive = false;
       let loadingStylesCounter = 0;
       const loadingStyles = new Set();
@@ -267,7 +268,6 @@ extension BrowserModel {
           || prop.includes("link");
       };
 
-      const varReferenceRegex = /var\(\s*(--[-_a-zA-Z0-9]+)\s*(?:,\s*([^()]*|\([^)]*\)))?\)/g;
       const wrappedVariableName = (type, name) => `${DARK_VAR_PREFIX}-${type}-${name.slice(2)}`;
       const VAR_TYPE_BG = 1 << 0;
       const VAR_TYPE_TEXT = 1 << 1;
@@ -328,15 +328,60 @@ extension BrowserModel {
         }
       };
 
+      const findTopLevelComma = (value) => {
+        const text = String(value || "");
+        let depth = 0;
+        for (let index = 0; index < text.length; index += 1) {
+          const char = text[index];
+          if (char === "(") depth += 1;
+          else if (char === ")") depth = Math.max(0, depth - 1);
+          else if (char === "," && depth === 0) return index;
+        }
+        return -1;
+      };
+
+      const readCSSVariableReferenceAt = (value, index) => {
+        const text = String(value || "");
+        const previous = index > 0 ? text[index - 1] : "";
+        if (previous && /[-_a-z0-9]/i.test(previous)) return null;
+        if (text.slice(index, index + 4).toLowerCase() !== "var(") return null;
+
+        const open = index + 3;
+        const close = findMatchingParen(text, open);
+        if (close < 0) return null;
+
+        const body = text.slice(open + 1, close).trim();
+        const comma = findTopLevelComma(body);
+        const name = (comma < 0 ? body : body.slice(0, comma)).trim();
+        if (!/^--[-_a-zA-Z0-9]+$/.test(name)) return null;
+
+        return {
+          name,
+          fallback: comma < 0 ? "" : body.slice(comma + 1).trim(),
+          start: index,
+          end: close + 1,
+          token: text.slice(index, close + 1)
+        };
+      };
+
       const forEachVarReference = (value, iterate) => {
-        if (!value || !String(value).includes("var(")) return;
-        String(value).replace(varReferenceRegex, (match, name, fallback) => {
-          iterate(name, fallback || "");
-          if (fallback && fallback.includes("var(")) {
-            forEachVarReference(fallback, iterate);
+        const text = String(value || "");
+        if (!text.includes("var(")) return;
+
+        let index = 0;
+        while (index < text.length) {
+          const reference = readCSSVariableReferenceAt(text, index);
+          if (!reference) {
+            index += 1;
+            continue;
           }
-          return match;
-        });
+
+          iterate(reference.name, reference.fallback || "");
+          if (reference.fallback && reference.fallback.includes("var(")) {
+            forEachVarReference(reference.fallback, iterate);
+          }
+          index = reference.end;
+        }
       };
     """#
 }

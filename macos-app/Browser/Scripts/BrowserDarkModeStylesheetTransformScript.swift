@@ -23,23 +23,43 @@ extension BrowserModel {
       };
 
       const replaceCSSVariableReferences = (value, type) => {
-        if (!value || !value.includes("var(")) return value;
-        return value.replace(varReferenceRegex, (match, name, fallback) => {
-          const wrapped = wrappedVariableName(type, name);
-          if (!fallback) {
-            return `var(${wrapped}, var(${name}))`;
+        const text = String(value || "");
+        if (!text.includes("var(")) return value;
+
+        const transformer = type === "bg"
+          ? modifyBackgroundColor
+          : (type === "border" ? modifyBorderColor : modifyForegroundColor);
+        let result = "";
+        let index = 0;
+        let changed = false;
+
+        while (index < text.length) {
+          const reference = readCSSVariableReferenceAt(text, index);
+          if (!reference) {
+            result += text[index];
+            index += 1;
+            continue;
           }
 
-          const fallbackValue = fallback.trim();
-          const transformer = type === "bg"
-            ? modifyBackgroundColor
-            : (type === "border" ? modifyBorderColor : modifyForegroundColor);
+          const wrapped = wrappedVariableName(type, reference.name);
+          if (!reference.fallback) {
+            result += `var(${wrapped}, var(${reference.name}))`;
+            changed = true;
+            index = reference.end;
+            continue;
+          }
+
+          const fallbackValue = replaceCSSVariableReferences(reference.fallback.trim(), type);
           const colorFallback = replaceCSSColors(fallbackValue, transformer);
           const modifiedFallback = colorFallback === fallbackValue
             ? (replaceRawColorValue(fallbackValue, transformer) || colorFallback)
             : colorFallback;
-          return `var(${wrapped}, ${modifiedFallback})`;
-        });
+          result += `var(${wrapped}, ${modifiedFallback})`;
+          changed = true;
+          index = reference.end;
+        }
+
+        return changed ? result : value;
       };
 
       const transformVariableDependentValue = (property, value) => {
@@ -159,8 +179,41 @@ extension BrowserModel {
         return declarations;
       };
 
+      const convertCSSPropertyRule = (rule) => {
+        const name = String(rule.name || "");
+        const syntax = String(rule.syntax || "");
+        const sourceValue = String(rule.initialValue || "").trim();
+        if (!name.startsWith("--") || !syntax.includes("<color>") || !sourceValue) return "";
+
+        const inferredTypes = variablesStore.typesForVariable(name) || variableTypeNumberForProperty(name, sourceValue);
+        const inherited = rule.inherits === false ? "false" : "true";
+        const serializedSyntax = JSON.stringify(syntax || "<color>");
+        const chunks = [];
+        const emit = (bit, type, transformer) => {
+          if ((inferredTypes & bit) === 0) return;
+          const transformed = transformCustomPropertyValue(name, sourceValue, type, transformer, true);
+          if (!transformed) return;
+          chunks.push([
+            `@property ${wrappedVariableName(type, name)} {`,
+            `  syntax: ${serializedSyntax};`,
+            `  inherits: ${inherited};`,
+            `  initial-value: ${transformed};`,
+            "}"
+          ].join("\n"));
+        };
+
+        emit(VAR_TYPE_BG | VAR_TYPE_BG_IMG, "bg", modifyBackgroundColor);
+        emit(VAR_TYPE_TEXT, "text", modifyForegroundColor);
+        emit(VAR_TYPE_BORDER, "border", modifyBorderColor);
+        return chunks.join("\n");
+      };
+
       const convertCSSRule = (rule) => {
         try {
+          if (rule.name && rule.syntax) {
+            return convertCSSPropertyRule(rule);
+          }
+
           if (rule.type === CSSRule.STYLE_RULE) {
             const declarations = buildModifiedDeclarations(rule.style);
             return declarations.length > 0 ? `${rule.selectorText} {\n${declarations.join("\n")}\n}` : "";

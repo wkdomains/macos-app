@@ -253,6 +253,15 @@ extension BrowserModel {
         return mix(first.color, second.color, secondWeight / total);
       };
 
+      const parseLightDark = (value) => {
+        const text = String(value || "").trim();
+        const match = text.match(/^light-dark\(([\s\S]*)\)$/i);
+        if (!match) return null;
+        const parts = splitTopLevelCSSArguments(match[1]);
+        if (parts.length < 2) return null;
+        return parseColor(parts[1]) || parseColor(parts[0]);
+      };
+
       const replaceRawColorValue = (value, transformer) => {
         const color = parseRawColorValue(value);
         if (!color) return null;
@@ -303,6 +312,8 @@ extension BrowserModel {
         if (hwb) return hwb;
         const mixed = parseColorMix(text);
         if (mixed) return mixed;
+        const lightDark = parseLightDark(text);
+        if (lightDark) return lightDark;
         const normalized = normalizeColor(value);
         if (normalized) {
           const parsed = parseRGBLike(normalized) || parseHSLLike(normalized) || parseHWBLike(normalized) || parseHexColor(normalized) || NAMED_COLORS[String(normalized).trim().toLowerCase()];

@@ -20,8 +20,10 @@ extension BrowserModel {
       const INLINE_STYLE_MUTATION_ATTRIBUTES = new Set(INLINE_STYLE_ATTRS);
       const STYLE_SHEET_MUTATION_ATTRIBUTES = new Set(["href", "media", "disabled"]);
       let queuedMutations = [];
+      let mutationQueueOverflow = false;
       let mutationFlushScheduled = false;
       let mutationFlushTimer = null;
+      const MAX_QUEUED_MUTATIONS = 800;
       const installedAt = (() => {
         try { return performance.now(); } catch (_) { return Date.now(); }
       })();
@@ -495,12 +497,25 @@ extension BrowserModel {
 
       const queueMutations = (mutations) => {
         if (applying || !mutations || mutations.length === 0) return;
-        queuedMutations.push(...mutations);
+        if (mutationQueueOverflow || queuedMutations.length + mutations.length > MAX_QUEUED_MUTATIONS) {
+          queuedMutations = [];
+          mutationQueueOverflow = true;
+        } else {
+          queuedMutations.push(...mutations);
+        }
         if (mutationFlushScheduled) return;
         mutationFlushScheduled = true;
         mutationFlushTimer = window.setTimeout(() => {
           mutationFlushScheduled = false;
           mutationFlushTimer = null;
+          if (mutationQueueOverflow) {
+            mutationQueueOverflow = false;
+            queuedMutations = [];
+            dirtyRoots.add(document);
+            scheduleStyleSync(0);
+            schedule(0);
+            return;
+          }
           const mutationsToHandle = queuedMutations;
           queuedMutations = [];
           handleMutations(mutationsToHandle);
@@ -577,7 +592,7 @@ extension BrowserModel {
         applying = true;
         ensureBaseStyle();
         discoverExistingShadowRoots(document);
-        syncAllStyles();
+        flushStyleSyncNow();
         ensureSiteFixStyle();
         tryInvertPDF();
 
@@ -684,6 +699,7 @@ extension BrowserModel {
         rootObservers.clear();
         dirtyRoots.clear();
         queuedMutations = [];
+        mutationQueueOverflow = false;
         if (mutationFlushTimer) {
           window.clearTimeout(mutationFlushTimer);
           mutationFlushTimer = null;

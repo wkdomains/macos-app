@@ -248,6 +248,7 @@ extension BrowserModel {
       };
 
       const syncAllStyles = () => {
+        stylesheetSyncNeeded = false;
         pruneStyleManagers();
         pruneAdoptedStyleManagers();
         variablesStore.clear();
@@ -271,18 +272,32 @@ extension BrowserModel {
       };
 
       const updateManageableStyles = () => {
-        syncAllStyles();
+        stylesheetSyncNeeded = true;
+        flushStyleSyncNow();
       };
 
       const scheduleStyleSync = (delay = 30) => {
+        stylesheetSyncNeeded = true;
         if (stylesheetSyncScheduled) return;
         stylesheetSyncScheduled = true;
         stylesheetSyncTimer = window.setTimeout(() => {
           stylesheetSyncScheduled = false;
           stylesheetSyncTimer = null;
+          if (!stylesheetSyncNeeded) return;
           syncAllStyles();
           ensureSiteFixStyle();
         }, delay);
+      };
+
+      const flushStyleSyncNow = () => {
+        if (!stylesheetSyncNeeded && !stylesheetSyncScheduled) return;
+        if (stylesheetSyncTimer) {
+          window.clearTimeout(stylesheetSyncTimer);
+          stylesheetSyncTimer = null;
+        }
+        stylesheetSyncScheduled = false;
+        syncAllStyles();
+        ensureSiteFixStyle();
       };
 
       const cancelStyleSync = () => {
@@ -291,6 +306,7 @@ extension BrowserModel {
           stylesheetSyncTimer = null;
         }
         stylesheetSyncScheduled = false;
+        stylesheetSyncNeeded = false;
       };
     """#
 }

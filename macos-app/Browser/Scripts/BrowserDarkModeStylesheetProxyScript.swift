@@ -25,6 +25,7 @@ extension BrowserModel {
         const adoptedDeclarationSheets = new WeakMap();
         const adoptedSheetsSourceProxies = new WeakMap();
         const adoptedSheetsProxySources = new WeakMap();
+        const registeredWrappedCustomProperties = new Set();
         const isOwnGeneratedCSS = (text) => {
           const value = String(text || "");
           return value.includes(DARK_VAR_PREFIX)
@@ -222,6 +223,34 @@ extension BrowserModel {
           };
         }
 
+        const registerWrappedCustomProperties = (definition) => {
+          if (!nativeRegisterProperty || !definition || !definition.name || !definition.initialValue) return;
+          const name = String(definition.name || "");
+          const syntax = String(definition.syntax || "");
+          const sourceValue = String(definition.initialValue || "").trim();
+          if (!name.startsWith("--") || !syntax.includes("<color>") || !sourceValue) return;
+
+          const entries = [
+            ["bg", modifyBackgroundColor],
+            ["text", modifyForegroundColor],
+            ["border", modifyBorderColor]
+          ];
+          for (const [type, transformer] of entries) {
+            const wrappedName = wrappedVariableName(type, name);
+            if (registeredWrappedCustomProperties.has(wrappedName)) continue;
+            const transformed = transformCustomPropertyValue(name, sourceValue, type, transformer, true) || sourceValue;
+            try {
+              nativeRegisterProperty.call(CSS, {
+                name: wrappedName,
+                syntax,
+                inherits: definition.inherits !== false,
+                initialValue: transformed
+              });
+              registeredWrappedCustomProperties.add(wrappedName);
+            } catch (_) {}
+          }
+        };
+
         if (nativeRegisterProperty && !CSS.__wkdomainsDarkModeRegisterPropertyProxy) {
           try {
             Object.defineProperty(CSS, "__wkdomainsDarkModeRegisterPropertyProxy", { value: true, configurable: true });
@@ -230,6 +259,7 @@ extension BrowserModel {
               try {
                 if (definition && definition.name && String(definition.syntax || "").includes("<color>")) {
                   registeredCustomPropertyTypes.set(definition.name, variableTypeNumberForProperty(definition.name, definition.initialValue || ""));
+                  registerWrappedCustomProperties(definition);
                   scheduleStyleSync(0);
                 }
               } catch (_) {}
@@ -237,6 +267,35 @@ extension BrowserModel {
             };
           } catch (_) {}
         }
+
+        const patchGroupingRuleProxy = () => {
+          if (!window.CSSGroupingRule || CSSGroupingRule.prototype.__wkdomainsDarkModeProxy) return;
+          const groupingProto = CSSGroupingRule.prototype;
+          const nativeGroupInsertRule = groupingProto.insertRule;
+          const nativeGroupDeleteRule = groupingProto.deleteRule;
+          if (!nativeGroupInsertRule && !nativeGroupDeleteRule) return;
+          Object.defineProperty(groupingProto, "__wkdomainsDarkModeProxy", { value: true, configurable: true });
+
+          if (nativeGroupInsertRule) {
+            groupingProto.insertRule = function(rule, index) {
+              const result = nativeGroupInsertRule.call(this, rule, index);
+              if (stylesheetProxyActive && !isOwnGeneratedCSS(rule)) {
+                reportSheetChange(this.parentStyleSheet);
+              }
+              return result;
+            };
+          }
+
+          if (nativeGroupDeleteRule) {
+            groupingProto.deleteRule = function(index) {
+              const result = nativeGroupDeleteRule.call(this, index);
+              if (stylesheetProxyActive) {
+                reportSheetChange(this.parentStyleSheet);
+              }
+              return result;
+            };
+          }
+        };
 
         const patchAdoptedStyleSheets = (rootProto) => {
           if (!rootProto || rootProto.__wkdomainsDarkModeAdoptedProxy) return;
@@ -261,6 +320,7 @@ extension BrowserModel {
           });
         };
 
+        patchGroupingRuleProxy();
         patchAdoptedStyleSheets(Document.prototype);
         if (window.ShadowRoot) {
           patchAdoptedStyleSheets(ShadowRoot.prototype);
