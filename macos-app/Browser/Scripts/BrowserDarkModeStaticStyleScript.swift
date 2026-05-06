@@ -8,28 +8,55 @@ import Foundation
 extension BrowserModel {
     static let browserDarkModeStaticStyleScript = #"""
       const createOrUpdateStyle = (className, root = document.head || document.documentElement || document) => {
-        let element = root.querySelector ? root.querySelector(`style.${className}`) : null;
-        if (!element) {
-          element = document.createElement("style");
-          element.classList.add(INLINE_CLASS, className);
-          element.media = "screen";
+        const ownerRoot = root || document;
+        if (!staticStyleMap.has(ownerRoot)) {
+          staticStyleMap.set(ownerRoot, new Map());
         }
+
+        const classMap = staticStyleMap.get(ownerRoot);
+        let element = null;
+        try {
+          element = ownerRoot.querySelector ? ownerRoot.querySelector(`style.${className}`) : null;
+        } catch (_) {}
+
+        if (element) {
+          classMap.set(className, element);
+        } else if (classMap.has(className)) {
+          element = classMap.get(className);
+        } else {
+          element = document.createElement("style");
+          element.classList.add(INLINE_CLASS, "darkreader", className);
+          element.media = "screen";
+          element.textContent = "";
+          classMap.set(className, element);
+        }
+
         return element;
+      };
+
+      const findStaticStyle = (className, root = document) => {
+        try {
+          const cached = staticStyleMap.get(root)?.get(className);
+          if (cached) return cached;
+          return root.querySelector ? root.querySelector(`style.${className}`) : null;
+        } catch (_) {
+          return null;
+        }
       };
 
       const injectStyleNextTo = (style, root, previous = null) => {
         const target = root === document ? (document.head || document.documentElement) : root;
         if (!target) return;
         try {
-          if (previous) {
-            if (style.parentNode !== target || previous.nextSibling !== style) {
-              target.insertBefore(style, previous.nextSibling);
-            }
-          } else if (style.parentNode !== target || style.nextSibling) {
-            target.appendChild(style);
+          const reference = previous && previous.parentNode === target
+            ? previous.nextSibling
+            : (previous ? null : target.firstChild);
+          if (reference === style) return;
+          if (style.parentNode !== target || style.nextSibling !== reference) {
+            target.insertBefore(style, reference);
           }
         } catch (_) {
-          target.appendChild(style);
+          try { target.appendChild(style); } catch (_) {}
         }
       };
 
@@ -43,6 +70,42 @@ extension BrowserModel {
         } catch (_) {
           target.appendChild(style);
         }
+      };
+
+      const setupNodePositionWatcher = (node, alias, callback) => {
+        const previous = nodePositionWatchers.get(alias);
+        if (previous) previous.disconnect();
+        if (!window.MutationObserver) return;
+
+        const target = document.head || document.documentElement;
+        if (!target) return;
+
+        let scheduledRestore = false;
+        const observer = new MutationObserver(() => {
+          if (scheduledRestore) return;
+          scheduledRestore = true;
+          queueMicrotask(() => {
+            scheduledRestore = false;
+            if (!node.isConnected || node.parentNode !== (document.head || document.documentElement)) {
+              callback?.();
+            }
+          });
+        });
+
+        observer.observe(target, { childList: true });
+        nodePositionWatchers.set(alias, observer);
+      };
+
+      const stopStylePositionWatchers = () => {
+        for (const observer of nodePositionWatchers.values()) {
+          observer.disconnect();
+        }
+        nodePositionWatchers.clear();
+      };
+
+      const injectStaticStyle = (style, previous, alias, callback) => {
+        injectStyleNextTo(style, document, previous);
+        setupNodePositionWatcher(style, alias, callback || restoreStaticStyleOrder);
       };
 
       const getInlineOverrideStyle = () => {
@@ -62,6 +125,16 @@ extension BrowserModel {
           "}"
         ].join("\n")).join("\n");
       };
+
+      const getVariablesStyle = () => `
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) {
+          --darkreader-neutral-background: ${toRGBA(DEFAULT_BACKGROUND)};
+          --darkreader-neutral-text: ${toRGBA(DEFAULT_TEXT)};
+          --darkreader-border: ${toRGBA(DEFAULT_BORDER)};
+          --darkreader-selection-background: rgb(67, 91, 122);
+          --darkreader-selection-text: rgb(246, 248, 250);
+        }
+      `;
 
       const getFallbackStyle = () => `
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) {
@@ -156,44 +229,79 @@ extension BrowserModel {
         }
       `;
 
+      const restoreStaticStyleOrder = () => {
+        const root = document.head || document.documentElement;
+        if (!root) return;
+
+        let previous = null;
+        for (const className of STATIC_STYLE_CLASSES) {
+          const style = findStaticStyle(className, document);
+          if (!style || !style.textContent && className === "wkdomains-darkreader--pdf") continue;
+          injectStyleNextTo(style, document, previous);
+          previous = style;
+        }
+      };
+
       const ensureSiteFixStyle = () => {
         const siteFixStyle = createOrUpdateStyle("wkdomains-darkreader--site-fixes", document);
         siteFixStyle.textContent = getSiteFixStyle();
-        injectStyleAtEnd(siteFixStyle, document);
+        const structuralStyle = findStaticStyle("wkdomains-darkreader--structural", document);
+        injectStaticStyle(siteFixStyle, structuralStyle || document.head?.lastChild || null, "site-fixes");
       };
 
       const ensureBaseStyle = () => {
         if (!document.documentElement) return;
         document.documentElement.setAttribute(ROOT_ATTRIBUTE, "true");
+        document.documentElement.setAttribute(DARKREADER_MODE_ATTRIBUTE, "dynamic");
+        document.documentElement.setAttribute(DARKREADER_SCHEME_ATTRIBUTE, "dark");
 
         const fallbackStyle = createOrUpdateStyle("wkdomains-darkreader--fallback", document);
         fallbackStyle.id = STYLE_ID;
         fallbackStyle.textContent = getFallbackStyle();
-        injectStyleNextTo(fallbackStyle, document, null);
+        injectStaticStyle(fallbackStyle, null, "fallback");
 
         const userAgentStyle = createOrUpdateStyle("wkdomains-darkreader--user-agent", document);
         userAgentStyle.textContent = getUserAgentStyle();
-        injectStyleNextTo(userAgentStyle, document, fallbackStyle);
+        injectStaticStyle(userAgentStyle, fallbackStyle, "user-agent");
 
         const invertStyle = createOrUpdateStyle("wkdomains-darkreader--invert", document);
         invertStyle.textContent = getSiteFixInvertStyle();
-        injectStyleNextTo(invertStyle, document, userAgentStyle);
+        injectStaticStyle(invertStyle, userAgentStyle, "invert");
 
         const inlineStyle = createOrUpdateStyle("wkdomains-darkreader--inline", document);
         inlineStyle.textContent = getInlineOverrideStyle();
-        injectStyleNextTo(inlineStyle, document, invertStyle);
+        injectStaticStyle(inlineStyle, invertStyle, "inline");
+
+        const variablesStyle = createOrUpdateStyle("wkdomains-darkreader--variables", document);
+        variablesStyle.textContent = getVariablesStyle();
+        injectStaticStyle(variablesStyle, inlineStyle, "variables");
+
+        const rootVarsStyle = createOrUpdateStyle("wkdomains-darkreader--root-vars", document);
+        rootVarsStyle.textContent = "";
+        injectStaticStyle(rootVarsStyle, variablesStyle, "root-vars");
 
         const structuralStyle = createOrUpdateStyle("wkdomains-darkreader--structural", document);
         structuralStyle.textContent = getStructuralStyle();
-        injectStyleNextTo(structuralStyle, document, inlineStyle);
+        injectStaticStyle(structuralStyle, rootVarsStyle, "structural");
 
         ensureSiteFixStyle();
+        restoreStaticStyleOrder();
       };
 
-      const createShadowStaticStyleOverrides = (root) => {
+      const toShadowScopedStyle = (css) => String(css || "").replaceAll(
+        `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}])`,
+        `:host-context([${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]))`
+      );
+
+      const createShadowStaticStyleOverridesInner = (root) => {
         if (!root || !root.querySelector) return;
         const style = createOrUpdateStyle(SHADOW_STYLE_CLASS, root);
-        style.textContent = `${getInlineOverrideStyle()}\n${getUserAgentStyle()}\n${getSiteFixInvertStyle()}\n${getSiteFixStyle()}`;
+        style.textContent = [
+          toShadowScopedStyle(getInlineOverrideStyle()),
+          toShadowScopedStyle(getUserAgentStyle()),
+          toShadowScopedStyle(getSiteFixInvertStyle()),
+          getSiteFixStyle()
+        ].join("\n");
         if (style.parentNode !== root) {
           try {
             root.insertBefore(style, root.firstChild);
@@ -201,6 +309,103 @@ extension BrowserModel {
             root.appendChild(style);
           }
         }
+        shadowRootsWithOverrides.add(root);
+      };
+
+      const delayedCreateShadowStaticStyleOverrides = (root) => {
+        if (!window.MutationObserver) return;
+        const observer = new MutationObserver((mutations, activeObserver) => {
+          activeObserver.disconnect();
+          for (const mutation of mutations) {
+            if (mutation.type !== "childList") continue;
+            for (const node of mutation.removedNodes) {
+              if (
+                node.nodeType === Node.ELEMENT_NODE
+                && node.tagName === "STYLE"
+                && node.classList
+                && (node.classList.contains(SHADOW_STYLE_CLASS) || node.classList.contains(INLINE_CLASS))
+              ) {
+                createShadowStaticStyleOverridesInner(root);
+                return;
+              }
+            }
+          }
+        });
+        observer.observe(root, { childList: true });
+        cleanupTasks.push(() => observer.disconnect());
+      };
+
+      const createShadowStaticStyleOverrides = (root) => {
+        if (!root) return;
+        const delayed = root.firstChild === null;
+        createShadowStaticStyleOverridesInner(root);
+        if (delayed) {
+          delayedCreateShadowStaticStyleOverrides(root);
+        }
+      };
+
+      const changeMetaThemeColorWhenAvailable = () => {
+        const apply = () => {
+          if (!document.head) return;
+          for (const meta of document.head.querySelectorAll('meta[name="theme-color"]')) {
+            if (!originalMetaThemeColors.has(meta)) {
+              originalMetaThemeColors.set(meta, {
+                hadContent: meta.hasAttribute("content"),
+                content: meta.getAttribute("content")
+              });
+            }
+            const nextColor = toRGBA(DEFAULT_BACKGROUND);
+            if (meta.getAttribute("content") !== nextColor) {
+              meta.setAttribute("content", nextColor);
+            }
+          }
+        };
+
+        apply();
+        if (!window.MutationObserver || themeColorObserver || !document.head) return;
+        themeColorObserver = new MutationObserver(apply);
+        themeColorObserver.observe(document.head, {
+          attributes: true,
+          attributeFilter: ["content"],
+          childList: true,
+          subtree: true
+        });
+      };
+
+      const restoreMetaThemeColor = () => {
+        if (themeColorObserver) {
+          themeColorObserver.disconnect();
+          themeColorObserver = null;
+        }
+        if (!document.head) return;
+        for (const meta of document.head.querySelectorAll('meta[name="theme-color"]')) {
+          const original = originalMetaThemeColors.get(meta);
+          if (!original) continue;
+          if (original.hadContent) {
+            meta.setAttribute("content", original.content || "");
+          } else {
+            meta.removeAttribute("content");
+          }
+        }
+      };
+
+      const tryInvertPDF = () => {
+        let hasPDF = false;
+        try {
+          hasPDF = document.contentType === "application/pdf"
+            || !!document.querySelector('embed[type="application/pdf"], object[type="application/pdf"], iframe[src$=".pdf"]');
+        } catch (_) {}
+        if (!hasPDF) return;
+
+        const pdfStyle = createOrUpdateStyle("wkdomains-darkreader--pdf", document);
+        pdfStyle.textContent = `
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) embed[type="application/pdf"],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) object[type="application/pdf"],
+          :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) iframe[src$=".pdf"] {
+            filter: invert(1) contrast(0.9) hue-rotate(180deg) !important;
+          }
+        `;
+        injectStaticStyle(pdfStyle, findStaticStyle("wkdomains-darkreader--site-fixes", document) || null, "pdf");
       };
 
       const removeBaseStyle = () => {
@@ -208,9 +413,22 @@ extension BrowserModel {
         document.documentElement.removeAttribute(ROOT_ATTRIBUTE);
         document.documentElement.removeAttribute(READY_ATTRIBUTE);
         document.documentElement.removeAttribute(SAMPLING_ATTRIBUTE);
+        document.documentElement.removeAttribute(DARKREADER_MODE_ATTRIBUTE);
+        document.documentElement.removeAttribute(DARKREADER_SCHEME_ATTRIBUTE);
+        restoreMetaThemeColor();
         for (const style of document.querySelectorAll(`style.${INLINE_CLASS}`)) {
           style.remove();
         }
+        for (const root of shadowRootsWithOverrides) {
+          try {
+            for (const style of root.querySelectorAll(`style.${INLINE_CLASS}`)) {
+              style.remove();
+            }
+          } catch (_) {}
+        }
+        shadowRootsWithOverrides.clear();
+        stopStylePositionWatchers();
+        staticStyleMap = new WeakMap();
       };
     """#
 }

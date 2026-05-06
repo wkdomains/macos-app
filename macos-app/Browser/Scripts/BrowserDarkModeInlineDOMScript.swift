@@ -22,6 +22,20 @@ extension BrowserModel {
         element.setAttribute(attribute, "");
       };
 
+      const removeGeneratedInlineVariables = (element) => {
+        if (!element || !element.style) return;
+        const properties = [];
+        for (let index = 0; index < element.style.length; index += 1) {
+          const property = element.style.item(index);
+          if (property && property.startsWith(DARK_VAR_PREFIX)) {
+            properties.push(property);
+          }
+        }
+        for (const property of properties) {
+          element.style.removeProperty(property);
+        }
+      };
+
       const withFallbackDisabled = (action) => {
         const root = document.documentElement;
         const hadSamplingAttribute = root ? root.hasAttribute(SAMPLING_ATTRIBUTE) : false;
@@ -225,6 +239,25 @@ extension BrowserModel {
         for (const override of BORDER_OVERRIDES) {
           setOverride(element, override.attr, override.prop, null);
         }
+        removeGeneratedInlineVariables(element);
+      };
+
+      const clearAllInlineOverrides = (root = document) => {
+        if (!root || !root.querySelectorAll) return;
+        const selector = [...ATTRIBUTES_OWNED_BY_DARK_MODE.map((attr) => `[${attr}]`), "[style]"].join(", ");
+        const elements = [];
+        if (root.nodeType === Node.DOCUMENT_NODE) {
+          if (document.documentElement) elements.push(document.documentElement);
+          if (document.body) elements.push(document.body);
+        } else if (root.nodeType === Node.ELEMENT_NODE) {
+          elements.push(root);
+        }
+        try {
+          elements.push(...root.querySelectorAll(selector));
+        } catch (_) {}
+        for (const element of elements) {
+          clearInlineOverrides(element);
+        }
       };
 
       const overrideInlineStyle = (element) => {
@@ -418,6 +451,14 @@ extension BrowserModel {
         applyRoot(root);
         updateManageableStyles(root);
         watchRoot(root);
+      };
+
+      const destroyInlineDOMState = () => {
+        clearAllInlineOverrides(document);
+        for (const root of Array.from(discoveredShadowRoots)) {
+          clearAllInlineOverrides(root);
+        }
+        discoveredShadowRoots.clear();
       };
     """#
 }

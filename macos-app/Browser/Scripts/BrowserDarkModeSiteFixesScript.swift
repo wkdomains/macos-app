@@ -157,7 +157,39 @@ extension BrowserModel {
         return host === normalized || host.endsWith(`.${normalized}`);
       };
 
-      const activeSiteFix = SITE_FIXES.find((fix) => Array.isArray(fix.url) && fix.url.some(siteFixMatchesPattern)) || null;
+      const combineSiteFixes = (fixes) => {
+        if (!fixes.length) return null;
+        const combined = {
+          url: [],
+          invert: [],
+          css: "",
+          ignoreInlineStyle: [],
+          ignoreImageAnalysis: [],
+          ignoreCSSUrl: [],
+          disableStyleSheetsProxy: false,
+          disableCustomElementRegistryProxy: false
+        };
+
+        for (const fix of fixes) {
+          for (const key of ["url", "invert", "ignoreInlineStyle", "ignoreImageAnalysis", "ignoreCSSUrl"]) {
+            if (Array.isArray(fix[key])) {
+              combined[key].push(...fix[key]);
+            }
+          }
+          if (fix.css) {
+            combined.css += `\n${fix.css}`;
+          }
+          combined.disableStyleSheetsProxy = combined.disableStyleSheetsProxy || fix.disableStyleSheetsProxy === true;
+          combined.disableCustomElementRegistryProxy = combined.disableCustomElementRegistryProxy || fix.disableCustomElementRegistryProxy === true;
+        }
+
+        return combined;
+      };
+
+      const matchingSiteFixes = SITE_FIXES.filter((fix) => Array.isArray(fix.url) && fix.url.some(siteFixMatchesPattern));
+      const genericSiteFixes = matchingSiteFixes.filter((fix) => fix.url.includes("*"));
+      const specificSiteFixes = matchingSiteFixes.filter((fix) => !fix.url.includes("*"));
+      const activeSiteFix = combineSiteFixes([...genericSiteFixes, ...specificSiteFixes]);
 
       const activeSiteFixList = (key) => (
         activeSiteFix && Array.isArray(activeSiteFix[key])
@@ -167,6 +199,8 @@ extension BrowserModel {
 
       const ignoredInlineSelectors = activeSiteFixList("ignoreInlineStyle");
       const ignoredImageAnalysisSelectors = activeSiteFixList("ignoreImageAnalysis");
+      const ignoredCSSURLPatterns = activeSiteFixList("ignoreCSSUrl");
+      const siteFixFlag = (key) => activeSiteFix && activeSiteFix[key] === true;
 
       const matchesAnySiteFixSelector = (element, selectors) => {
         if (!element || !element.matches || !selectors || selectors.length === 0) return false;

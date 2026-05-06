@@ -11,6 +11,8 @@ extension BrowserModel {
       const ROOT_ATTRIBUTE = "data-wkdomains-forced-dark";
       const READY_ATTRIBUTE = "data-wkdomains-forced-dark-ready";
       const SAMPLING_ATTRIBUTE = "data-wkdomains-forced-dark-sampling";
+      const DARKREADER_MODE_ATTRIBUTE = "data-darkreader-mode";
+      const DARKREADER_SCHEME_ATTRIBUTE = "data-darkreader-scheme";
       const COLOR_ATTRIBUTE = "data-wkdomains-forced-dark-color";
       const BACKGROUND_ATTRIBUTE = "data-wkdomains-forced-dark-bg";
       const BACKGROUND_IMAGE_ATTRIBUTE = "data-wkdomains-forced-dark-bg-image";
@@ -64,5 +66,38 @@ extension BrowserModel {
       const SHADOW_STYLE_CLASS = "wkdomains-darkreader--shadow";
       const ADOPTED_STYLE_CLASS = "wkdomains-darkreader--adopted";
       const DARK_VAR_PREFIX = "--wkdomains-darkreader";
+      const DARKREADER_META_NAME = "darkreader";
+      const DARKREADER_LOCK_META_NAME = "darkreader-lock";
+      const INSTANCE_ID = (() => {
+        try {
+          const bytes = new Uint32Array(2);
+          crypto.getRandomValues(bytes);
+          return `${Date.now().toString(36)}-${bytes[0].toString(36)}${bytes[1].toString(36)}`;
+        } catch (_) {
+          return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        }
+      })();
+      const STATIC_STYLE_CLASSES = [
+        "wkdomains-darkreader--fallback",
+        "wkdomains-darkreader--user-agent",
+        "wkdomains-darkreader--invert",
+        "wkdomains-darkreader--inline",
+        "wkdomains-darkreader--variables",
+        "wkdomains-darkreader--root-vars",
+        "wkdomains-darkreader--structural",
+        "wkdomains-darkreader--site-fixes",
+        "wkdomains-darkreader--pdf"
+      ];
+      let staticStyleMap = new WeakMap();
+      const nodePositionWatchers = new Map();
+      const shadowRootsWithOverrides = new Set();
+      const cleanupTasks = [];
+      let metaObserver = null;
+      let headObserver = null;
+      let interceptorAttempts = 2;
+      let pipListenerRegistered = false;
+      let dynamicStyleStarted = false;
+      let themeColorObserver = null;
+      const originalMetaThemeColors = new WeakMap();
     """#
 }

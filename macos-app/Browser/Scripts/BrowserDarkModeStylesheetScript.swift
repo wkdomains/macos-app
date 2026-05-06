@@ -9,14 +9,32 @@ extension BrowserModel {
     static let browserDarkModeStylesheetScript = #"""
       const styleManagers = new WeakMap();
       const adoptedStyleManagers = new WeakMap();
+      const managedStyleElements = new Set();
+      const managedAdoptedRoots = new Set();
       let stylesheetSyncScheduled = false;
+      let stylesheetProxyActive = false;
+
+      const cssURLMatchesPattern = (url, pattern) => {
+        const value = String(url || "");
+        const text = String(pattern || "");
+        if (!value || !text) return false;
+        if (value.includes(text)) return true;
+        try {
+          const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replaceAll("\\*", ".*");
+          return new RegExp(`^${escaped}$`).test(value);
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const shouldIgnoreCSSURL = (url) => ignoredCSSURLPatterns.some((pattern) => cssURLMatchesPattern(url, pattern));
 
       const shouldManageStyle = (element) => {
         if (!element || !element.matches || !element.matches(STYLE_SELECTOR)) return false;
         if (element.classList.contains(INLINE_CLASS) || element.classList.contains("darkreader") || element.classList.contains("stylus")) return false;
         const media = String(element.media || "").toLowerCase();
         if (media.includes("print") || media.includes("speech")) return false;
-        if (element instanceof HTMLLinkElement && (!element.href || element.disabled)) return false;
+        if (element instanceof HTMLLinkElement && (!element.href || element.disabled || shouldIgnoreCSSURL(element.href))) return false;
         return true;
       };
 
@@ -321,10 +339,11 @@ extension BrowserModel {
           const syncStyle = element instanceof SVGStyleElement
             ? document.createElementNS("http://www.w3.org/2000/svg", "style")
             : document.createElement("style");
-          syncStyle.classList.add(INLINE_CLASS, STYLE_SYNC_CLASS);
+          syncStyle.classList.add(INLINE_CLASS, "darkreader", STYLE_SYNC_CLASS);
           syncStyle.media = "screen";
           manager = { syncStyle, signature: "", observer: null };
           styleManagers.set(element, manager);
+          managedStyleElements.add(element);
 
           if (window.MutationObserver) {
             manager.observer = new MutationObserver(() => scheduleStyleSync(0));
@@ -337,7 +356,15 @@ extension BrowserModel {
           }
         }
 
-        const signature = `${rules.length}:${element.textContent ? element.textContent.length : ""}:${element.href || ""}`;
+        const ruleSignature = [];
+        for (let index = 0; index < rules.length; index += 1) {
+          try {
+            ruleSignature.push(rules[index].cssText.length);
+          } catch (_) {
+            ruleSignature.push("x");
+          }
+        }
+        const signature = `${rules.length}:${ruleSignature.join(",")}:${element.textContent ? element.textContent.length : ""}:${element.href || ""}`;
         if (manager.signature === signature && manager.syncStyle.textContent) {
           if (manager.syncStyle.parentNode !== element.parentNode && element.parentNode) {
             element.parentNode.insertBefore(manager.syncStyle, element.nextSibling);
@@ -366,10 +393,11 @@ extension BrowserModel {
         let manager = adoptedStyleManagers.get(root);
         if (!manager) {
           const style = document.createElement("style");
-          style.classList.add(INLINE_CLASS, ADOPTED_STYLE_CLASS);
+          style.classList.add(INLINE_CLASS, "darkreader", ADOPTED_STYLE_CLASS);
           style.media = "screen";
           manager = { style, signature: "" };
           adoptedStyleManagers.set(root, manager);
+          managedAdoptedRoots.add(root);
         }
 
         const chunks = [];
@@ -377,7 +405,15 @@ extension BrowserModel {
         for (const sheet of root.adoptedStyleSheets) {
           const rules = safeGetRules(sheet);
           if (!rules) continue;
-          signature.push(rules.length);
+          const sheetSignature = [rules.length];
+          for (let index = 0; index < rules.length; index += 1) {
+            try {
+              sheetSignature.push(rules[index].cssText.length);
+            } catch (_) {
+              sheetSignature.push("x");
+            }
+          }
+          signature.push(sheetSignature.join(":"));
           const css = convertCSSRules(rules);
           if (css) chunks.push(css);
         }
@@ -397,7 +433,42 @@ extension BrowserModel {
         }
       };
 
+      const removeStyleManager = (element) => {
+        const manager = styleManagers.get(element);
+        if (!manager) return;
+        if (manager.observer) manager.observer.disconnect();
+        manager.syncStyle.remove();
+        styleManagers.delete(element);
+        managedStyleElements.delete(element);
+      };
+
+      const pruneStyleManagers = () => {
+        for (const element of Array.from(managedStyleElements)) {
+          if (!element.isConnected) {
+            removeStyleManager(element);
+          }
+        }
+      };
+
+      const destroyStyleManagers = () => {
+        for (const element of Array.from(managedStyleElements)) {
+          removeStyleManager(element);
+        }
+        for (const root of Array.from(managedAdoptedRoots)) {
+          const manager = adoptedStyleManagers.get(root);
+          if (manager) {
+            manager.style.remove();
+            adoptedStyleManagers.delete(root);
+          }
+          managedAdoptedRoots.delete(root);
+        }
+        for (const style of document.querySelectorAll(`style.${STYLE_SYNC_CLASS}, style.${ADOPTED_STYLE_CLASS}`)) {
+          style.remove();
+        }
+      };
+
       const updateManageableStyles = (root = document) => {
+        pruneStyleManagers();
         for (const style of getManageableStyles(root)) {
           renderStyleManager(style);
         }
@@ -418,32 +489,35 @@ extension BrowserModel {
       };
 
       const installStylesheetProxy = () => {
-        if (!window.CSSStyleSheet || CSSStyleSheet.prototype.__wkdomainsDarkModeProxy) return;
+        if (siteFixFlag("disableStyleSheetsProxy")) return;
+        if (!window.CSSStyleSheet) return;
+        stylesheetProxyActive = true;
+        if (CSSStyleSheet.prototype.__wkdomainsDarkModeProxy) return;
         const proto = CSSStyleSheet.prototype;
         const nativeInsertRule = proto.insertRule;
         const nativeDeleteRule = proto.deleteRule;
         const nativeReplace = proto.replace;
         const nativeReplaceSync = proto.replaceSync;
 
-        Object.defineProperty(proto, "__wkdomainsDarkModeProxy", { value: true });
+        Object.defineProperty(proto, "__wkdomainsDarkModeProxy", { value: true, configurable: true });
         if (nativeInsertRule) {
           proto.insertRule = function(rule, index) {
             const result = nativeInsertRule.call(this, rule, index);
-            scheduleStyleSync(0);
+            if (stylesheetProxyActive) scheduleStyleSync(0);
             return result;
           };
         }
         if (nativeDeleteRule) {
           proto.deleteRule = function(index) {
             const result = nativeDeleteRule.call(this, index);
-            scheduleStyleSync(0);
+            if (stylesheetProxyActive) scheduleStyleSync(0);
             return result;
           };
         }
         if (nativeReplace) {
           proto.replace = function(text) {
             return nativeReplace.call(this, text).then((sheet) => {
-              scheduleStyleSync(0);
+              if (stylesheetProxyActive) scheduleStyleSync(0);
               return sheet;
             });
           };
@@ -451,7 +525,7 @@ extension BrowserModel {
         if (nativeReplaceSync) {
           proto.replaceSync = function(text) {
             const result = nativeReplaceSync.call(this, text);
-            scheduleStyleSync(0);
+            if (stylesheetProxyActive) scheduleStyleSync(0);
             return result;
           };
         }
@@ -460,10 +534,11 @@ extension BrowserModel {
           const declarationProto = CSSStyleDeclaration.prototype;
           const nativeSetProperty = declarationProto.setProperty;
           const nativeRemoveProperty = declarationProto.removeProperty;
-          Object.defineProperty(declarationProto, "__wkdomainsDarkModeProxy", { value: true });
+          Object.defineProperty(declarationProto, "__wkdomainsDarkModeProxy", { value: true, configurable: true });
 
           declarationProto.setProperty = function(property, value, priority) {
             const result = nativeSetProperty.call(this, property, value, priority);
+            if (!stylesheetProxyActive) return result;
             const propertyName = property ? String(property) : "";
             if (propertyName.startsWith(DARK_VAR_PREFIX) || propertyName.startsWith("--wkdomains-forced-dark")) {
               return result;
@@ -476,6 +551,7 @@ extension BrowserModel {
 
           declarationProto.removeProperty = function(property) {
             const result = nativeRemoveProperty.call(this, property);
+            if (!stylesheetProxyActive) return result;
             const propertyName = property ? String(property) : "";
             if (propertyName.startsWith(DARK_VAR_PREFIX) || propertyName.startsWith("--wkdomains-forced-dark")) {
               return result;
@@ -491,7 +567,7 @@ extension BrowserModel {
           if (!rootProto || rootProto.__wkdomainsDarkModeAdoptedProxy) return;
           const descriptor = Object.getOwnPropertyDescriptor(rootProto, "adoptedStyleSheets");
           if (!descriptor || !descriptor.set || !descriptor.get) return;
-          Object.defineProperty(rootProto, "__wkdomainsDarkModeAdoptedProxy", { value: true });
+          Object.defineProperty(rootProto, "__wkdomainsDarkModeAdoptedProxy", { value: true, configurable: true });
           Object.defineProperty(rootProto, "adoptedStyleSheets", {
             configurable: true,
             enumerable: descriptor.enumerable,
@@ -500,7 +576,7 @@ extension BrowserModel {
             },
             set(value) {
               descriptor.set.call(this, value);
-              scheduleStyleSync(0);
+              if (stylesheetProxyActive) scheduleStyleSync(0);
             }
           });
         };
@@ -509,6 +585,10 @@ extension BrowserModel {
         if (window.ShadowRoot) {
           patchAdoptedStyleSheets(ShadowRoot.prototype);
         }
+      };
+
+      const stopStylesheetProxy = () => {
+        stylesheetProxyActive = false;
       };
     """#
 }
