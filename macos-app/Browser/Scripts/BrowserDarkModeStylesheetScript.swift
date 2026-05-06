@@ -135,6 +135,10 @@ extension BrowserModel {
 
       const varReferenceRegex = /var\(\s*(--[-_a-zA-Z0-9]+)\s*(?:,\s*([^()]*|\([^)]*\)))?\)/g;
       const wrappedVariableName = (type, name) => `${DARK_VAR_PREFIX}-${type}-${name.slice(2)}`;
+      const VAR_TYPE_BG = 1 << 0;
+      const VAR_TYPE_TEXT = 1 << 1;
+      const VAR_TYPE_BORDER = 1 << 2;
+      const VAR_TYPE_BG_IMG = 1 << 3;
 
       const cssVariableTypeForProperty = (property) => {
         const prop = property.toLowerCase();
@@ -143,13 +147,232 @@ extension BrowserModel {
           if (shouldTreatCustomPropertyAsBorder(prop)) return "border";
           return "text";
         }
-        if (prop.startsWith("background") || prop === "box-shadow" || prop === "text-shadow" || prop === "fill" || prop === "stop-color") {
+        if (prop.startsWith("background") || prop === "box-shadow" || prop === "text-shadow") {
           return "bg";
+        }
+        if (prop === "fill" || prop === "stroke" || prop === "stop-color") {
+          return "text";
         }
         if (prop.includes("border") || prop === "outline" || prop === "outline-color" || prop === "column-rule" || prop === "column-rule-color" || prop === "text-decoration-color" || prop === "stroke") {
           return "border";
         }
         return "text";
+      };
+
+      const variableTypeNumberForProperty = (property, value = "") => {
+        const prop = String(property || "").toLowerCase();
+        if (prop === "background-image") return VAR_TYPE_BG_IMG;
+        if (prop === "background" && /url\(|gradient\(/i.test(String(value || ""))) return VAR_TYPE_BG_IMG;
+        switch (cssVariableTypeForProperty(prop)) {
+        case "bg":
+          return VAR_TYPE_BG;
+        case "border":
+          return VAR_TYPE_BORDER;
+        default:
+          return VAR_TYPE_TEXT;
+        }
+      };
+
+      const forEachVarReference = (value, iterate) => {
+        if (!value || !String(value).includes("var(")) return;
+        String(value).replace(varReferenceRegex, (match, name, fallback) => {
+          iterate(name, fallback || "");
+          if (fallback && fallback.includes("var(")) {
+            forEachVarReference(fallback, iterate);
+          }
+          return match;
+        });
+      };
+
+      const variablesStore = (() => {
+        const varTypes = new Map();
+        const varValues = new Map();
+        const varRefs = new Map();
+        const rulesQueue = new Set();
+        const inlineQueue = [];
+
+        const clear = () => {
+          varTypes.clear();
+          varValues.clear();
+          varRefs.clear();
+          rulesQueue.clear();
+          inlineQueue.splice(0);
+        };
+
+        const resolveType = (name, type) => {
+          if (!name || !type) return;
+          varTypes.set(name, (varTypes.get(name) || 0) | type);
+        };
+
+        const addRulesForMatching = (rules) => {
+          if (rules) rulesQueue.add(rules);
+        };
+
+        const addInlineStyleForMatching = (style) => {
+          if (style) inlineQueue.push(style);
+        };
+
+        const addVarRef = (owner, ref) => {
+          if (!owner || !ref) return;
+          if (!varRefs.has(owner)) varRefs.set(owner, new Set());
+          varRefs.get(owner).add(ref);
+        };
+
+        const inspectVariable = (property, value) => {
+          if (!property || !property.startsWith("--")) return;
+          const text = String(value || "").trim();
+          varValues.set(property, text);
+
+          if (text.includes("var(")) {
+            forEachVarReference(text, (ref) => addVarRef(property, ref));
+          }
+
+          COLOR_RE.lastIndex = 0;
+          const hasColor = COLOR_RE.test(text);
+          COLOR_RE.lastIndex = 0;
+          if (hasColor || /^\s*(rgb|hsl)a?\(/i.test(text)) {
+            if (shouldTreatCustomPropertyAsBackground(property)) {
+              resolveType(property, VAR_TYPE_BG);
+            } else if (shouldTreatCustomPropertyAsBorder(property)) {
+              resolveType(property, VAR_TYPE_BORDER);
+            } else {
+              resolveType(property, VAR_TYPE_TEXT);
+            }
+          }
+
+          if (text.includes("url(") || text.includes("gradient(")) {
+            resolveType(property, VAR_TYPE_BG_IMG);
+          }
+        };
+
+        const inspectVarDependent = (property, value) => {
+          if (!value || !String(value).includes("var(")) return;
+          const type = property.startsWith("--")
+            ? 0
+            : variableTypeNumberForProperty(property, value);
+          forEachVarReference(value, (ref) => {
+            if (property.startsWith("--")) {
+              addVarRef(property, ref);
+            } else {
+              resolveType(ref, type);
+            }
+          });
+        };
+
+        const inspectDeclarations = (style) => {
+          if (!style) return;
+          iterateCSSDeclarations(style, (property, value) => {
+            if (property.startsWith("--")) {
+              inspectVariable(property, value);
+            }
+            inspectVarDependent(property, value);
+          });
+        };
+
+        const inspectRules = (rules) => {
+          if (!rules) return;
+          for (let index = 0; index < rules.length; index += 1) {
+            const rule = rules[index];
+            try {
+              if (rule.style) {
+                inspectDeclarations(rule.style);
+              }
+              if (rule.cssRules) {
+                inspectRules(rule.cssRules);
+              }
+              if (rule.type === CSSRule.IMPORT_RULE && rule.styleSheet) {
+                inspectRules(rule.styleSheet.cssRules);
+              }
+            } catch (_) {}
+          }
+        };
+
+        const propagateTypes = () => {
+          let changed = true;
+          let guard = 0;
+          while (changed && guard < 16) {
+            changed = false;
+            guard += 1;
+            for (const [owner, refs] of varRefs) {
+              const ownerType = varTypes.get(owner) || 0;
+              if (!ownerType) continue;
+              for (const ref of refs) {
+                const before = varTypes.get(ref) || 0;
+                const next = before | ownerType;
+                if (next !== before) {
+                  varTypes.set(ref, next);
+                  changed = true;
+                }
+              }
+            }
+          }
+        };
+
+        const matchVariablesAndDependents = () => {
+          if (rulesQueue.size === 0 && inlineQueue.length === 0) return;
+          for (const rules of rulesQueue) inspectRules(rules);
+          for (const style of inlineQueue) inspectDeclarations(style);
+          rulesQueue.clear();
+          inlineQueue.splice(0);
+          propagateTypes();
+        };
+
+        const typesForVariable = (name) => varTypes.get(name) || 0;
+        const isVarType = (name, type) => (typesForVariable(name) & type) !== 0;
+
+        const rootDeclarations = () => {
+          const declarations = [];
+          const rootStyle = document.documentElement && document.documentElement.style;
+          if (!rootStyle) return declarations;
+
+          iterateCSSDeclarations(rootStyle, (property, value) => {
+            if (!property.startsWith("--")) return;
+            const type = typesForVariable(property);
+            if (!type) return;
+            if (type & VAR_TYPE_BG) {
+              const transformed = transformCustomPropertyValue(property, value, "bg", modifyBackgroundColor);
+              if (transformed) declarations.push([wrappedVariableName("bg", property), transformed]);
+            }
+            if (type & VAR_TYPE_TEXT) {
+              const transformed = transformCustomPropertyValue(property, value, "text", modifyForegroundColor);
+              if (transformed) declarations.push([wrappedVariableName("text", property), transformed]);
+            }
+            if (type & VAR_TYPE_BORDER) {
+              const transformed = transformCustomPropertyValue(property, value, "border", modifyBorderColor);
+              if (transformed) declarations.push([wrappedVariableName("border", property), transformed]);
+            }
+          });
+
+          return declarations;
+        };
+
+        return {
+          clear,
+          addRulesForMatching,
+          addInlineStyleForMatching,
+          matchVariablesAndDependents,
+          typesForVariable,
+          isVarType,
+          rootDeclarations
+        };
+      })();
+
+      const transformCustomPropertyValue = (property, value, type, transformer) => {
+        if (!value || property.startsWith(DARK_VAR_PREFIX)) return null;
+        if (String(value).includes("var(")) {
+          const rewritten = replaceCSSVariableReferences(value, type);
+          const transformedFallbacks = replaceCSSColors(rewritten, transformer);
+          return transformedFallbacks === value ? rewritten : transformedFallbacks;
+        }
+
+        COLOR_RE.lastIndex = 0;
+        if (!COLOR_RE.test(value)) {
+          COLOR_RE.lastIndex = 0;
+          return null;
+        }
+        COLOR_RE.lastIndex = 0;
+        const transformed = replaceCSSColors(value, transformer);
+        return transformed === value ? null : transformed;
       };
 
       const replaceCSSVariableReferences = (value, type) => {
@@ -179,26 +402,16 @@ extension BrowserModel {
       const transformCustomPropertyDeclarations = (property, value) => {
         if (!value || property.startsWith(DARK_VAR_PREFIX)) return null;
         const declarations = [];
+        const inferredTypes = variablesStore.typesForVariable(property);
 
         const makeValue = (type, transformer) => {
-          if (value.includes("var(")) {
-            const rewritten = replaceCSSVariableReferences(value, type);
-            const transformedFallbacks = replaceCSSColors(rewritten, transformer);
-            return transformedFallbacks === value ? null : transformedFallbacks;
-          }
-
-          if (!COLOR_RE.test(value)) {
-            COLOR_RE.lastIndex = 0;
-            return null;
-          }
-          COLOR_RE.lastIndex = 0;
-          const transformed = replaceCSSColors(value, transformer);
-          return transformed === value ? null : transformed;
+          return transformCustomPropertyValue(property, value, type, transformer);
         };
 
-        const bgValue = makeValue("bg", modifyBackgroundColor);
-        const textValue = makeValue("text", modifyForegroundColor);
-        const borderValue = makeValue("border", modifyBorderColor);
+        const shouldEmitFallbackTypes = inferredTypes === 0;
+        const bgValue = (shouldEmitFallbackTypes || (inferredTypes & VAR_TYPE_BG)) ? makeValue("bg", modifyBackgroundColor) : null;
+        const textValue = (shouldEmitFallbackTypes || (inferredTypes & VAR_TYPE_TEXT)) ? makeValue("text", modifyForegroundColor) : null;
+        const borderValue = (shouldEmitFallbackTypes || (inferredTypes & VAR_TYPE_BORDER)) ? makeValue("border", modifyBorderColor) : null;
 
         if (bgValue) declarations.push({ property: wrappedVariableName("bg", property), value: bgValue });
         if (textValue) declarations.push({ property: wrappedVariableName("text", property), value: textValue });
@@ -433,6 +646,22 @@ extension BrowserModel {
         }
       };
 
+      const collectAdoptedStyleSheetRules = (root) => {
+        if (!root || !root.adoptedStyleSheets || !root.adoptedStyleSheets.length) return;
+        for (const sheet of root.adoptedStyleSheets) {
+          variablesStore.addRulesForMatching(safeGetRules(sheet));
+        }
+      };
+
+      const updateRootVariableStyle = () => {
+        if (!document.documentElement) return;
+        const rootVarsStyle = createOrUpdateStyle("wkdomains-darkreader--root-vars", document);
+        const declarations = variablesStore.rootDeclarations();
+        rootVarsStyle.textContent = declarations.length > 0
+          ? `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) {\n${declarations.map(([property, value]) => `  ${property}: ${value};`).join("\n")}\n}`
+          : "";
+      };
+
       const removeStyleManager = (element) => {
         const manager = styleManagers.get(element);
         if (!manager) return;
@@ -469,7 +698,20 @@ extension BrowserModel {
 
       const updateManageableStyles = (root = document) => {
         pruneStyleManagers();
-        for (const style of getManageableStyles(root)) {
+        const styles = getManageableStyles(root);
+        if (root === document) {
+          variablesStore.clear();
+        }
+        for (const style of styles) {
+          variablesStore.addRulesForMatching(safeGetRules(style.sheet));
+        }
+        collectAdoptedStyleSheetRules(root);
+        if (root === document && document.documentElement) {
+          variablesStore.addInlineStyleForMatching(document.documentElement.style);
+        }
+        variablesStore.matchVariablesAndDependents();
+        updateRootVariableStyle();
+        for (const style of styles) {
           renderStyleManager(style);
         }
         renderAdoptedStyleSheets(root);
