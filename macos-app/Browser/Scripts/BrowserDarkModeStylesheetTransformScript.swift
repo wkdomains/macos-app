@@ -15,12 +15,9 @@ extension BrowserModel {
           return transformedFallbacks === value ? rewritten : transformedFallbacks;
         }
 
-        COLOR_RE.lastIndex = 0;
-        if (!COLOR_RE.test(value)) {
-          COLOR_RE.lastIndex = 0;
+        if (!hasCSSColor(value)) {
           return allowRawColor ? replaceRawColorValue(value, transformer) : null;
         }
-        COLOR_RE.lastIndex = 0;
         const transformed = replaceCSSColors(value, transformer);
         return transformed === value ? null : transformed;
       };
@@ -133,11 +130,9 @@ extension BrowserModel {
         }
 
         if (prop === "background" || prop.startsWith("border") || prop === "outline" || prop === "column-rule") {
-          if (!COLOR_RE.test(text)) {
-            COLOR_RE.lastIndex = 0;
+          if (!hasCSSColor(text)) {
             return null;
           }
-          COLOR_RE.lastIndex = 0;
           const transformer = prop === "background" ? modifyBackgroundColor : modifyBorderColor;
           return replaceCSSColors(text, transformer);
         }

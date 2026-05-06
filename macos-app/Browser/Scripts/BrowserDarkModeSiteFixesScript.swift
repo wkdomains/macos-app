@@ -319,23 +319,50 @@ extension BrowserModel {
         }
       ];
 
+      const siteFixPatternParts = (pattern) => {
+        const normalized = String(pattern || "").toLowerCase().replace(/^https?:\/\//, "");
+        const slashIndex = normalized.indexOf("/");
+        return {
+          host: slashIndex >= 0 ? normalized.slice(0, slashIndex) : normalized,
+          path: slashIndex >= 0 ? normalized.slice(slashIndex) : ""
+        };
+      };
+
+      const siteFixWildcardMatches = (value, pattern) => {
+        if (!pattern || pattern === "*") return true;
+        if (!pattern.includes("*")) return value === pattern;
+        try {
+          const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replaceAll("\\*", ".*");
+          return new RegExp(`^${escaped}$`).test(value);
+        } catch (_) {
+          return value === pattern;
+        }
+      };
+
       const siteFixMatchesPattern = (pattern) => {
-        const normalized = String(pattern || "").toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        const parts = siteFixPatternParts(pattern);
+        const normalized = parts.host;
         const host = String(location.hostname || "").toLowerCase();
         if (!normalized || normalized === "*") return true;
+        let hostMatches = false;
         if (normalized.startsWith("*.")) {
           const suffix = normalized.slice(1);
-          return host.endsWith(suffix);
+          hostMatches = host.endsWith(suffix);
+        } else if (normalized.includes("*")) {
+          hostMatches = siteFixWildcardMatches(host, normalized);
+        } else {
+          hostMatches = host === normalized || host.endsWith(`.${normalized}`);
         }
-        return host === normalized || host.endsWith(`.${normalized}`);
+        return hostMatches && (!parts.path || siteFixWildcardMatches(location.pathname.toLowerCase(), parts.path));
       };
 
       const siteFixPatternSpecificity = (pattern) => {
-        const normalized = String(pattern || "").toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        const parts = siteFixPatternParts(pattern);
+        const normalized = parts.host;
         if (!normalized || normalized === "*") return 0;
-        const wildcardPenalty = normalized.includes("*") ? 1000 : 0;
+        const wildcardPenalty = String(pattern || "").includes("*") ? 1000 : 0;
         const exactBonus = String(location.hostname || "").toLowerCase() === normalized ? 10000 : 0;
-        return exactBonus + normalized.replaceAll("*", "").length - wildcardPenalty;
+        return exactBonus + normalized.replaceAll("*", "").length + parts.path.replaceAll("*", "").length - wildcardPenalty;
       };
 
       const siteFixSpecificity = (fix) => {

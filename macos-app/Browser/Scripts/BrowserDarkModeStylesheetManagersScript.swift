@@ -97,12 +97,7 @@ extension BrowserModel {
       const renderAdoptedStyleSheets = (root) => {
         if (!root || !root.adoptedStyleSheets) return;
         if (!root.adoptedStyleSheets.length) {
-          const existing = adoptedStyleManagers.get(root);
-          if (existing) {
-            existing.style.remove();
-            adoptedStyleManagers.delete(root);
-            managedAdoptedRoots.delete(root);
-          }
+          removeAdoptedStyleManager(root);
           return;
         }
         let manager = adoptedStyleManagers.get(root);
@@ -133,6 +128,10 @@ extension BrowserModel {
         }
 
         const target = adoptedStyleTargetForRoot(root);
+        if (!manager.style.textContent) {
+          manager.style.remove();
+          return;
+        }
         if (manager.style.textContent && target && manager.style.parentNode !== target) {
           try {
             target.insertBefore(manager.style, target.firstChild);

@@ -51,14 +51,16 @@ extension BrowserModel {
           if (!property || !property.startsWith("--")) return;
           const text = String(value || "").trim();
           varValues.set(property, text);
+          const registeredType = registeredCustomPropertyTypes.get(property);
+          if (registeredType) {
+            resolveType(property, registeredType);
+          }
 
           if (text.includes("var(")) {
             forEachVarReference(text, (ref) => addVarRef(property, ref));
           }
 
-          COLOR_RE.lastIndex = 0;
-          const hasColor = COLOR_RE.test(text);
-          COLOR_RE.lastIndex = 0;
+          const hasColor = hasCSSColor(text);
           const hasColorLikeName = shouldTreatCustomPropertyAsRawColor(property);
           const hasNamedRawColor = parseRawColorValue(text) && hasColorLikeName;
           if (hasColor || /^\s*(rgb|hsl)a?\(/i.test(text) || hasNamedRawColor || (text.includes("var(") && hasColorLikeName)) {
@@ -106,6 +108,12 @@ extension BrowserModel {
           for (let index = 0; index < rules.length; index += 1) {
             const rule = rules[index];
             try {
+              if (rule.name && rule.syntax && String(rule.syntax).includes("<color>")) {
+                registeredCustomPropertyTypes.set(rule.name, variableTypeNumberForProperty(rule.name, rule.initialValue || ""));
+                if (rule.initialValue) {
+                  inspectVariable(rule.name, rule.initialValue);
+                }
+              }
               if (rule.style) {
                 inspectDeclarations(rule.style);
               }

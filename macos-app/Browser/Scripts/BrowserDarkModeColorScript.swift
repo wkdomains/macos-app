@@ -11,6 +11,21 @@ extension BrowserModel {
       const scale = (value, inLow, inHigh, outLow, outHigh) => outLow + ((value - inLow) / (inHigh - inLow)) * (outHigh - outLow);
       const colorParseCache = new Map();
       const colorProbe = document.createElement("span");
+      const COLOR_LITERAL_RE = /#[0-9a-f]{3,8}\b|\b(?:aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blue|brown|coral|crimson|cyan|fuchsia|gold|gray|green|grey|indigo|ivory|khaki|lavender|lime|magenta|maroon|navy|olive|orange|orchid|pink|plum|purple|red|salmon|silver|tan|teal|tomato|transparent|violet|white|yellow)\b/gi;
+      const CSS_COLOR_FUNCTION_NAMES = [
+        "color-mix",
+        "light-dark",
+        "oklab",
+        "oklch",
+        "rgba",
+        "rgb",
+        "hsla",
+        "hsl",
+        "hwb",
+        "lab",
+        "lch",
+        "color"
+      ];
       const NAMED_COLORS = {
         aliceblue: { r: 240, g: 248, b: 255, a: 1 },
         antiquewhite: { r: 250, g: 235, b: 215, a: 1 },
@@ -102,6 +117,65 @@ extension BrowserModel {
         };
       };
 
+      const parseHue = (value) => {
+        const token = String(value || "").trim().toLowerCase();
+        const parsed = Number.parseFloat(token);
+        if (!Number.isFinite(parsed)) return 0;
+        if (token.endsWith("turn")) return parsed * 360;
+        if (token.endsWith("rad")) return parsed * 180 / Math.PI;
+        if (token.endsWith("grad")) return parsed * 0.9;
+        return parsed;
+      };
+
+      const parseHSLLike = (value) => {
+        if (!value) return null;
+        const text = String(value).trim().toLowerCase();
+        const match = text.match(/^hsla?\((.*)\)$/);
+        if (!match) return null;
+        const parts = match[1]
+          .replaceAll(",", " ")
+          .replaceAll("/", " ")
+          .split(" ")
+          .map((part) => part.trim())
+          .filter(Boolean);
+        if (parts.length < 3) return null;
+        return hslToRGB({
+          h: parseHue(parts[0]),
+          s: clamp(Number.parseFloat(parts[1]) / 100, 0, 1),
+          l: clamp(Number.parseFloat(parts[2]) / 100, 0, 1),
+          a: parseComponent(parts[3], true)
+        });
+      };
+
+      const parseHWBLike = (value) => {
+        if (!value) return null;
+        const text = String(value).trim().toLowerCase();
+        const match = text.match(/^hwb\((.*)\)$/);
+        if (!match) return null;
+        const parts = match[1]
+          .replaceAll(",", " ")
+          .replaceAll("/", " ")
+          .split(" ")
+          .map((part) => part.trim())
+          .filter(Boolean);
+        if (parts.length < 3) return null;
+        const hueColor = hslToRGB({ h: parseHue(parts[0]), s: 1, l: 0.5, a: 1 });
+        let white = clamp(Number.parseFloat(parts[1]) / 100, 0, 1);
+        let black = clamp(Number.parseFloat(parts[2]) / 100, 0, 1);
+        if (white + black > 1) {
+          const total = white + black;
+          white /= total;
+          black /= total;
+        }
+        const factor = 1 - white - black;
+        return {
+          r: hueColor.r * factor + white * 255,
+          g: hueColor.g * factor + white * 255,
+          b: hueColor.b * factor + white * 255,
+          a: parseComponent(parts[3], true)
+        };
+      };
+
       const parseHexColor = (value) => {
         const match = String(value || "").trim().toLowerCase().match(/^#([0-9a-f]{3,8})$/);
         if (!match) return null;
@@ -130,6 +204,53 @@ extension BrowserModel {
           b: parseComponent(match[3]),
           a: parseComponent(match[4], true)
         };
+      };
+
+      const splitTopLevelCSSArguments = (value) => {
+        const result = [];
+        let start = 0;
+        let depth = 0;
+        const text = String(value || "");
+        for (let index = 0; index < text.length; index += 1) {
+          const char = text[index];
+          if (char === "(") depth += 1;
+          else if (char === ")") depth = Math.max(0, depth - 1);
+          else if (char === "," && depth === 0) {
+            result.push(text.slice(start, index).trim());
+            start = index + 1;
+          }
+        }
+        result.push(text.slice(start).trim());
+        return result.filter(Boolean);
+      };
+
+      const parseColorWithOptionalPercent = (value) => {
+        const text = String(value || "").trim();
+        const percent = text.match(/\s+(-?(?:\d+|\d*\.\d+)%)\s*$/);
+        const colorText = percent ? text.slice(0, percent.index).trim() : text;
+        const color = parseColor(colorText);
+        if (!color) return null;
+        return {
+          color,
+          weight: percent ? clamp(Number.parseFloat(percent[1]) / 100, 0, 1) : null
+        };
+      };
+
+      const parseColorMix = (value) => {
+        const text = String(value || "").trim();
+        const match = text.match(/^color-mix\(\s*in\s+[-_a-z0-9]+\s*,([\s\S]*)\)$/i);
+        if (!match) return null;
+        const parts = splitTopLevelCSSArguments(match[1]);
+        if (parts.length < 2) return null;
+        const first = parseColorWithOptionalPercent(parts[0]);
+        const second = parseColorWithOptionalPercent(parts[1]);
+        if (!first || !second) return null;
+        const firstWeight = first.weight == null && second.weight == null
+          ? 0.5
+          : (first.weight == null ? 1 - second.weight : first.weight);
+        const secondWeight = second.weight == null ? 1 - firstWeight : second.weight;
+        const total = Math.max(0.0001, firstWeight + secondWeight);
+        return mix(first.color, second.color, secondWeight / total);
       };
 
       const replaceRawColorValue = (value, transformer) => {
@@ -176,9 +297,15 @@ extension BrowserModel {
         const hex = parseHexColor(text);
         if (hex) return hex;
         if (NAMED_COLORS[text]) return NAMED_COLORS[text];
+        const hsl = parseHSLLike(text);
+        if (hsl) return hsl;
+        const hwb = parseHWBLike(text);
+        if (hwb) return hwb;
+        const mixed = parseColorMix(text);
+        if (mixed) return mixed;
         const normalized = normalizeColor(value);
         if (normalized) {
-          const parsed = parseRGBLike(normalized) || parseHexColor(normalized) || NAMED_COLORS[String(normalized).trim().toLowerCase()];
+          const parsed = parseRGBLike(normalized) || parseHSLLike(normalized) || parseHWBLike(normalized) || parseHexColor(normalized) || NAMED_COLORS[String(normalized).trim().toLowerCase()];
           if (parsed) return parsed;
         }
         return parseRGBLike(value);
@@ -370,13 +497,78 @@ extension BrowserModel {
         return modifyBorderColor(color);
       };
 
-      const replaceCSSColors = (value, transformer) => {
-        if (!value || !COLOR_RE.test(value)) {
-          COLOR_RE.lastIndex = 0;
-          return value;
+      const colorFunctionNameAt = (value, index) => {
+        const previous = index > 0 ? value[index - 1] : "";
+        if (previous && /[-_a-z0-9]/i.test(previous)) return null;
+        for (const name of CSS_COLOR_FUNCTION_NAMES) {
+          if (value.slice(index, index + name.length).toLowerCase() === name && value[index + name.length] === "(") {
+            return name;
+          }
         }
-        COLOR_RE.lastIndex = 0;
-        return String(value).replace(COLOR_RE, (match) => {
+        return null;
+      };
+
+      const findMatchingParen = (value, openIndex) => {
+        let depth = 0;
+        for (let index = openIndex; index < value.length; index += 1) {
+          const char = value[index];
+          if (char === "(") depth += 1;
+          else if (char === ")") {
+            depth -= 1;
+            if (depth === 0) return index;
+          }
+        }
+        return -1;
+      };
+
+      const replaceCSSColorFunctions = (value, transformer) => {
+        const text = String(value || "");
+        let result = "";
+        let index = 0;
+        while (index < text.length) {
+          const name = colorFunctionNameAt(text, index);
+          if (!name) {
+            result += text[index];
+            index += 1;
+            continue;
+          }
+
+          const open = index + name.length;
+          const close = findMatchingParen(text, open);
+          if (close < 0) {
+            result += text[index];
+            index += 1;
+            continue;
+          }
+
+          const token = text.slice(index, close + 1);
+          const color = parseColor(token);
+          result += color ? (transformer(color) || token) : token;
+          index = close + 1;
+        }
+        return result;
+      };
+
+      const hasCSSColor = (value) => {
+        if (!value) return false;
+        const text = String(value);
+        COLOR_LITERAL_RE.lastIndex = 0;
+        if (COLOR_LITERAL_RE.test(text)) {
+          COLOR_LITERAL_RE.lastIndex = 0;
+          return true;
+        }
+        COLOR_LITERAL_RE.lastIndex = 0;
+        for (let index = 0; index < text.length; index += 1) {
+          if (colorFunctionNameAt(text, index)) return true;
+        }
+        return false;
+      };
+
+      const replaceCSSColors = (value, transformer) => {
+        if (!hasCSSColor(value)) return value;
+        const withFunctions = replaceCSSColorFunctions(value, transformer);
+        COLOR_LITERAL_RE.lastIndex = 0;
+        return String(withFunctions).replace(COLOR_LITERAL_RE, (match) => {
           const color = parseColor(match);
           return color ? (transformer(color) || match) : match;
         });

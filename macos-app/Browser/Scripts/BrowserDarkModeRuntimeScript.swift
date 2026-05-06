@@ -364,6 +364,44 @@ extension BrowserModel {
         }
       };
 
+      const normalizeDirtyRoots = () => {
+        if (dirtyRoots.size === 0) return [document];
+        if (dirtyRoots.has(document) || dirtyRoots.size > 80) return [document];
+
+        const roots = Array.from(dirtyRoots).filter((root) => {
+          if (!root) return false;
+          if (root === document) return true;
+          if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && root.host) {
+            return root.host.isConnected;
+          }
+          return root.isConnected !== false;
+        });
+
+        const normalized = [];
+        outer:
+        for (const root of roots) {
+          for (const existing of normalized) {
+            if (existing === document) continue outer;
+            try {
+              if (existing !== root && existing.contains && root.nodeType === Node.ELEMENT_NODE && existing.contains(root)) {
+                continue outer;
+              }
+            } catch (_) {}
+          }
+          for (let index = normalized.length - 1; index >= 0; index -= 1) {
+            const existing = normalized[index];
+            try {
+              if (root !== existing && root.contains && existing.nodeType === Node.ELEMENT_NODE && root.contains(existing)) {
+                normalized.splice(index, 1);
+              }
+            } catch (_) {}
+          }
+          normalized.push(root);
+        }
+
+        return normalized.length > 0 ? normalized : [document];
+      };
+
       const walkElementSubtree = (root, iterate, limit = Number.POSITIVE_INFINITY) => {
         if (!root) return false;
         let count = 0;
@@ -543,7 +581,7 @@ extension BrowserModel {
         ensureSiteFixStyle();
         tryInvertPDF();
 
-        const roots = dirtyRoots.size > 0 ? Array.from(dirtyRoots) : [document];
+        const roots = normalizeDirtyRoots();
         dirtyRoots.clear();
         withFallbackDisabled(() => {
           for (const root of roots) {

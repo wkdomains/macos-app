@@ -21,6 +21,7 @@ extension BrowserModel {
       const loadingStyleListenersByElement = new WeakMap();
       const loadingStyleTimeoutsByElement = new WeakMap();
       const unavailableStyleElements = new WeakSet();
+      const registeredCustomPropertyTypes = new Map();
       let fallbackWasCleared = false;
       const LOADING_STYLE_TIMEOUT = 3500;
       const STYLE_UPDATE_EVENT = "__darkreader__updateSheet";
@@ -114,6 +115,9 @@ extension BrowserModel {
 
         if (element instanceof HTMLLinkElement && !loadingStyleListenersByElement.has(element)) {
           const done = () => {
+            element.removeEventListener("load", done);
+            element.removeEventListener("error", done);
+            loadingStyleListenersByElement.delete(element);
             markStyleLoaded(element);
             scheduleStyleSync(0);
           };
@@ -137,6 +141,12 @@ extension BrowserModel {
         const id = loadingStyleIDsByElement.get(element);
         if (id) {
           loadingStyles.delete(id);
+        }
+        const listener = loadingStyleListenersByElement.get(element);
+        if (listener && element instanceof HTMLLinkElement) {
+          element.removeEventListener("load", listener);
+          element.removeEventListener("error", listener);
+          loadingStyleListenersByElement.delete(element);
         }
         const timeout = loadingStyleTimeoutsByElement.get(element);
         if (timeout) {

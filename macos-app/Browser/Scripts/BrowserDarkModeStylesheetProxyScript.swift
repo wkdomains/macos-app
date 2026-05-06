@@ -19,7 +19,9 @@ extension BrowserModel {
         const nativeRemoveRule = proto.removeRule;
         const nativeReplace = proto.replace;
         const nativeReplaceSync = proto.replaceSync;
+        const nativeRegisterProperty = window.CSS && CSS.registerProperty;
         const adoptedSheetOwners = new WeakMap();
+        const adoptedSheetsByRoot = new WeakMap();
         const adoptedDeclarationSheets = new WeakMap();
         const adoptedSheetsSourceProxies = new WeakMap();
         const adoptedSheetsProxySources = new WeakMap();
@@ -35,24 +37,34 @@ extension BrowserModel {
           const owner = sheet && sheet.ownerNode;
           return owner && owner.classList && owner.classList.contains(INLINE_CLASS);
         };
-        const rememberAdoptedSheetRules = (sheet) => {
-          const rules = safeGetRules(sheet);
-          if (!rules) return;
+        const rememberRuleDeclarations = (rules, sheet) => {
+          if (!rules || !sheet) return;
           for (let index = 0; index < rules.length; index += 1) {
             const rule = rules[index];
             try {
               if (rule.style) adoptedDeclarationSheets.set(rule.style, sheet);
               if (rule.cssRules) {
-                for (let childIndex = 0; childIndex < rule.cssRules.length; childIndex += 1) {
-                  const childRule = rule.cssRules[childIndex];
-                  if (childRule.style) adoptedDeclarationSheets.set(childRule.style, sheet);
-                }
+                rememberRuleDeclarations(rule.cssRules, sheet);
               }
             } catch (_) {}
           }
         };
+        const rememberAdoptedSheetRules = (sheet) => {
+          rememberRuleDeclarations(safeGetRules(sheet), sheet);
+        };
+        const forgetAdoptedSheetOwners = (root) => {
+          const previous = adoptedSheetsByRoot.get(root);
+          if (!previous) return;
+          for (const sheet of previous) {
+            const owners = adoptedSheetOwners.get(sheet);
+            if (owners) owners.delete(root);
+          }
+          adoptedSheetsByRoot.delete(root);
+        };
         const rememberAdoptedSheetOwners = (root, sheets) => {
           if (!root || !Array.isArray(sheets)) return;
+          forgetAdoptedSheetOwners(root);
+          adoptedSheetsByRoot.set(root, Array.from(sheets));
           for (const sheet of sheets) {
             if (!adoptedSheetOwners.has(sheet)) adoptedSheetOwners.set(sheet, new Set());
             adoptedSheetOwners.get(sheet).add(root);
@@ -208,6 +220,22 @@ extension BrowserModel {
             }
             return result;
           };
+        }
+
+        if (nativeRegisterProperty && !CSS.__wkdomainsDarkModeRegisterPropertyProxy) {
+          try {
+            Object.defineProperty(CSS, "__wkdomainsDarkModeRegisterPropertyProxy", { value: true, configurable: true });
+            CSS.registerProperty = function(definition) {
+              const result = nativeRegisterProperty.call(this, definition);
+              try {
+                if (definition && definition.name && String(definition.syntax || "").includes("<color>")) {
+                  registeredCustomPropertyTypes.set(definition.name, variableTypeNumberForProperty(definition.name, definition.initialValue || ""));
+                  scheduleStyleSync(0);
+                }
+              } catch (_) {}
+              return result;
+            };
+          } catch (_) {}
         }
 
         const patchAdoptedStyleSheets = (rootProto) => {

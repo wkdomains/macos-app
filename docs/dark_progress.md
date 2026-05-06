@@ -8,6 +8,24 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 
 ## Progress
 
+- Expanded color handling:
+  - direct `hsl()`, `hsla()`, and `hwb()` parsing
+  - simple `color-mix()` parsing
+  - balanced CSS color-function scanning so nested functions are not truncated by the old regex path
+  - color replacement now covers literals and supported functions without double-transforming generated `rgb(...)`
+- Added custom property registration awareness:
+  - `@property --token { syntax: "<color>"; ... }` rules are included in variable matching
+  - `CSS.registerProperty({ name, syntax: "<color>" })` is proxied and schedules a stylesheet sync
+- Improved watcher efficiency with dirty-root compression:
+  - descendant dirty roots are skipped when an ancestor is already queued
+  - very noisy mutation batches fall back to a single document pass
+- Improved adopted stylesheet/proxy bookkeeping:
+  - adopted stylesheet ownership is refreshed per root instead of accumulating stale owners
+  - adopted rule declaration tracking now recurses through nested rule lists
+  - empty adopted override styles are removed
+- Improved stylesheet loading cleanup:
+  - stale link `load`/`error` listeners are removed when a sheet loads, errors, times out, or is removed
+- Site-fix matching now supports wildcard hosts and path patterns instead of treating every fix as host-only.
 - Added unavailable stylesheet lifecycle handling:
   - stylesheets that never expose readable `cssRules` no longer hold the fallback style open forever
   - loading stylesheets now time out after 3.5s and are marked unavailable until they become readable
@@ -45,34 +63,34 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 
 ## Completion Estimates
 
-- Full `variablesStore` dependency graph for matching variables and dependents: 65%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 75%
-- Mature optimized DOM/style watchers: 60%
-- Robust adopted stylesheet management: 65%
-- Full stylesheet proxy behavior and cross-context coordination: 58%
-- Dark Reader's color pipeline and extensive config corpus: 25%
-- Mature fix selection/config parser behavior across many sites: 35%
+- Full `variablesStore` dependency graph for matching variables and dependents: 70%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 80%
+- Mature optimized DOM/style watchers: 66%
+- Robust adopted stylesheet management: 72%
+- Full stylesheet proxy behavior and cross-context coordination: 65%
+- Dark Reader's color pipeline and extensive config corpus: 38%
+- Mature fix selection/config parser behavior across many sites: 42%
 - Extension-world isolation: 10%
 
 ## Remaining Gaps
 
-- Variables graph is still not a full Dark Reader port. Current estimate: 65%.
+- Variables graph is still not a full Dark Reader port. Current estimate: 70%.
   - no full variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - limited scoped variable handling
-- Per-stylesheet managers still need more mature behavior. Current estimate: 75%.
+- Per-stylesheet managers still need more mature behavior. Current estimate: 80%.
   - inaccessible/CORS sheets
   - imported stylesheet retries
   - incremental large-sheet rendering
-- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 60%.
-- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 65%.
-- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 58%.
-- Color pipeline is still a major gap. Current estimate: 25%.
+- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 66%.
+- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 72%.
+- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 65%.
+- Color pipeline is still a major gap. Current estimate: 38%.
   - no full Dark Reader palette/cache system
   - limited image analysis
-  - limited gradient and complex color-function handling
+  - limited advanced gradient and relative-color handling
   - no theme knob parity
-- Config/fix support is still hardcoded. Current estimate: 35%.
+- Config/fix support is still hardcoded. Current estimate: 42%.
   - no parser for Dark Reader's config corpus
   - no broad site corpus
   - only a small set of targeted fixes

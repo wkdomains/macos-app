@@ -326,11 +326,13 @@ extension BrowserModel {
               const shorthand = SHORTHAND_OVERRIDES.find((override) => override.css === "background");
               setOverride(element, shorthand.attr, shorthand.prop, transformed);
             } else {
-              COLOR_RE.lastIndex = 0;
-              const match = COLOR_RE.exec(value);
-              COLOR_RE.lastIndex = 0;
-              const color = match ? parseColor(match[0]) : null;
-              setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", color ? transformBackground(color, element) : null);
+              const colorValue = hasCSSColor(value) ? replaceCSSColors(value, modifyBackgroundColor) : null;
+              if (colorValue && colorValue !== value) {
+                const shorthand = SHORTHAND_OVERRIDES.find((override) => override.css === "background");
+                setOverride(element, shorthand.attr, shorthand.prop, colorValue);
+              } else {
+                setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", null);
+              }
               if (value.includes("gradient")) {
                 setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", replaceCSSColors(value, modifyBackgroundColor));
               }
