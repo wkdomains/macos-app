@@ -90,7 +90,7 @@ extension BrowserModel {
         };
         const reportSheetChangeAsync = (sheet, promise) => {
           if (promise && promise instanceof Promise) {
-            promise.then(() => reportSheetChange(sheet));
+            promise.then(() => reportSheetChange(sheet), () => {});
           } else {
             reportSheetChange(sheet);
           }

@@ -19,7 +19,10 @@ extension BrowserModel {
       const loadingStyles = new Set();
       const loadingStyleIDsByElement = new WeakMap();
       const loadingStyleListenersByElement = new WeakMap();
+      const loadingStyleTimeoutsByElement = new WeakMap();
+      const unavailableStyleElements = new WeakSet();
       let fallbackWasCleared = false;
+      const LOADING_STYLE_TIMEOUT = 3500;
       const STYLE_UPDATE_EVENT = "__darkreader__updateSheet";
       const ADOPTED_STYLE_CHANGE_EVENT = "__darkreader__adoptedStyleSheetChange";
       const ADOPTED_STYLES_CHANGE_EVENT = "__darkreader__adoptedStyleSheetsChange";
@@ -104,6 +107,7 @@ extension BrowserModel {
 
       const markStyleLoading = (element) => {
         if (!element) return;
+        if (unavailableStyleElements.has(element)) return;
         const id = loadingIDForElement(element);
         loadingStyles.add(id);
         ensureFallbackStyleText();
@@ -117,6 +121,15 @@ extension BrowserModel {
           element.addEventListener("error", done, { once: true });
           loadingStyleListenersByElement.set(element, done);
         }
+
+        if (!loadingStyleTimeoutsByElement.has(element)) {
+          const timeout = window.setTimeout(() => {
+            loadingStyleTimeoutsByElement.delete(element);
+            markStyleUnavailable(element);
+            scheduleStyleSync(0);
+          }, LOADING_STYLE_TIMEOUT);
+          loadingStyleTimeoutsByElement.set(element, timeout);
+        }
       };
 
       const markStyleLoaded = (element) => {
@@ -125,9 +138,26 @@ extension BrowserModel {
         if (id) {
           loadingStyles.delete(id);
         }
+        const timeout = loadingStyleTimeoutsByElement.get(element);
+        if (timeout) {
+          window.clearTimeout(timeout);
+          loadingStyleTimeoutsByElement.delete(element);
+        }
         if (loadingStyles.size === 0 && document.readyState !== "loading") {
           cleanFallbackStyle();
         }
+      };
+
+      const markStyleUnavailable = (element) => {
+        if (!element) return;
+        unavailableStyleElements.add(element);
+        markStyleLoaded(element);
+      };
+
+      const markStyleAccessible = (element) => {
+        if (!element) return;
+        unavailableStyleElements.delete(element);
+        markStyleLoaded(element);
       };
 
       const shorthandVarDependentProperties = [

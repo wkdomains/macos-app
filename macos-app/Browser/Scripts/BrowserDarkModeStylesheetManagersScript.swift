@@ -10,10 +10,14 @@ extension BrowserModel {
       const renderStyleManager = (element) => {
         const rules = safeGetRules(element.sheet);
         if (!rules) {
+          if (element.sheet && document.readyState !== "loading") {
+            markStyleUnavailable(element);
+            return;
+          }
           markStyleLoading(element);
           return;
         }
-        markStyleLoaded(element);
+        markStyleAccessible(element);
 
         let manager = styleManagers.get(element);
         if (!manager) {
