@@ -88,7 +88,11 @@ extension BrowserModel {
 
       const DISABLED_SITES = new Set([\#(disabledSiteList)]);
       const currentHost = String(location.hostname || "").toLowerCase().replace(/^\.+|\.+$/g, "");
-      if (DISABLED_SITES.has(currentHost)) {
+      const disabledSiteMatches = (site) => {
+        const normalizedSite = String(site || "").toLowerCase().replace(/^\.+|\.+$/g, "");
+        return currentHost === normalizedSite || currentHost.endsWith(`.${normalizedSite}`);
+      };
+      if (Array.from(DISABLED_SITES).some(disabledSiteMatches)) {
         return;
       }
 

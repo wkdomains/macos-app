@@ -142,30 +142,9 @@ extension BrowserModel {
         return false;
       };
 
-      const COMPUTED_SURFACE_TAGS = new Set([
-        "DIV", "MAIN", "SECTION", "ARTICLE", "ASIDE", "HEADER", "FOOTER",
-        "TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH", "UL", "OL", "LI"
-      ]);
-
-      const shouldAnalyzeComputedSurface = (element, tag, style) => {
-        if (!COMPUTED_SURFACE_TAGS.has(tag) || !style) return false;
-        if (hasMediaBackdrop(element, style)) return false;
-
-        const background = parseColor(style.backgroundColor);
-        if (!background || background.a <= 0.08 || relativeLuminance(background) <= 0.56) {
-          return false;
-        }
-
-        const rect = visibleRectFor(element);
-        if (rect.area < 1600) return false;
-
-        const viewportArea = Math.max(1, innerWidth * innerHeight);
-        if (rect.area / viewportArea > 0.92 && element !== document.body && element !== document.documentElement) {
-          return false;
-        }
-
-        return true;
-      };
+      const CONTROL_SELECTOR = "input, textarea, select, button, [contenteditable='true'], [role='textbox']";
+      const SVG_SELECTOR = Array.from(SVG_TAGS).map((tag) => tag.toLowerCase()).join(", ");
+      const STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, CONTROL_SELECTOR, SVG_SELECTOR].join(", ");
 
       const shouldSkipElement = (element) => {
         if (!element || !element.tagName || SKIP_TAGS.has(element.tagName.toUpperCase())) return true;
@@ -398,11 +377,7 @@ extension BrowserModel {
         let style = null;
         const shouldFallbackToComputedStyle = hasInlineColors
           || SVG_TAGS.has(tag)
-          || element.matches("input, textarea, select, button, [contenteditable='true'], [role='textbox']")
-          || (COMPUTED_SURFACE_TAGS.has(tag) && (() => {
-            style = captureSourceStyle(element) || getComputedStyle(element);
-            return shouldAnalyzeComputedSurface(element, tag, style);
-          })());
+          || element.matches(CONTROL_SELECTOR);
         if (!shouldFallbackToComputedStyle) {
           return;
         }
@@ -470,8 +445,11 @@ extension BrowserModel {
           applyElement(root);
         }
 
-        for (const element of root.querySelectorAll("*")) {
+        for (const element of root.querySelectorAll(STYLE_OVERRIDE_SELECTOR)) {
           applyElement(element);
+        }
+
+        for (const element of root.querySelectorAll("*")) {
           if (element.shadowRoot) discoverShadowRoot(element.shadowRoot);
         }
       };

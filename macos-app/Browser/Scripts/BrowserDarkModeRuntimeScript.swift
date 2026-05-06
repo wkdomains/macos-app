@@ -17,6 +17,8 @@ extension BrowserModel {
       const dirtyRoots = new Set();
       let shadowProxyActive = false;
       let customElementRegistryProxyActive = false;
+      const INLINE_STYLE_MUTATION_ATTRIBUTES = new Set(INLINE_STYLE_ATTRS);
+      const STYLE_SHEET_MUTATION_ATTRIBUTES = new Set(["href", "media", "disabled"]);
       const installedAt = (() => {
         try { return performance.now(); } catch (_) { return Date.now(); }
       })();
@@ -368,17 +370,16 @@ extension BrowserModel {
             if (ATTRIBUTES_OWNED_BY_DARK_MODE.includes(mutation.attributeName)) {
               continue;
             }
-            clearCachedSourceFor(mutation.target);
-            markDirty(mutation.target);
-            if (shouldManageStyle(mutation.target)) stylesChanged = true;
-            continue;
-          }
-
-          if (mutation.type === "characterData") {
-            if (mutation.target.parentElement && shouldManageStyle(mutation.target.parentElement)) {
+            if (INLINE_STYLE_MUTATION_ATTRIBUTES.has(mutation.attributeName)) {
+              clearCachedSourceFor(mutation.target);
+              markDirty(mutation.target);
+            }
+            if (
+              STYLE_SHEET_MUTATION_ATTRIBUTES.has(mutation.attributeName)
+              && shouldManageStyle(mutation.target)
+            ) {
               stylesChanged = true;
             }
-            markDirty(mutation.target);
             continue;
           }
 
@@ -413,7 +414,6 @@ extension BrowserModel {
         observer.observe(target, {
           attributes: true,
           attributeFilter: [
-            "class",
             "style",
             "fill",
             "stroke",
@@ -421,16 +421,11 @@ extension BrowserModel {
             "bgcolor",
             "color",
             "background",
-            "hidden",
-            "aria-hidden",
-            "aria-expanded",
-            "open",
             "disabled",
             "href",
             "media"
           ],
           childList: true,
-          characterData: true,
           subtree: true
         });
         rootObservers.set(root, observer);

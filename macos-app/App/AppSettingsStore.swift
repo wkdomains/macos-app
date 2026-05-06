@@ -183,7 +183,9 @@ final class AppSettingsStore {
 
     func isDarkModeDisabled(for url: URL?) -> Bool {
         guard let host = url.flatMap(Self.normalizedHost(for:)) else { return false }
-        return Set(cachedSettings.darkDisabledSites).contains(host)
+        return cachedSettings.darkDisabledSites.contains { disabledSite in
+            Self.disabledSite(disabledSite, matches: host)
+        }
     }
 
     func toggleDarkModeDisabled(for url: URL) {
@@ -578,6 +580,13 @@ final class AppSettingsStore {
 
     nonisolated private static func normalizedHosts(_ values: [String]) -> [String] {
         Array(Set(values.compactMap(normalizedHost))).sorted()
+    }
+
+    nonisolated private static func disabledSite(_ disabledSite: String, matches host: String) -> Bool {
+        let normalizedDisabledSite = normalizedHost(disabledSite)
+        let normalizedHost = normalizedHost(host)
+        return normalizedHost == normalizedDisabledSite
+            || normalizedHost.hasSuffix(".\(normalizedDisabledSite)")
     }
 
     nonisolated private static func normalizedHost(from value: String) -> String? {

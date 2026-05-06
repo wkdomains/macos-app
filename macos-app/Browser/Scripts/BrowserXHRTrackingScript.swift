@@ -187,6 +187,27 @@ extension BrowserModel {
         return summary;
       };
 
+      const headerValue = (headers, name) => {
+        try {
+          return headers.get(name) || "";
+        } catch (_) {
+          return "";
+        }
+      };
+
+      const responseContentLength = (response) => {
+        const rawLength = headerValue(response.headers, "content-length");
+        if (!rawLength) return undefined;
+
+        const length = Number(rawLength);
+        return Number.isFinite(length) && length >= 0 ? length : undefined;
+      };
+
+      const responseHeaderSummary = (response) => {
+        const length = responseContentLength(response);
+        return length === undefined ? {} : { responseBytes: length };
+      };
+
       const finishFetch = (id, response, url) => {
         const finishPayload = {
           event: "finish",
@@ -194,16 +215,9 @@ extension BrowserModel {
           status: response.status,
           responseURL: response.url || url
         };
+        const headerSummary = responseHeaderSummary(response);
 
-        try {
-          response.clone().text().then((text) => {
-            post({ ...finishPayload, ...summarizeJSON(text) });
-          }).catch(() => {
-            post(finishPayload);
-          });
-        } catch (_) {
-          post(finishPayload);
-        }
+        post({ ...finishPayload, ...headerSummary });
       };
 
       const xhrResponseText = (xhr) => {

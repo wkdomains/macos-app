@@ -143,6 +143,179 @@ extension BrowserModel {
             ".d-Na-J3",
             ".aBS .d-Na-JX-I .d-Na-J3"
           ]
+        },
+        {
+          url: ["reddit.com", "new.reddit.com"],
+          invert: [
+            "video ~ div [style^=\"height\"]",
+            ".snoo-cls-1",
+            ".snoo-cls-2",
+            ".snoo-cls-3",
+            ".snoo-cls-8"
+          ],
+          css: `
+            [style^="--background"] {
+              --background: \${#FFFFFF} !important;
+            }
+            [style^="--canvas"] {
+              --canvas: \${#DAE0E6} !important;
+            }
+            [style^="--pseudo-before-background"] {
+              --pseudo-before-background: \${#DAE0E6} !important;
+            }
+            [style^="--comments-overlay-background"] {
+              --comments-overlay-background: \${#DAE0E6} !important;
+            }
+            [style^="--commentswrapper-gradient-color"] {
+              --comments-overlay-background: \${#DAE0E6} !important;
+            }
+            [style^="--fakelightbox-overlay-background"] {
+              --fakelightbox-overlay-background: \${#DAE0E6} !important;
+            }
+            .button:hover {
+              --button-color-background: var(--wkdomains-darkreader-bg-color-neutral-background-hover, var(--darkreader-neutral-background)) !important;
+            }
+            .hover\\:text-secondary:hover {
+              color: var(--darkreader-neutral-text) !important;
+            }
+            .hover\\:bg-secondary-background-hover:hover {
+              background-color: var(--wkdomains-darkreader-bg-color-neutral-background-hover, var(--darkreader-neutral-background)) !important;
+            }
+            .hover\\:border-secondary-background-hover:hover {
+              border-color: var(--wkdomains-darkreader-border-color-neutral-border-medium, var(--darkreader-border)) !important;
+            }
+            .before\\:border-tone-4::before {
+              border-color: var(--color-tone-4) !important;
+            }
+            .button-shell {
+              color: var(--darkreader-neutral-text) !important;
+            }
+            .button-plain {
+              --button-color-text-default: var(--darkreader-neutral-text) !important;
+            }
+            .button-secondary {
+              --button-color-background-default: var(--wkdomains-darkreader-bg-color-neutral-background, var(--darkreader-neutral-background)) !important;
+              --button-color-text-default: var(--wkdomains-darkreader-text-color-neutral-content-weak, var(--darkreader-neutral-text)) !important;
+            }
+            .internalBackButton,
+            .internalForwardButton {
+              background-image: linear-gradient(to right, var(--plain-background) 0, var(--wkdomains-darkreader-bg-color-secondary-background, var(--darkreader-neutral-background)) 30%) !important;
+            }
+            .label-container {
+              background: var(--wkdomains-darkreader-bg-color-neutral-background, var(--darkreader-neutral-background)) !important;
+            }
+            .label-container:hover {
+              background: var(--wkdomains-darkreader-bg-color-neutral-background-hover, var(--darkreader-neutral-background)) !important;
+            }
+            .md p>a[href="#s"]::after,
+            a[href="#s"]::after {
+              color: #000;
+            }
+            .text-neutral-content-strong {
+              color: var(--wkdomains-darkreader-text-color-neutral-content-strong, var(--darkreader-neutral-text)) !important;
+            }
+            header a[aria-label="Home"] svg:last-child g,
+            header > div > div + div a[href] *,
+            header > div > div + div button[aria-label] * {
+              fill: var(--darkreader-neutral-text) !important;
+            }
+            #comment-tree {
+              background-color: var(--wkdomains-darkreader-bg-color-neutral-background, var(--darkreader-neutral-background)) !important;
+            }
+            #COIN_PURCHASE_DROPDOWN_ID > div {
+              background: linear-gradient(180deg,hsla(0,0%,100%,.1) 45.96%,hsla(0,0%,100%,.57) 46%,hsla(0,0%,100%,0) 130%),\${gold} !important;
+            }
+            #COIN_PURCHASE_DROPDOWN_ID > div > span {
+              color: \${white} !important;
+            }
+            #search-input-chip {
+              background: var(--wkdomains-darkreader-bg-color-secondary-background-selected, var(--darkreader-neutral-background)) !important;
+            }
+            .md-spoiler-text:not([data-revealed])::selection {
+              background-color: var(--wkdomains-darkreader-bg-newCommunityTheme-metaText, var(--darkreader-selection-background)) !important;
+              color: transparent !important;
+            }
+            button[slot="forward-button"],
+            button[slot="back-button"] {
+              background-color: var(--wkdomains-darkreader-border-color-neutral, var(--darkreader-border)) !important;
+            }
+            div[slot="tabs"] {
+              background: var(--wkdomains-darkreader-bg-color-neutral-background, var(--darkreader-neutral-background)) !important;
+            }
+            div[role="menu"][style^="position: fixed"] button button[role="switch"][aria-checked="false"] {
+              background-color: \${gray} !important;
+            }
+            div[role="menu"][style^="position: fixed"] button button[role="switch"] > div {
+              background-color: \${black} !important;
+            }
+            object[data="about:blank"] {
+              display: none !important;
+            }
+            span[class="inline-block mr-[calc(var(--size-button-sm-h)-var(--rem10)-var(--button-border-width-default))] overflow-hidden text-ellipsis"] {
+              color: var(--wkdomains-darkreader-text-color-neutral-content, var(--darkreader-neutral-text)) !important;
+            }
+            shreddit-comment-tree,
+            .self-start,
+            #comment-fold-button,
+            button.w-lg,
+            .bg-neutral-background {
+              background-color: var(--wkdomains-darkreader-bg-shreddit-content-background, var(--darkreader-neutral-background)) !important;
+            }
+            .text-secondary {
+              color: var(--wkdomains-darkreader-text-color-secondary, var(--darkreader-neutral-text)) !important;
+            }
+            faceplate-tracker > li > a:hover,
+            faceplate-tracker > li > div:hover,
+            div#RECENT > li > a:hover {
+              background-color: var(--wkdomains-darkreader-bg-color-neutral-background-hover, var(--darkreader-neutral-background)) !important;
+            }
+            span.input-container.stateful-input input {
+              color: var(--wkdomains-darkreader-text-color-tone-1, var(--darkreader-neutral-text)) !important;
+            }
+            .reddit-search-bar {
+              background-color: var(--wkdomains-darkreader-bg-color-neutral-background, var(--darkreader-neutral-background)) !important;
+            }
+            .reddit-search-bar .text-neutral-content {
+              color: var(--wkdomains-darkreader-text-color-tone-1, var(--darkreader-neutral-text)) !important;
+            }
+            faceplate-tracker > li[rpl-selected] > a {
+              background-color: var(--wkdomains-darkreader-bg-color-tone-3, var(--darkreader-neutral-background)) !important;
+            }
+            faceplate-menu {
+              background-color: var(--wkdomains-darkreader-bg-color-neutral-background-strong, var(--darkreader-neutral-background)) !important;
+            }
+            faceplate-tracker > button[rpl-selected] {
+              background-color: var(--wkdomains-darkreader-bg-color-neutral-background-hover, var(--darkreader-neutral-background)) !important;
+            }
+            faceplate-tracker a[data-testid]:hover,
+            faceplate-tracker[noun="trending"] div:hover {
+              background-color: unset !important;
+            }
+            faceplate-hovercard > div > div > div,
+            faceplate-hovercard > div > div > div:hover,
+            #faceplate-tooltip {
+              background-color: var(--wkdomains-darkreader-bg-color-neutral-background, var(--darkreader-neutral-background)) !important;
+            }
+            faceplate-hovercard p {
+              color: var(--wkdomains-darkreader-text-color-neutral-content-strong, var(--darkreader-neutral-text)) !important;
+            }
+            .text-secondary-weak {
+              color: var(--wkdomains-darkreader-text-color-secondary-weak, var(--darkreader-neutral-text)) !important;
+            }
+            button.button-plain:hover {
+              color: var(--button-color-text-default) !important;
+            }
+            faceplate-menu > li > div {
+              background-color: var(--wkdomains-darkreader-bg-color-neutral-background-hover, var(--darkreader-neutral-background)) !important;
+            }
+            .text-neutral-content-weak {
+              color: var(--wkdomains-darkreader-text-color-neutral-content-weak, var(--darkreader-neutral-text));
+            }
+            :host > #content,
+            .bg-neutral-background-weak {
+              background: var(--darkreader-neutral-background) !important;
+            }
+          `
         }
       ];
 
@@ -187,9 +360,19 @@ extension BrowserModel {
       };
 
       const matchingSiteFixes = SITE_FIXES.filter((fix) => Array.isArray(fix.url) && fix.url.some(siteFixMatchesPattern));
-      const genericSiteFixes = matchingSiteFixes.filter((fix) => fix.url.includes("*"));
+      const genericSiteFix = matchingSiteFixes.find((fix) => fix.url.includes("*")) || null;
       const specificSiteFixes = matchingSiteFixes.filter((fix) => !fix.url.includes("*"));
-      const activeSiteFix = combineSiteFixes([...genericSiteFixes, ...specificSiteFixes]);
+      const mostSpecificSiteFix = specificSiteFixes.reduce((best, fix) => {
+        const specificity = String(fix.url[0] || "").length;
+        if (!best || specificity > best.specificity) {
+          return { fix, specificity };
+        }
+        return best;
+      }, null);
+      const activeSiteFix = combineSiteFixes([
+        genericSiteFix,
+        mostSpecificSiteFix && mostSpecificSiteFix.fix
+      ].filter(Boolean));
 
       const activeSiteFixList = (key) => (
         activeSiteFix && Array.isArray(activeSiteFix[key])
