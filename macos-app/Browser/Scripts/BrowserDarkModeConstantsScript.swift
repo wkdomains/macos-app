@@ -77,6 +77,7 @@ extension BrowserModel {
       const ADOPTED_STYLE_CLASS = "wkdomains-darkreader--adopted";
       const DARK_VAR_PREFIX = "--wkdomains-darkreader";
       const PAGE_PROXY_EVENT = "__wkdomains__darkModePageProxyChange";
+      const PAGE_PROXY_CONFIG_EVENT = "__wkdomains__darkModePageProxyConfig";
       const PAGE_PROXY_CLEANUP_EVENT = "__wkdomains__darkModePageProxyCleanup";
       const isGeneratedDarkModeProperty = (property) => {
         const name = String(property || "");

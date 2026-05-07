@@ -38,6 +38,7 @@ extension BrowserModel {
       const STYLE_SYNC_CLASS = "wkdomains-darkreader--sync";
       const ADOPTED_STYLE_CLASS = "wkdomains-darkreader--adopted";
       const PAGE_PROXY_EVENT = "__wkdomains__darkModePageProxyChange";
+      const PAGE_PROXY_CONFIG_EVENT = "__wkdomains__darkModePageProxyConfig";
       const PAGE_PROXY_CLEANUP_EVENT = "__wkdomains__darkModePageProxyCleanup";
       const STYLE_UPDATE_EVENT = "__darkreader__updateSheet";
       const ADOPTED_STYLE_CHANGE_EVENT = "__darkreader__adoptedStyleSheetChange";
@@ -47,6 +48,7 @@ extension BrowserModel {
       const prototypeRestoreTasks = [];
       const savedPropertyDescriptors = new WeakMap();
       let active = true;
+      let configured = false;
 
       const rememberPropertyDescriptor = (target, property) => {
         if (!target || !property) return;
@@ -424,6 +426,46 @@ extension BrowserModel {
         };
       };
 
+      const installCustomElementRegistryProxy = () => {
+        if (!window.customElements || customElements.__wkdomainsDarkModePageProxyRegistry) return;
+        const nativeDefine = customElements.define;
+        if (!nativeDefine) return;
+        try {
+          defineHiddenProperty(customElements, "__wkdomainsDarkModePageProxyRegistry", true);
+          rememberPropertyDescriptor(customElements, "define");
+          customElements.define = function(name, constructor, options) {
+            const result = nativeDefine.call(this, name, constructor, options);
+            if (active) {
+              window.setTimeout(() => reportGlobalChange("custom-element"), 0);
+            }
+            return result;
+          };
+        } catch (_) {}
+      };
+
+      const applyConfig = (event) => {
+        if (!active || configured) return;
+        configured = true;
+
+        let config = {};
+        try {
+          config = event && event.detail || {};
+        } catch (_) {}
+
+        if (!config.disableStyleSheetsProxy) {
+          installStylesheetProxy();
+        }
+        if (!config.disableShadowRootProxy) {
+          installShadowRootProxy();
+        }
+        if (config.enableCustomElementRegistryProxy && !config.disableCustomElementRegistryProxy) {
+          installCustomElementRegistryProxy();
+        }
+
+        reportGlobalChange("configured");
+        __wkdomainsDarkModeDebug("configured");
+      };
+
       const cleanup = () => {
         if (!active) return;
         active = false;
@@ -437,15 +479,14 @@ extension BrowserModel {
         }
       };
 
+      document.addEventListener(PAGE_PROXY_CONFIG_EVENT, applyConfig);
       document.addEventListener(PAGE_PROXY_CLEANUP_EVENT, cleanup);
       document.addEventListener("__darkreader__cleanUp", cleanup);
+      cleanupTasks.push(() => document.removeEventListener(PAGE_PROXY_CONFIG_EVENT, applyConfig));
       cleanupTasks.push(() => document.removeEventListener(PAGE_PROXY_CLEANUP_EVENT, cleanup));
       cleanupTasks.push(() => document.removeEventListener("__darkreader__cleanUp", cleanup));
 
-      installStylesheetProxy();
-      installShadowRootProxy();
-      reportGlobalChange("installed");
-      __wkdomainsDarkModeDebug("installed");
+      __wkdomainsDarkModeDebug("waiting-config");
     })();
     """#
     }

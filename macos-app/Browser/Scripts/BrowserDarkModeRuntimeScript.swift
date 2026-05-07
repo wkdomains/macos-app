@@ -686,11 +686,25 @@ extension BrowserModel {
         });
       };
 
+      const configurePageProxy = () => {
+        try {
+          document.dispatchEvent(new CustomEvent(PAGE_PROXY_CONFIG_EVENT, {
+            detail: {
+              disableStyleSheetsProxy: siteFixFlag("disableStyleSheetsProxy"),
+              disableShadowRootProxy: siteFixFlag("disableShadowRootProxy"),
+              disableCustomElementRegistryProxy: siteFixFlag("disableCustomElementRegistryProxy"),
+              enableCustomElementRegistryProxy: siteFixFlag("enableCustomElementRegistryProxy")
+            }
+          }));
+        } catch (_) {}
+      };
+
       const runDynamicStyle = () => {
         if (dynamicStyleStarted) return;
         dynamicStyleStarted = true;
         __wkdomainsDarkModeDebug("dynamic-start");
         installPageProxyBridge();
+        configurePageProxy();
         installStylesheetProxy();
         __wkdomainsDarkModeDebug("dynamic-after-stylesheet-proxy");
         installShadowRootProxy();
