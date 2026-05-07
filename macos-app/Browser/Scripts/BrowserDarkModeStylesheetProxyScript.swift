@@ -39,6 +39,9 @@ extension BrowserModel {
         const isOwnGeneratedCSS = (text) => {
           const value = String(text || "");
           return value.includes(DARK_VAR_PREFIX)
+            || value.includes("--darkreader-bg--")
+            || value.includes("--darkreader-text--")
+            || value.includes("--darkreader-border--")
             || value.includes("--wkdomains-forced-dark")
             || value.includes(INLINE_CLASS)
             || value.includes(STYLE_SYNC_CLASS)
@@ -209,7 +212,7 @@ extension BrowserModel {
             const result = nativeSetProperty.call(this, property, value, priority);
             if (!stylesheetProxyActive) return result;
             const propertyName = property ? String(property) : "";
-            if (propertyName.startsWith(DARK_VAR_PREFIX) || propertyName.startsWith("--wkdomains-forced-dark")) {
+            if (isGeneratedDarkModeProperty(propertyName)) {
               return result;
             }
             const adoptedSheet = adoptedDeclarationSheets.get(this);
@@ -228,7 +231,7 @@ extension BrowserModel {
             const result = nativeRemoveProperty.call(this, property);
             if (!stylesheetProxyActive) return result;
             const propertyName = property ? String(property) : "";
-            if (propertyName.startsWith(DARK_VAR_PREFIX) || propertyName.startsWith("--wkdomains-forced-dark")) {
+            if (isGeneratedDarkModeProperty(propertyName)) {
               return result;
             }
             const adoptedSheet = adoptedDeclarationSheets.get(this);
@@ -256,18 +259,19 @@ extension BrowserModel {
             ["border", modifyBorderColor]
           ];
           for (const [type, transformer] of entries) {
-            const wrappedName = wrappedVariableName(type, name);
-            if (registeredWrappedCustomProperties.has(wrappedName)) continue;
             const transformed = transformCustomPropertyValue(name, sourceValue, type, transformer, true) || sourceValue;
-            try {
-              nativeRegisterProperty.call(CSS, {
-                name: wrappedName,
-                syntax,
-                inherits: definition.inherits !== false,
-                initialValue: transformed
-              });
-              registeredWrappedCustomProperties.add(wrappedName);
-            } catch (_) {}
+            for (const wrappedName of wrappedVariableNames(type, name)) {
+              if (registeredWrappedCustomProperties.has(wrappedName)) continue;
+              try {
+                nativeRegisterProperty.call(CSS, {
+                  name: wrappedName,
+                  syntax,
+                  inherits: definition.inherits !== false,
+                  initialValue: transformed
+                });
+                registeredWrappedCustomProperties.add(wrappedName);
+              } catch (_) {}
+            }
           }
         };
 

@@ -76,6 +76,14 @@ extension BrowserModel {
       const SHADOW_STYLE_CLASS = "wkdomains-darkreader--shadow";
       const ADOPTED_STYLE_CLASS = "wkdomains-darkreader--adopted";
       const DARK_VAR_PREFIX = "--wkdomains-darkreader";
+      const isGeneratedDarkModeProperty = (property) => {
+        const name = String(property || "");
+        return name.startsWith(DARK_VAR_PREFIX)
+          || name.startsWith("--darkreader-bg--")
+          || name.startsWith("--darkreader-text--")
+          || name.startsWith("--darkreader-border--")
+          || name.startsWith("--wkdomains-forced-dark");
+      };
       const DARKREADER_META_NAME = "darkreader";
       const DARKREADER_LOCK_META_NAME = "darkreader-lock";
       const INSTANCE_ID = (() => {

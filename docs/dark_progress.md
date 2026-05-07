@@ -105,21 +105,26 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - DOM/style mutation watchers are batched and narrowed to style-relevant attributes and added/removed stylesheet nodes.
 - Color handling supports named colors, hex colors, rgb-like functions, and raw RGB variable values.
 - Site fix selection combines generic fixes with the most-specific matching fix.
+- Improved Dark Reader config compatibility:
+  - parsed config URL blocks now accept the global `*` block used by upstream `dynamic-theme-fixes.config`
+  - generated custom-property overrides now emit both wkdomains-prefixed variables and Dark Reader-compatible aliases such as `--darkreader-bg--token`
+  - registered color custom properties are mirrored into both variable namespaces
+  - inline cleanup and proxy-generated-property checks recognize the Dark Reader-compatible alias namespace
 
 ## Completion Estimates
 
-- Full `variablesStore` dependency graph for matching variables and dependents: 76%
+- Full `variablesStore` dependency graph for matching variables and dependents: 77%
 - Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 88%
 - Mature optimized DOM/style watchers: 74%
 - Robust adopted stylesheet management: 77%
 - Full stylesheet proxy behavior and cross-context coordination: 78%
-- Dark Reader's color pipeline and extensive config corpus: 63%
-- Mature fix selection/config parser behavior across many sites: 62%
+- Dark Reader's color pipeline and extensive config corpus: 64%
+- Mature fix selection/config parser behavior across many sites: 65%
 - Extension-world isolation: 22%
 
 ## Remaining Gaps
 
-- Variables graph is still not a full Dark Reader port. Current estimate: 76%.
+- Variables graph is still not a full Dark Reader port. Current estimate: 77%.
   - no full variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - limited scoped variable handling
@@ -130,12 +135,12 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 74%.
 - Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 77%.
 - Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 78%.
-- Color pipeline is still a major gap. Current estimate: 63%.
+- Color pipeline is still a major gap. Current estimate: 64%.
   - no full Dark Reader palette/cache system
   - limited image analysis
   - limited relative-color handling
   - no theme knob parity
-- Config/fix support is still hardcoded. Current estimate: 62%.
+- Config/fix support is still hardcoded. Current estimate: 65%.
   - parser exists, but no bundled Dark Reader config corpus yet
   - no broad site corpus
   - only a small set of targeted fixes

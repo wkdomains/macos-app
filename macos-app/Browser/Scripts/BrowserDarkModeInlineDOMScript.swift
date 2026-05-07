@@ -27,7 +27,7 @@ extension BrowserModel {
         const properties = [];
         for (let index = 0; index < element.style.length; index += 1) {
           const property = element.style.item(index);
-          if (property && property.startsWith(DARK_VAR_PREFIX)) {
+          if (isGeneratedDarkModeProperty(property)) {
             properties.push(property);
           }
         }
@@ -197,7 +197,7 @@ extension BrowserModel {
 
         for (let index = 0; index < element.style.length; index += 1) {
           const property = element.style.item(index);
-          if (!property || property.startsWith(DARK_VAR_PREFIX) || property.startsWith("--wkdomains-forced-dark")) continue;
+          if (!property || isGeneratedDarkModeProperty(property)) continue;
           const lower = property.toLowerCase();
           if (
             lower.startsWith("--")
@@ -224,9 +224,11 @@ extension BrowserModel {
 
       const setInlineVariableOverrides = (element, property, sourceValue) => {
         const declarations = transformCSSValue(property, sourceValue, element);
-        element.style.removeProperty(wrappedVariableName("bg", property));
-        element.style.removeProperty(wrappedVariableName("text", property));
-        element.style.removeProperty(wrappedVariableName("border", property));
+        for (const type of ["bg", "text", "border"]) {
+          for (const alias of wrappedVariableNames(type, property)) {
+            element.style.removeProperty(alias);
+          }
+        }
         if (!Array.isArray(declarations)) return;
         for (const declaration of declarations) {
           element.style.setProperty(declaration.property, declaration.value);

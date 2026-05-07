@@ -334,7 +334,16 @@ extension BrowserModel {
         ["ENABLE CUSTOM ELEMENT REGISTRY PROXY", "enableCustomElementRegistryProxy"]
       ]);
 
-      const isLikelySiteFixURLLine = (line) => /^[*.a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?(?:\s+[*.a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?)*$/i.test(line);
+      const isLikelySiteFixURLToken = (token) => {
+        const value = String(token || "").trim();
+        return value === "*"
+          || /^[*.a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?$/i.test(value);
+      };
+
+      const isLikelySiteFixURLLine = (line) => {
+        const tokens = String(line || "").trim().split(/\s+/).filter(Boolean);
+        return tokens.length > 0 && tokens.every(isLikelySiteFixURLToken);
+      };
 
       const makeEmptyParsedSiteFix = (urls) => ({
         url: urls,

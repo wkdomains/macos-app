@@ -314,6 +314,12 @@ extension BrowserModel {
       };
 
       const wrappedVariableName = (type, name) => `${DARK_VAR_PREFIX}-${type}-${name.slice(2)}`;
+      const darkReaderVariableName = (type, name) => `--darkreader-${type}${name}`;
+      const wrappedVariableNames = (type, name) => {
+        const primary = wrappedVariableName(type, name);
+        const compatible = darkReaderVariableName(type, name);
+        return primary === compatible ? [primary] : [primary, compatible];
+      };
       const VAR_TYPE_BG = 1 << 0;
       const VAR_TYPE_TEXT = 1 << 1;
       const VAR_TYPE_BORDER = 1 << 2;

@@ -8,7 +8,7 @@ import Foundation
 extension BrowserModel {
     static let browserDarkModeStylesheetTransformScript = #"""
       const transformCustomPropertyValue = (property, value, type, transformer, allowRawColor = false) => {
-        if (!value || property.startsWith(DARK_VAR_PREFIX)) return null;
+        if (!value || isGeneratedDarkModeProperty(property)) return null;
         if (String(value).includes("var(")) {
           const rewritten = replaceCSSVariableReferences(value, type);
           const transformedFallbacks = replaceCSSColors(rewritten, transformer);
@@ -70,7 +70,7 @@ extension BrowserModel {
       };
 
       const transformCustomPropertyDeclarations = (property, value) => {
-        if (!value || property.startsWith(DARK_VAR_PREFIX)) return null;
+        if (!value || isGeneratedDarkModeProperty(property)) return null;
         const declarations = [];
         const inferredTypes = variablesStore.typesForVariable(property);
 
@@ -84,9 +84,15 @@ extension BrowserModel {
         const textValue = (shouldEmitFallbackTypes || (inferredTypes & VAR_TYPE_TEXT)) ? makeValue("text", modifyForegroundColor) : null;
         const borderValue = (shouldEmitFallbackTypes || (inferredTypes & VAR_TYPE_BORDER)) ? makeValue("border", modifyBorderColor) : null;
 
-        if (bgValue) declarations.push({ property: wrappedVariableName("bg", property), value: bgValue });
-        if (textValue) declarations.push({ property: wrappedVariableName("text", property), value: textValue });
-        if (borderValue) declarations.push({ property: wrappedVariableName("border", property), value: borderValue });
+        const pushAliases = (type, value) => {
+          for (const alias of wrappedVariableNames(type, property)) {
+            declarations.push({ property: alias, value });
+          }
+        };
+
+        if (bgValue) pushAliases("bg", bgValue);
+        if (textValue) pushAliases("text", textValue);
+        if (borderValue) pushAliases("border", borderValue);
 
         return declarations.length > 0 ? declarations : null;
       };
@@ -193,13 +199,15 @@ extension BrowserModel {
           if ((inferredTypes & bit) === 0) return;
           const transformed = transformCustomPropertyValue(name, sourceValue, type, transformer, true);
           if (!transformed) return;
-          chunks.push([
-            `@property ${wrappedVariableName(type, name)} {`,
-            `  syntax: ${serializedSyntax};`,
-            `  inherits: ${inherited};`,
-            `  initial-value: ${transformed};`,
-            "}"
-          ].join("\n"));
+          for (const alias of wrappedVariableNames(type, name)) {
+            chunks.push([
+              `@property ${alias} {`,
+              `  syntax: ${serializedSyntax};`,
+              `  inherits: ${inherited};`,
+              `  initial-value: ${transformed};`,
+              "}"
+            ].join("\n"));
+          }
         };
 
         emit(VAR_TYPE_BG | VAR_TYPE_BG_IMG, "bg", modifyBackgroundColor);

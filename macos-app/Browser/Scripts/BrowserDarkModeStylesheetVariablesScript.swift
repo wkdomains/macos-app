@@ -195,15 +195,27 @@ extension BrowserModel {
             if (!type) return;
             if (type & (VAR_TYPE_BG | VAR_TYPE_BG_IMG)) {
               const transformed = transformCustomPropertyValue(property, value, "bg", modifyBackgroundColor, true);
-              if (transformed) declarations.push([wrappedVariableName("bg", property), transformed]);
+              if (transformed) {
+                for (const alias of wrappedVariableNames("bg", property)) {
+                  declarations.push([alias, transformed]);
+                }
+              }
             }
             if (type & VAR_TYPE_TEXT) {
               const transformed = transformCustomPropertyValue(property, value, "text", modifyForegroundColor, true);
-              if (transformed) declarations.push([wrappedVariableName("text", property), transformed]);
+              if (transformed) {
+                for (const alias of wrappedVariableNames("text", property)) {
+                  declarations.push([alias, transformed]);
+                }
+              }
             }
             if (type & VAR_TYPE_BORDER) {
               const transformed = transformCustomPropertyValue(property, value, "border", modifyBorderColor, true);
-              if (transformed) declarations.push([wrappedVariableName("border", property), transformed]);
+              if (transformed) {
+                for (const alias of wrappedVariableNames("border", property)) {
+                  declarations.push([alias, transformed]);
+                }
+              }
             }
           });
 
