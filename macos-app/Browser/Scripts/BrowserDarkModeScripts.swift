@@ -6,6 +6,10 @@
 import Foundation
 
 extension BrowserModel {
+    static var darkModeUsesIsolatedContentWorld: Bool {
+        (UserDefaults.standard.object(forKey: "wkdomains.darkModeUseIsolatedWorld") as? Bool) ?? true
+    }
+
     static let renderInvalidationScript = #"""
     (() => {
       if (window.__wkdomainsRenderInstalled) return;
@@ -69,7 +73,7 @@ extension BrowserModel {
     })();
     """#
 
-    nonisolated private static func javaScriptStringLiteral(_ value: String) -> String {
+    nonisolated static func javaScriptStringLiteral(_ value: String) -> String {
         let escaped = value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")

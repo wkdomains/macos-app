@@ -7,6 +7,48 @@ import Foundation
 
 extension BrowserModel {
     static let browserDarkModeStylesheetProxyScript = #"""
+      const nativeRegisterProperty = window.CSS && CSS.registerProperty;
+      const registeredWrappedCustomProperties = new Set();
+
+      const registerWrappedCustomProperties = (definition) => {
+        if (!nativeRegisterProperty || !definition || !definition.name || !definition.initialValue) return;
+        const name = String(definition.name || "");
+        const syntax = String(definition.syntax || "");
+        const sourceValue = String(definition.initialValue || "").trim();
+        if (!name.startsWith("--") || !syntax.includes("<color>") || !sourceValue) return;
+
+        const entries = [
+          ["bg", modifyBackgroundColor],
+          ["text", modifyForegroundColor],
+          ["border", modifyBorderColor]
+        ];
+        for (const [type, transformer] of entries) {
+          const transformed = transformCustomPropertyValue(name, sourceValue, type, transformer, true) || sourceValue;
+          for (const wrappedName of wrappedVariableNames(type, name)) {
+            if (registeredWrappedCustomProperties.has(wrappedName)) continue;
+            try {
+              nativeRegisterProperty.call(CSS, {
+                name: wrappedName,
+                syntax,
+                inherits: definition.inherits !== false,
+                initialValue: transformed
+              });
+              registeredWrappedCustomProperties.add(wrappedName);
+            } catch (_) {}
+          }
+        }
+      };
+
+      const registerColorCustomPropertyDefinition = (definition) => {
+        if (!definition || !definition.name) return;
+        const name = String(definition.name || "");
+        const syntax = String(definition.syntax || "");
+        if (!name.startsWith("--") || !syntax.includes("<color>")) return;
+        registeredCustomPropertyTypes.set(name, variableTypeNumberForProperty(name, definition.initialValue || ""));
+        registerWrappedCustomProperties(definition);
+        scheduleStyleSync(0);
+      };
+
       const installStylesheetProxy = () => {
         __wkdomainsDarkModeDebug("proxy-install-start");
         if (siteFixFlag("disableStyleSheetsProxy")) {
@@ -29,13 +71,11 @@ extension BrowserModel {
         const nativeRemoveRule = proto.removeRule;
         const nativeReplace = proto.replace;
         const nativeReplaceSync = proto.replaceSync;
-        const nativeRegisterProperty = window.CSS && CSS.registerProperty;
         const adoptedSheetOwners = new WeakMap();
         const adoptedSheetsByRoot = new WeakMap();
         const adoptedDeclarationSheets = new WeakMap();
         const adoptedSheetsSourceProxies = new WeakMap();
         const adoptedSheetsProxySources = new WeakMap();
-        const registeredWrappedCustomProperties = new Set();
         const isOwnGeneratedCSS = (text) => {
           const value = String(text || "");
           return value.includes(DARK_VAR_PREFIX)
@@ -246,35 +286,6 @@ extension BrowserModel {
           };
         }
 
-        const registerWrappedCustomProperties = (definition) => {
-          if (!nativeRegisterProperty || !definition || !definition.name || !definition.initialValue) return;
-          const name = String(definition.name || "");
-          const syntax = String(definition.syntax || "");
-          const sourceValue = String(definition.initialValue || "").trim();
-          if (!name.startsWith("--") || !syntax.includes("<color>") || !sourceValue) return;
-
-          const entries = [
-            ["bg", modifyBackgroundColor],
-            ["text", modifyForegroundColor],
-            ["border", modifyBorderColor]
-          ];
-          for (const [type, transformer] of entries) {
-            const transformed = transformCustomPropertyValue(name, sourceValue, type, transformer, true) || sourceValue;
-            for (const wrappedName of wrappedVariableNames(type, name)) {
-              if (registeredWrappedCustomProperties.has(wrappedName)) continue;
-              try {
-                nativeRegisterProperty.call(CSS, {
-                  name: wrappedName,
-                  syntax,
-                  inherits: definition.inherits !== false,
-                  initialValue: transformed
-                });
-                registeredWrappedCustomProperties.add(wrappedName);
-              } catch (_) {}
-            }
-          }
-        };
-
         if (nativeRegisterProperty && !CSS.__wkdomainsDarkModeRegisterPropertyProxy) {
           try {
             __wkdomainsDarkModeDebug("proxy-patch-register-property");
@@ -283,11 +294,7 @@ extension BrowserModel {
             CSS.registerProperty = function(definition) {
               const result = nativeRegisterProperty.call(this, definition);
               try {
-                if (definition && definition.name && String(definition.syntax || "").includes("<color>")) {
-                  registeredCustomPropertyTypes.set(definition.name, variableTypeNumberForProperty(definition.name, definition.initialValue || ""));
-                  registerWrappedCustomProperties(definition);
-                  scheduleStyleSync(0);
-                }
+                registerColorCustomPropertyDefinition(definition);
               } catch (_) {}
               return result;
             };

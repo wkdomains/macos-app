@@ -17,6 +17,7 @@ extension BrowserModel {
       const dirtyRoots = new Set();
       let shadowProxyActive = false;
       let customElementRegistryProxyActive = false;
+      let pageProxyBridgeInstalled = false;
       const INLINE_STYLE_MUTATION_ATTRIBUTES = new Set(INLINE_STYLE_ATTRS);
       const STYLE_SHEET_MUTATION_ATTRIBUTES = new Set(["href", "media", "disabled"]);
       let queuedMutations = [];
@@ -651,10 +652,45 @@ extension BrowserModel {
         schedule(40);
       };
 
+      const installPageProxyBridge = () => {
+        if (pageProxyBridgeInstalled) return;
+        pageProxyBridgeInstalled = true;
+
+        const onPageProxyChange = (event) => {
+          let kind = "";
+          let definition = null;
+          try {
+            kind = String(event && event.detail && event.detail.kind || "");
+            definition = event && event.detail && event.detail.definition || null;
+          } catch (_) {}
+
+          if (kind === "register-property") {
+            try { registerColorCustomPropertyDefinition(definition); } catch (_) {}
+          }
+
+          if (kind === "shadow-root" || kind === "custom-element") {
+            window.setTimeout(() => {
+              discoverExistingShadowRoots(document);
+              dirtyRoots.add(document);
+              schedule(0);
+            }, 0);
+          }
+
+          scheduleStyleSync(0);
+        };
+
+        document.addEventListener(PAGE_PROXY_EVENT, onPageProxyChange);
+        cleanupTasks.push(() => {
+          document.removeEventListener(PAGE_PROXY_EVENT, onPageProxyChange);
+          pageProxyBridgeInstalled = false;
+        });
+      };
+
       const runDynamicStyle = () => {
         if (dynamicStyleStarted) return;
         dynamicStyleStarted = true;
         __wkdomainsDarkModeDebug("dynamic-start");
+        installPageProxyBridge();
         installStylesheetProxy();
         __wkdomainsDarkModeDebug("dynamic-after-stylesheet-proxy");
         installShadowRootProxy();
@@ -730,6 +766,9 @@ extension BrowserModel {
 
       const removeDynamicTheme = () => {
         cleanDynamicThemeCache();
+        try {
+          document.dispatchEvent(new CustomEvent(PAGE_PROXY_CLEANUP_EVENT));
+        } catch (_) {}
         destroyInlineDOMState();
         destroyStyleManagers();
         removeBaseStyle();
