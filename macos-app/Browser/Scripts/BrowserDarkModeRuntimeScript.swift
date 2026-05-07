@@ -553,7 +553,8 @@ extension BrowserModel {
         shadowProxyActive = true;
         if (!Element.prototype.attachShadow || Element.prototype.__wkdomainsDarkModeShadowProxy) return;
         const nativeAttachShadow = Element.prototype.attachShadow;
-        Object.defineProperty(Element.prototype, "__wkdomainsDarkModeShadowProxy", { value: true, configurable: true });
+        defineHiddenProperty(Element.prototype, "__wkdomainsDarkModeShadowProxy", true);
+        rememberPropertyDescriptor(Element.prototype, "attachShadow");
         Element.prototype.attachShadow = function(init) {
           const root = nativeAttachShadow.call(this, init);
           if (shadowProxyActive) {
@@ -571,7 +572,8 @@ extension BrowserModel {
         }
         const nativeDefine = customElements.define;
         try {
-          Object.defineProperty(customElements, "__wkdomainsDarkModeRegistryProxy", { value: true, configurable: true });
+          defineHiddenProperty(customElements, "__wkdomainsDarkModeRegistryProxy", true);
+          rememberPropertyDescriptor(customElements, "define");
           customElements.define = function(name, constructor, options) {
             const result = nativeDefine.call(this, name, constructor, options);
             if (customElementRegistryProxyActive) {
@@ -692,6 +694,7 @@ extension BrowserModel {
         customElementRegistryProxyActive = false;
         cancelStyleSync();
         stopStylesheetProxy();
+        restorePrototypePatches();
         stopStylePositionWatchers();
         for (const observer of rootObservers.values()) {
           observer.disconnect();

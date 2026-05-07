@@ -319,6 +319,90 @@ extension BrowserModel {
         }
       ];
 
+      const SITE_FIX_CONFIG = ``;
+      const SITE_FIX_SECTION_MAP = new Map([
+        ["INVERT", "invert"],
+        ["CSS", "css"],
+        ["IGNORE INLINE STYLE", "ignoreInlineStyle"],
+        ["IGNORE IMAGE ANALYSIS", "ignoreImageAnalysis"],
+        ["IGNORE CSS", "ignoreCSS"],
+        ["IGNORE CSS URL", "ignoreCSSUrl"],
+        ["IGNORE CSS URLs", "ignoreCSSUrl"],
+        ["DISABLE STYLESHEET PROXY", "disableStyleSheetsProxy"],
+        ["DISABLE CUSTOM ELEMENT REGISTRY PROXY", "disableCustomElementRegistryProxy"]
+      ]);
+
+      const isLikelySiteFixURLLine = (line) => /^[*.a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?(?:\s+[*.a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?)*$/i.test(line);
+
+      const makeEmptyParsedSiteFix = (urls) => ({
+        url: urls,
+        invert: [],
+        css: "",
+        ignoreInlineStyle: [],
+        ignoreImageAnalysis: [],
+        ignoreCSS: [],
+        ignoreCSSUrl: [],
+        disableStyleSheetsProxy: false,
+        disableCustomElementRegistryProxy: false
+      });
+
+      const parseSiteFixConfig = (configText) => {
+        const fixes = [];
+        let current = null;
+        let section = null;
+        let hadBlankLine = true;
+
+        const commit = () => {
+          if (current && current.url.length > 0) {
+            fixes.push(current);
+          }
+          current = null;
+          section = null;
+        };
+
+        for (const rawLine of String(configText || "").split(/\r?\n/)) {
+          const line = rawLine.trimEnd();
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) {
+            hadBlankLine = true;
+            continue;
+          }
+
+          const normalizedHeader = trimmed.toUpperCase();
+          if (SITE_FIX_SECTION_MAP.has(normalizedHeader)) {
+            section = SITE_FIX_SECTION_MAP.get(normalizedHeader);
+            if (section === "disableStyleSheetsProxy" || section === "disableCustomElementRegistryProxy") {
+              if (current) current[section] = true;
+              section = null;
+            }
+            hadBlankLine = false;
+            continue;
+          }
+
+          if ((hadBlankLine || !current) && isLikelySiteFixURLLine(trimmed)) {
+            commit();
+            current = makeEmptyParsedSiteFix(trimmed.split(/\s+/).filter(Boolean));
+            hadBlankLine = false;
+            continue;
+          }
+
+          if (!current || !section) {
+            hadBlankLine = false;
+            continue;
+          }
+
+          if (section === "css") {
+            current.css += `${line}\n`;
+          } else if (Array.isArray(current[section])) {
+            current[section].push(trimmed);
+          }
+          hadBlankLine = false;
+        }
+
+        commit();
+        return fixes;
+      };
+
       const siteFixPatternParts = (pattern) => {
         const normalized = String(pattern || "").toLowerCase().replace(/^https?:\/\//, "");
         const slashIndex = normalized.indexOf("/");
@@ -380,13 +464,14 @@ extension BrowserModel {
           css: "",
           ignoreInlineStyle: [],
           ignoreImageAnalysis: [],
+          ignoreCSS: [],
           ignoreCSSUrl: [],
           disableStyleSheetsProxy: false,
           disableCustomElementRegistryProxy: false
         };
 
         for (const fix of fixes) {
-          for (const key of ["url", "invert", "ignoreInlineStyle", "ignoreImageAnalysis", "ignoreCSSUrl"]) {
+          for (const key of ["url", "invert", "ignoreInlineStyle", "ignoreImageAnalysis", "ignoreCSS", "ignoreCSSUrl"]) {
             if (Array.isArray(fix[key])) {
               combined[key].push(...fix[key]);
             }
@@ -401,7 +486,9 @@ extension BrowserModel {
         return combined;
       };
 
-      const matchingSiteFixes = SITE_FIXES.filter((fix) => Array.isArray(fix.url) && fix.url.some(siteFixMatchesPattern));
+      const parsedSiteFixes = parseSiteFixConfig(SITE_FIX_CONFIG);
+      const allSiteFixes = SITE_FIXES.concat(parsedSiteFixes);
+      const matchingSiteFixes = allSiteFixes.filter((fix) => Array.isArray(fix.url) && fix.url.some(siteFixMatchesPattern));
       const genericSiteFix = matchingSiteFixes.find((fix) => fix.url.includes("*")) || null;
       const specificSiteFixes = matchingSiteFixes.filter((fix) => !fix.url.includes("*"));
       const mostSpecificSiteFix = specificSiteFixes.reduce((best, fix) => {
@@ -424,6 +511,7 @@ extension BrowserModel {
 
       const ignoredInlineSelectors = activeSiteFixList("ignoreInlineStyle");
       const ignoredImageAnalysisSelectors = activeSiteFixList("ignoreImageAnalysis");
+      const ignoredCSSSelectors = activeSiteFixList("ignoreCSS");
       const ignoredCSSURLPatterns = activeSiteFixList("ignoreCSSUrl");
       const siteFixFlag = (key) => activeSiteFix && activeSiteFix[key] === true;
 
@@ -439,6 +527,14 @@ extension BrowserModel {
 
       const shouldIgnoreInlineStyle = (element) => matchesAnySiteFixSelector(element, ignoredInlineSelectors);
       const shouldIgnoreImageAnalysis = (element) => matchesAnySiteFixSelector(element, ignoredImageAnalysisSelectors);
+      const shouldIgnoreCSSSelector = (selectorText) => {
+        const text = String(selectorText || "");
+        if (!text || ignoredCSSSelectors.length === 0) return false;
+        return ignoredCSSSelectors.some((selector) => {
+          const value = String(selector || "").trim();
+          return value && (text === value || text.includes(value));
+        });
+      };
 
       const replaceSiteCSSTemplates = (cssText) => String(cssText || "").replace(/\$\{(.+?)\}/g, (match, token) => {
         const color = parseColor(token);

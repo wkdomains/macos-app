@@ -136,8 +136,9 @@ extension BrowserModel {
           return proxy;
         };
 
-        Object.defineProperty(proto, "__wkdomainsDarkModeProxy", { value: true, configurable: true });
+        defineHiddenProperty(proto, "__wkdomainsDarkModeProxy", true);
         if (nativeInsertRule) {
+          rememberPropertyDescriptor(proto, "insertRule");
           proto.insertRule = function(rule, index) {
             const result = nativeInsertRule.call(this, rule, index);
             if (stylesheetProxyActive && !isOwnGeneratedCSS(rule)) reportSheetChange(this);
@@ -145,6 +146,7 @@ extension BrowserModel {
           };
         }
         if (nativeDeleteRule) {
+          rememberPropertyDescriptor(proto, "deleteRule");
           proto.deleteRule = function(index) {
             const result = nativeDeleteRule.call(this, index);
             if (stylesheetProxyActive) reportSheetChange(this);
@@ -152,6 +154,7 @@ extension BrowserModel {
           };
         }
         if (nativeAddRule) {
+          rememberPropertyDescriptor(proto, "addRule");
           proto.addRule = function(selector, style, index) {
             const result = nativeAddRule.call(this, selector, style, index);
             if (stylesheetProxyActive && !isOwnGeneratedCSS(`${selector || ""}{${style || ""}}`)) reportSheetChange(this);
@@ -159,6 +162,7 @@ extension BrowserModel {
           };
         }
         if (nativeRemoveRule) {
+          rememberPropertyDescriptor(proto, "removeRule");
           proto.removeRule = function(index) {
             const result = nativeRemoveRule.call(this, index);
             if (stylesheetProxyActive) reportSheetChange(this);
@@ -166,6 +170,7 @@ extension BrowserModel {
           };
         }
         if (nativeReplace) {
+          rememberPropertyDescriptor(proto, "replace");
           proto.replace = function(text) {
             const result = nativeReplace.call(this, text);
             if (stylesheetProxyActive && !isOwnGeneratedCSS(text)) reportSheetChangeAsync(this, result);
@@ -173,6 +178,7 @@ extension BrowserModel {
           };
         }
         if (nativeReplaceSync) {
+          rememberPropertyDescriptor(proto, "replaceSync");
           proto.replaceSync = function(text) {
             const result = nativeReplaceSync.call(this, text);
             if (stylesheetProxyActive && !isOwnGeneratedCSS(text)) reportSheetChange(this);
@@ -184,8 +190,9 @@ extension BrowserModel {
           const declarationProto = CSSStyleDeclaration.prototype;
           const nativeSetProperty = declarationProto.setProperty;
           const nativeRemoveProperty = declarationProto.removeProperty;
-          Object.defineProperty(declarationProto, "__wkdomainsDarkModeProxy", { value: true, configurable: true });
+          defineHiddenProperty(declarationProto, "__wkdomainsDarkModeProxy", true);
 
+          rememberPropertyDescriptor(declarationProto, "setProperty");
           declarationProto.setProperty = function(property, value, priority) {
             const result = nativeSetProperty.call(this, property, value, priority);
             if (!stylesheetProxyActive) return result;
@@ -204,6 +211,7 @@ extension BrowserModel {
             return result;
           };
 
+          rememberPropertyDescriptor(declarationProto, "removeProperty");
           declarationProto.removeProperty = function(property) {
             const result = nativeRemoveProperty.call(this, property);
             if (!stylesheetProxyActive) return result;
@@ -253,7 +261,8 @@ extension BrowserModel {
 
         if (nativeRegisterProperty && !CSS.__wkdomainsDarkModeRegisterPropertyProxy) {
           try {
-            Object.defineProperty(CSS, "__wkdomainsDarkModeRegisterPropertyProxy", { value: true, configurable: true });
+            defineHiddenProperty(CSS, "__wkdomainsDarkModeRegisterPropertyProxy", true);
+            rememberPropertyDescriptor(CSS, "registerProperty");
             CSS.registerProperty = function(definition) {
               const result = nativeRegisterProperty.call(this, definition);
               try {
@@ -274,9 +283,10 @@ extension BrowserModel {
           const nativeGroupInsertRule = groupingProto.insertRule;
           const nativeGroupDeleteRule = groupingProto.deleteRule;
           if (!nativeGroupInsertRule && !nativeGroupDeleteRule) return;
-          Object.defineProperty(groupingProto, "__wkdomainsDarkModeProxy", { value: true, configurable: true });
+          defineHiddenProperty(groupingProto, "__wkdomainsDarkModeProxy", true);
 
           if (nativeGroupInsertRule) {
+            rememberPropertyDescriptor(groupingProto, "insertRule");
             groupingProto.insertRule = function(rule, index) {
               const result = nativeGroupInsertRule.call(this, rule, index);
               if (stylesheetProxyActive && !isOwnGeneratedCSS(rule)) {
@@ -287,6 +297,7 @@ extension BrowserModel {
           }
 
           if (nativeGroupDeleteRule) {
+            rememberPropertyDescriptor(groupingProto, "deleteRule");
             groupingProto.deleteRule = function(index) {
               const result = nativeGroupDeleteRule.call(this, index);
               if (stylesheetProxyActive) {
@@ -301,7 +312,8 @@ extension BrowserModel {
           if (!rootProto || rootProto.__wkdomainsDarkModeAdoptedProxy) return;
           const descriptor = Object.getOwnPropertyDescriptor(rootProto, "adoptedStyleSheets");
           if (!descriptor || !descriptor.set || !descriptor.get) return;
-          Object.defineProperty(rootProto, "__wkdomainsDarkModeAdoptedProxy", { value: true, configurable: true });
+          defineHiddenProperty(rootProto, "__wkdomainsDarkModeAdoptedProxy", true);
+          rememberPropertyDescriptor(rootProto, "adoptedStyleSheets");
           Object.defineProperty(rootProto, "adoptedStyleSheets", {
             configurable: true,
             enumerable: descriptor.enumerable,

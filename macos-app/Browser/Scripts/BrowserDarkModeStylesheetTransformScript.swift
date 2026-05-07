@@ -215,6 +215,7 @@ extension BrowserModel {
           }
 
           if (rule.type === CSSRule.STYLE_RULE) {
+            if (shouldIgnoreCSSSelector(rule.selectorText)) return "";
             const declarations = buildModifiedDeclarations(rule.style);
             return declarations.length > 0 ? `${rule.selectorText} {\n${declarations.join("\n")}\n}` : "";
           }

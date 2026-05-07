@@ -109,5 +109,50 @@ extension BrowserModel {
       let dynamicStyleStarted = false;
       let themeColorObserver = null;
       const originalMetaThemeColors = new WeakMap();
+      const prototypeRestoreTasks = [];
+      const savedPropertyDescriptors = new WeakMap();
+
+      const rememberPropertyDescriptor = (target, property) => {
+        if (!target || !property) return null;
+        let descriptors = savedPropertyDescriptors.get(target);
+        if (!descriptors) {
+          descriptors = new Map();
+          savedPropertyDescriptors.set(target, descriptors);
+        }
+        if (!descriptors.has(property)) {
+          const descriptor = Object.getOwnPropertyDescriptor(target, property) || null;
+          descriptors.set(property, descriptor);
+          prototypeRestoreTasks.push(() => {
+            try {
+              const saved = descriptors.get(property);
+              if (saved) {
+                Object.defineProperty(target, property, saved);
+              } else {
+                delete target[property];
+              }
+            } catch (_) {}
+          });
+        }
+        return Object.getOwnPropertyDescriptor(target, property) || null;
+      };
+
+      const defineHiddenProperty = (target, property, value) => {
+        try {
+          rememberPropertyDescriptor(target, property);
+          Object.defineProperty(target, property, {
+            value,
+            configurable: true,
+            enumerable: false,
+            writable: true
+          });
+        } catch (_) {}
+      };
+
+      const restorePrototypePatches = () => {
+        const tasks = prototypeRestoreTasks.splice(0).reverse();
+        for (const restore of tasks) {
+          try { restore(); } catch (_) {}
+        }
+      };
     """#
 }

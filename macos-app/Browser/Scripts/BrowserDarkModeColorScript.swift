@@ -95,7 +95,7 @@ extension BrowserModel {
         if (open < 0 || close <= open) return null;
 
         const functionName = text.slice(0, open);
-        if (!functionName.includes("rgb") && !functionName.includes("color")) return null;
+        if (!["rgb", "rgba", "color"].includes(functionName)) return null;
 
         const parts = text
           .slice(open + 1, close)
@@ -174,6 +174,131 @@ extension BrowserModel {
           b: hueColor.b * factor + white * 255,
           a: parseComponent(parts[3], true)
         };
+      };
+
+      const parseColorFunctionTokens = (value, names) => {
+        if (!value) return null;
+        const text = String(value).trim().toLowerCase();
+        const open = text.indexOf("(");
+        const close = text.lastIndexOf(")");
+        if (open < 0 || close <= open) return null;
+        const name = text.slice(0, open);
+        if (!names.includes(name)) return null;
+        const tokens = text
+          .slice(open + 1, close)
+          .replaceAll(",", " ")
+          .replaceAll("/", " ")
+          .split(/\s+/)
+          .map((part) => part.trim())
+          .filter(Boolean);
+        return { name, tokens };
+      };
+
+      const parseLightness = (token, scaleValue) => {
+        const value = String(token || "").trim().toLowerCase();
+        if (value === "none") return 0;
+        const parsed = Number.parseFloat(value);
+        if (!Number.isFinite(parsed)) return 0;
+        return value.endsWith("%") ? clamp(parsed / 100, 0, 1) * scaleValue : parsed;
+      };
+
+      const parseAxis = (token, percentScale = 1) => {
+        const value = String(token || "").trim().toLowerCase();
+        if (value === "none") return 0;
+        const parsed = Number.parseFloat(value);
+        if (!Number.isFinite(parsed)) return 0;
+        return value.endsWith("%") ? parsed / 100 * percentScale : parsed;
+      };
+
+      const linearRGBToSRGB = (value) => {
+        const channel = value <= 0.0031308
+          ? 12.92 * value
+          : 1.055 * Math.pow(Math.max(0, value), 1 / 2.4) - 0.055;
+        return clamp(channel * 255, 0, 255);
+      };
+
+      const xyzD50ToSRGB = ({ x, y, z, a }) => {
+        const x65 = 0.9555766 * x - 0.0230393 * y + 0.0631636 * z;
+        const y65 = -0.0282895 * x + 1.0099416 * y + 0.0210077 * z;
+        const z65 = 0.0122982 * x - 0.0204830 * y + 1.3299098 * z;
+        return {
+          r: linearRGBToSRGB(3.2404542 * x65 - 1.5371385 * y65 - 0.4985314 * z65),
+          g: linearRGBToSRGB(-0.9692660 * x65 + 1.8760108 * y65 + 0.0415560 * z65),
+          b: linearRGBToSRGB(0.0556434 * x65 - 0.2040259 * y65 + 1.0572252 * z65),
+          a
+        };
+      };
+
+      const labToSRGB = ({ l, a: axisA, b: axisB, alpha }) => {
+        const fy = (l + 16) / 116;
+        const fx = fy + axisA / 500;
+        const fz = fy - axisB / 200;
+        const delta = 6 / 29;
+        const convert = (value) => value > delta
+          ? value * value * value
+          : 3 * delta * delta * (value - 4 / 29);
+        return xyzD50ToSRGB({
+          x: 0.96422 * convert(fx),
+          y: convert(fy),
+          z: 0.82521 * convert(fz),
+          a: alpha
+        });
+      };
+
+      const oklabToSRGB = ({ l, a: axisA, b: axisB, alpha }) => {
+        const lPrime = l + 0.3963377774 * axisA + 0.2158037573 * axisB;
+        const mPrime = l - 0.1055613458 * axisA - 0.0638541728 * axisB;
+        const sPrime = l - 0.0894841775 * axisA - 1.2914855480 * axisB;
+        const lCube = lPrime * lPrime * lPrime;
+        const mCube = mPrime * mPrime * mPrime;
+        const sCube = sPrime * sPrime * sPrime;
+        return {
+          r: linearRGBToSRGB(4.0767416621 * lCube - 3.3077115913 * mCube + 0.2309699292 * sCube),
+          g: linearRGBToSRGB(-1.2684380046 * lCube + 2.6097574011 * mCube - 0.3413193965 * sCube),
+          b: linearRGBToSRGB(-0.0041960863 * lCube - 0.7034186147 * mCube + 1.7076147010 * sCube),
+          a: alpha
+        };
+      };
+
+      const parseLabLike = (value) => {
+        const parsed = parseColorFunctionTokens(value, ["lab", "oklab"]);
+        if (!parsed || parsed.tokens.length < 3) return null;
+        if (parsed.name === "oklab") {
+          return oklabToSRGB({
+            l: clamp(parseLightness(parsed.tokens[0], 1), 0, 1),
+            a: parseAxis(parsed.tokens[1], 0.4),
+            b: parseAxis(parsed.tokens[2], 0.4),
+            alpha: parseComponent(parsed.tokens[3], true)
+          });
+        }
+        return labToSRGB({
+          l: clamp(parseLightness(parsed.tokens[0], 100), 0, 100),
+          a: parseAxis(parsed.tokens[1], 125),
+          b: parseAxis(parsed.tokens[2], 125),
+          alpha: parseComponent(parsed.tokens[3], true)
+        });
+      };
+
+      const parseLCHLike = (value) => {
+        const parsed = parseColorFunctionTokens(value, ["lch", "oklch"]);
+        if (!parsed || parsed.tokens.length < 3) return null;
+        const hue = parseHue(parsed.tokens[2]) * Math.PI / 180;
+        if (parsed.name === "oklch") {
+          const chroma = parseAxis(parsed.tokens[1], 0.4);
+          return oklabToSRGB({
+            l: clamp(parseLightness(parsed.tokens[0], 1), 0, 1),
+            a: chroma * Math.cos(hue),
+            b: chroma * Math.sin(hue),
+            alpha: parseComponent(parsed.tokens[3], true)
+          });
+        }
+        const chroma = parseAxis(parsed.tokens[1], 150);
+        return labToSRGB({
+          l: clamp(parseLightness(parsed.tokens[0], 100), 0, 100),
+          a: chroma * Math.cos(hue),
+          b: chroma * Math.sin(hue),
+          alpha: parseComponent(parsed.tokens[3], true)
+        });
       };
 
       const parseHexColor = (value) => {
@@ -310,13 +435,17 @@ extension BrowserModel {
         if (hsl) return hsl;
         const hwb = parseHWBLike(text);
         if (hwb) return hwb;
+        const lab = parseLabLike(text);
+        if (lab) return lab;
+        const lch = parseLCHLike(text);
+        if (lch) return lch;
         const mixed = parseColorMix(text);
         if (mixed) return mixed;
         const lightDark = parseLightDark(text);
         if (lightDark) return lightDark;
         const normalized = normalizeColor(value);
         if (normalized) {
-          const parsed = parseRGBLike(normalized) || parseHSLLike(normalized) || parseHWBLike(normalized) || parseHexColor(normalized) || NAMED_COLORS[String(normalized).trim().toLowerCase()];
+          const parsed = parseRGBLike(normalized) || parseHSLLike(normalized) || parseHWBLike(normalized) || parseLabLike(normalized) || parseLCHLike(normalized) || parseHexColor(normalized) || NAMED_COLORS[String(normalized).trim().toLowerCase()];
           if (parsed) return parsed;
         }
         return parseRGBLike(value);

@@ -39,6 +39,16 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - proxied `CSS.registerProperty()` now mirrors color properties into bg/text/border wrapped registrations when possible
 - Stylesheet proxy now catches nested `CSSGroupingRule.insertRule()` and `deleteRule()` changes inside media/supports/container-style rule groups.
 - Color parsing now understands `light-dark()` by selecting the dark branch before applying the relevant transformer.
+- Expanded modern color-space handling:
+  - direct `lab()` and `lch()` parsing with D50-to-sRGB conversion
+  - direct `oklab()` and `oklch()` parsing with OKLab-to-sRGB conversion
+  - unsupported `color-*()` functions no longer fall through the generic `color()` parser and turn into bogus black values
+- Added the first Dark Reader-style site-fix config parser:
+  - URL blocks with `INVERT`, `CSS`, `IGNORE INLINE STYLE`, `IGNORE IMAGE ANALYSIS`, `IGNORE CSS`, and CSS URL ignore sections can now be parsed into fix objects
+  - stylesheet conversion can skip selectors listed under `IGNORE CSS`
+- Reduced page-world residue from prototype hooks:
+  - patched prototype/object descriptors are remembered before wrapping
+  - cleanup restores stylesheet, adopted stylesheet, custom element, and shadow-root hooks instead of only disabling callbacks
 - Added unavailable stylesheet lifecycle handling:
   - stylesheets that never expose readable `cssRules` no longer hold the fallback style open forever
   - loading stylesheets now time out after 3.5s and are marked unavailable until they become readable
@@ -80,10 +90,10 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 83%
 - Mature optimized DOM/style watchers: 74%
 - Robust adopted stylesheet management: 77%
-- Full stylesheet proxy behavior and cross-context coordination: 74%
-- Dark Reader's color pipeline and extensive config corpus: 48%
-- Mature fix selection/config parser behavior across many sites: 48%
-- Extension-world isolation: 10%
+- Full stylesheet proxy behavior and cross-context coordination: 76%
+- Dark Reader's color pipeline and extensive config corpus: 56%
+- Mature fix selection/config parser behavior across many sites: 56%
+- Extension-world isolation: 16%
 
 ## Remaining Gaps
 
@@ -97,19 +107,20 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - incremental large-sheet rendering
 - Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 74%.
 - Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 77%.
-- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 74%.
-- Color pipeline is still a major gap. Current estimate: 48%.
+- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 76%.
+- Color pipeline is still a major gap. Current estimate: 56%.
   - no full Dark Reader palette/cache system
   - limited image analysis
   - limited advanced gradient and relative-color handling
   - no theme knob parity
-- Config/fix support is still hardcoded. Current estimate: 48%.
-  - no parser for Dark Reader's config corpus
+- Config/fix support is still hardcoded. Current estimate: 56%.
+  - parser exists, but no bundled Dark Reader config corpus yet
   - no broad site corpus
   - only a small set of targeted fixes
-- Extension-world isolation is not solved. Current estimate: 10%.
+- Extension-world isolation is not solved. Current estimate: 16%.
   - current logic still runs as WKUserScript-injected page JavaScript
   - complex SPAs can still be perturbed more than they would be by Dark Reader's extension-world architecture
+  - prototype hooks now restore on cleanup, but they still execute in the page world while active
 
 ## Latest Validation
 
