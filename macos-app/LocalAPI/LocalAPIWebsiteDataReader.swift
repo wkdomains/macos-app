@@ -231,18 +231,18 @@ final class WebsiteDataReader {
 
     private func evaluateJSONScript(_ script: String, label: String, completion: @escaping (Result<Any, Error>) -> Void) {
         guard browser.webView.url != nil else {
-            NSLog("[wkdomains-debug] local-api eval \(label) fail no-page")
+            BrowserDebugLogging.log("[wkdomains-debug] local-api eval \(label) fail no-page")
             completion(.failure(InspectionError.noPageLoaded))
             return
         }
 
         let startedAt = Date()
         let startURL = browser.webView.url?.absoluteString ?? "nil"
-        NSLog("[wkdomains-debug] local-api eval \(label) start \(pageStateDescription()) scriptBytes=\(script.utf8.count)")
+        BrowserDebugLogging.log("[wkdomains-debug] local-api eval \(label) start \(pageStateDescription()) scriptBytes=\(script.utf8.count)")
 
         let slowWarning = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            NSLog(
+            BrowserDebugLogging.log(
                 "[wkdomains-debug] local-api eval \(label) slow elapsed=\(Self.formatElapsed(since: startedAt)) startURL=\(startURL) \(self.pageStateDescription())"
             )
         }
@@ -252,7 +252,7 @@ final class WebsiteDataReader {
             Task { @MainActor in
                 slowWarning.cancel()
                 if let error {
-                    NSLog("[wkdomains-debug] local-api eval \(label) fail elapsed=\(Self.formatElapsed(since: startedAt)) error=\(error.localizedDescription) \(self.pageStateDescription())")
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api eval \(label) fail elapsed=\(Self.formatElapsed(since: startedAt)) error=\(error.localizedDescription) \(self.pageStateDescription())")
                     completion(.failure(error))
                     return
                 }
@@ -261,12 +261,12 @@ final class WebsiteDataReader {
                       let data = json.data(using: .utf8),
                       let object = try? JSONSerialization.jsonObject(with: data)
                 else {
-                    NSLog("[wkdomains-debug] local-api eval \(label) decode-fail elapsed=\(Self.formatElapsed(since: startedAt)) valueType=\(String(describing: type(of: value))) \(self.pageStateDescription())")
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api eval \(label) decode-fail elapsed=\(Self.formatElapsed(since: startedAt)) valueType=\(String(describing: type(of: value))) \(self.pageStateDescription())")
                     completion(.failure(InspectionError.couldNotDecodePageJSON))
                     return
                 }
 
-                NSLog("[wkdomains-debug] local-api eval \(label) done elapsed=\(Self.formatElapsed(since: startedAt)) jsonBytes=\(data.count) objectType=\(String(describing: type(of: object))) \(self.pageStateDescription())")
+                BrowserDebugLogging.log("[wkdomains-debug] local-api eval \(label) done elapsed=\(Self.formatElapsed(since: startedAt)) jsonBytes=\(data.count) objectType=\(String(describing: type(of: object))) \(self.pageStateDescription())")
                 completion(.success(object))
             }
         }

@@ -204,7 +204,7 @@ extension BrowserModel {
 
         let level = record.level.lowercased()
         if level == "error" || level == "warn" || record.message.contains("wkdomains") {
-            NSLog(
+            BrowserDebugLogging.log(
                 "[wkdomains-debug] console level=\(record.level) host=\(record.pageHost ?? "nil") url=\(record.pageURL ?? "nil") message=\(record.message)"
             )
         }
@@ -248,7 +248,7 @@ extension BrowserModel {
             xhrRecordIndexesByID[id] = xhrRecords.count
             xhrRecords.append(record)
             if record.host == webView.url?.host?.lowercased() {
-                NSLog("[wkdomains-debug] xhr start id=\(id) method=\(record.method) url=\(record.url)")
+                BrowserDebugLogging.log("[wkdomains-debug] xhr start id=\(id) method=\(record.method) url=\(record.url)")
             }
             return
         }
@@ -270,7 +270,7 @@ extension BrowserModel {
 
         let record = xhrRecords[index]
         if record.host == webView.url?.host?.lowercased() {
-            NSLog(
+            BrowserDebugLogging.log(
                 "[wkdomains-debug] xhr done id=\(id) status=\(record.status.map(String.init) ?? "nil") bytes=\(record.responseBytes.map(String.init) ?? "nil") error=\(record.error ?? "nil") url=\(record.url)"
             )
         }

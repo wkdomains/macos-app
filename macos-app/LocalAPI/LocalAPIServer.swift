@@ -94,7 +94,7 @@ final class LocalAPIServer {
 
     private func route(_ request: HTTPRequest, connection: NWConnection) {
         let debugID = nextDebugRequestID()
-        NSLog("[wkdomains-debug] local-api request begin id=\(debugID) method=\(request.method) path=\(request.path)")
+        BrowserDebugLogging.log("[wkdomains-debug] local-api request begin id=\(debugID) method=\(request.method) path=\(request.path)")
 
         if request.path == "/mcp" {
             routeMCP(request, connection: connection)
@@ -112,14 +112,14 @@ final class LocalAPIServer {
         }
 
         if request.path == "/api/v1/cookies" {
-            NSLog("[wkdomains-debug] local-api cookies start id=\(debugID)")
+            BrowserDebugLogging.log("[wkdomains-debug] local-api cookies start id=\(debugID)")
             dataReader.readStorageForCurrentPage { [weak self] result in
                 switch result {
                 case .success(let response):
-                    NSLog("[wkdomains-debug] local-api cookies done id=\(debugID) cookies=\(response.cookies.count)")
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api cookies done id=\(debugID) cookies=\(response.cookies.count)")
                     self?.sendJSON(response, status: .ok, on: connection)
                 case .failure(let error):
-                    NSLog("[wkdomains-debug] local-api cookies fail id=\(debugID) error=\(error.localizedDescription)")
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api cookies fail id=\(debugID) error=\(error.localizedDescription)")
                     self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
                 }
             }
@@ -129,10 +129,10 @@ final class LocalAPIServer {
         if request.path == "/api/v1/xhr" {
             switch dataReader.readXHRRequestsForCurrentPage() {
             case .success(let response):
-                NSLog("[wkdomains-debug] local-api xhr done id=\(debugID) requests=\(response.requests.count)")
+                BrowserDebugLogging.log("[wkdomains-debug] local-api xhr done id=\(debugID) requests=\(response.requests.count)")
                 sendJSON(response, status: .ok, on: connection)
             case .failure(let error):
-                NSLog("[wkdomains-debug] local-api xhr fail id=\(debugID) error=\(error.localizedDescription)")
+                BrowserDebugLogging.log("[wkdomains-debug] local-api xhr fail id=\(debugID) error=\(error.localizedDescription)")
                 sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
             }
             return
@@ -156,14 +156,14 @@ final class LocalAPIServer {
         }
 
         if request.path == "/api/v1/screenshot" {
-            NSLog("[wkdomains-debug] local-api screenshot start id=\(debugID)")
+            BrowserDebugLogging.log("[wkdomains-debug] local-api screenshot start id=\(debugID)")
             dataReader.readScreenshot { [weak self] result in
                 switch result {
                 case .success(let pngData):
-                    NSLog("[wkdomains-debug] local-api screenshot done id=\(debugID) bytes=\(pngData.count)")
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api screenshot done id=\(debugID) bytes=\(pngData.count)")
                     self?.sendData(pngData, contentType: "image/png", status: .ok, on: connection)
                 case .failure(let error):
-                    NSLog("[wkdomains-debug] local-api screenshot fail id=\(debugID) error=\(error.localizedDescription)")
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api screenshot fail id=\(debugID) error=\(error.localizedDescription)")
                     self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
                 }
             }
@@ -172,27 +172,27 @@ final class LocalAPIServer {
 
         if request.path == "/api/v1/page" {
             let response = dataReader.readPage()
-            NSLog("[wkdomains-debug] local-api page done id=\(debugID) url=\(response.url ?? "nil") loading=\(response.isLoading)")
+            BrowserDebugLogging.log("[wkdomains-debug] local-api page done id=\(debugID) url=\(response.url ?? "nil") loading=\(response.isLoading)")
             sendJSON(response, status: .ok, on: connection)
             return
         }
 
         if request.path == "/api/v1/console" {
             let response = dataReader.readConsoleMessages()
-            NSLog("[wkdomains-debug] local-api console done id=\(debugID) messages=\(response.messages.count)")
+            BrowserDebugLogging.log("[wkdomains-debug] local-api console done id=\(debugID) messages=\(response.messages.count)")
             sendJSON(response, status: .ok, on: connection)
             return
         }
 
         if request.path == "/api/v1/dom" {
-            NSLog("[wkdomains-debug] local-api dom start id=\(debugID)")
+            BrowserDebugLogging.log("[wkdomains-debug] local-api dom start id=\(debugID)")
             dataReader.readDOM { [weak self] result in
                 switch result {
                 case .success(let response):
-                    NSLog("[wkdomains-debug] local-api dom done id=\(debugID) type=\(String(describing: type(of: response)))")
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api dom done id=\(debugID) type=\(String(describing: type(of: response)))")
                     self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
                 case .failure(let error):
-                    NSLog("[wkdomains-debug] local-api dom fail id=\(debugID) error=\(error.localizedDescription)")
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api dom fail id=\(debugID) error=\(error.localizedDescription)")
                     self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
                 }
             }
@@ -200,14 +200,14 @@ final class LocalAPIServer {
         }
 
         if request.path == "/api/v1/links" {
-            NSLog("[wkdomains-debug] local-api links start id=\(debugID)")
+            BrowserDebugLogging.log("[wkdomains-debug] local-api links start id=\(debugID)")
             dataReader.readLinks { [weak self] result in
                 switch result {
                 case .success(let response):
-                    NSLog("[wkdomains-debug] local-api links done id=\(debugID) type=\(String(describing: type(of: response)))")
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api links done id=\(debugID) type=\(String(describing: type(of: response)))")
                     self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
                 case .failure(let error):
-                    NSLog("[wkdomains-debug] local-api links fail id=\(debugID) error=\(error.localizedDescription)")
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api links fail id=\(debugID) error=\(error.localizedDescription)")
                     self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
                 }
             }
@@ -215,9 +215,9 @@ final class LocalAPIServer {
         }
 
         if request.path == "/api/v1/resources" {
-            NSLog("[wkdomains-debug] local-api resources start id=\(debugID)")
+            BrowserDebugLogging.log("[wkdomains-debug] local-api resources start id=\(debugID)")
             dataReader.readResources { [weak self] response in
-                NSLog("[wkdomains-debug] local-api resources done id=\(debugID) resources=\(response.resources.count)")
+                BrowserDebugLogging.log("[wkdomains-debug] local-api resources done id=\(debugID) resources=\(response.resources.count)")
                 self?.sendJSON(response, status: .ok, on: connection)
             }
             return

@@ -80,12 +80,15 @@ extension BrowserModel {
 
     static func forcedDarkModeScript(disabledSites: [String]) -> String {
         let disabledSiteList = disabledSites.map(javaScriptStringLiteral).joined(separator: ", ")
+        let debugLoggingEnabled = BrowserDebugLogging.darkModeScriptEnabled ? "true" : "false"
 
         return #"""
     (() => {
       if (window.__wkdomainsDarkModeInstalled) return;
       window.__wkdomainsDarkModeInstalled = true;
+      const __wkdomainsDarkModeDebugEnabled = \#(debugLoggingEnabled);
       const __wkdomainsDarkModeDebug = (phase) => {
+        if (!__wkdomainsDarkModeDebugEnabled) return;
         try {
           console.debug("[wkdomains-dark]", phase, location.href, Math.round(performance.now()));
         } catch (_) {}

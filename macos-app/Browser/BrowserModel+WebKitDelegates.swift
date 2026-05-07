@@ -131,7 +131,7 @@ extension BrowserModel: WKNavigationDelegate {
             browserWebView.configureForcedDarkPageBackground(settingsStore.usesDarkMode(for: url))
         }
         if navigationAction.targetFrame?.isMainFrame != false {
-            NSLog(
+            BrowserDebugLogging.log(
                 "[wkdomains-debug] navigation policy allow url=\(url.absoluteString) type=\(navigationAction.navigationType.rawValue) dark=\(settingsStore.usesDarkMode(for: url))"
             )
         }
@@ -139,14 +139,14 @@ extension BrowserModel: WKNavigationDelegate {
     }
 
     private func logNavigationEvent(_ event: String, webView: WKWebView, tab: BrowserTabState) {
-        NSLog(
+        BrowserDebugLogging.log(
             "[wkdomains-debug] navigation \(event) tab=\(String(tab.id.uuidString.prefix(8))) url=\(webView.url?.absoluteString ?? "nil") loading=\(webView.isLoading) progress=\(String(format: "%.3f", webView.estimatedProgress)) title=\(webView.title ?? "nil")"
         )
     }
 
     private func logNavigationFailure(_ event: String, webView: WKWebView, error: Error) {
         let nsError = error as NSError
-        NSLog(
+        BrowserDebugLogging.log(
             "[wkdomains-debug] navigation \(event) url=\(webView.url?.absoluteString ?? "nil") domain=\(nsError.domain) code=\(nsError.code) message=\(error.localizedDescription)"
         )
     }
