@@ -120,19 +120,18 @@ extension BrowserModel {
           savedPropertyDescriptors.set(target, descriptors);
         }
         if (!descriptors.has(property)) {
-          const descriptor = Object.getOwnPropertyDescriptor(target, property) || null;
-          descriptors.set(property, descriptor);
-          prototypeRestoreTasks.push(() => {
-            try {
-              const saved = descriptors.get(property);
-              if (saved) {
-                Object.defineProperty(target, property, saved);
-              } else {
-                delete target[property];
-              }
-            } catch (_) {}
-          });
+          descriptors.set(property, Object.getOwnPropertyDescriptor(target, property) || null);
         }
+        prototypeRestoreTasks.push(() => {
+          try {
+            const saved = descriptors.get(property);
+            if (saved) {
+              Object.defineProperty(target, property, saved);
+            } else {
+              delete target[property];
+            }
+          } catch (_) {}
+        });
         return Object.getOwnPropertyDescriptor(target, property) || null;
       };
 

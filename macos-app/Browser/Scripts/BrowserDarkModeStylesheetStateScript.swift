@@ -30,6 +30,16 @@ extension BrowserModel {
       const ADOPTED_STYLES_CHANGE_EVENT = "__darkreader__adoptedStyleSheetsChange";
       const ADOPTED_DECLARATION_CHANGE_EVENT = "__darkreader__adoptedStyleDeclarationChange";
 
+      const withStylesheetProxyDisabled = (callback) => {
+        const wasActive = stylesheetProxyActive;
+        stylesheetProxyActive = false;
+        try {
+          return callback();
+        } finally {
+          stylesheetProxyActive = wasActive;
+        }
+      };
+
       const cssURLMatchesPattern = (url, pattern) => {
         const value = String(url || "");
         const text = String(pattern || "");
@@ -68,12 +78,42 @@ extension BrowserModel {
         return results;
       };
 
-      const safeGetRules = (sheet) => {
+      const getRulesOrError = (sheet) => {
         try {
-          return sheet && sheet.cssRules ? sheet.cssRules : null;
-        } catch (_) {
-          return null;
+          if (!sheet) return { rules: null, error: null };
+          return { rules: sheet.cssRules || null, error: null };
+        } catch (error) {
+          return { rules: null, error };
         }
+      };
+
+      const safeGetRules = (sheet) => getRulesOrError(sheet).rules;
+
+      const getStyleElementRulesOrError = (element) => {
+        let sheet = null;
+        try {
+          sheet = element ? element.sheet : null;
+        } catch (error) {
+          return { rules: null, error, hasSheet: false };
+        }
+
+        const result = getRulesOrError(sheet);
+        return {
+          rules: result.rules,
+          error: result.error,
+          hasSheet: !!sheet
+        };
+      };
+
+      const styleRulesAreStillLoading = (element, access) => {
+        if (!element) return false;
+        if (!access.rules && !access.error && document.readyState === "loading") return true;
+        if (element instanceof HTMLLinkElement) {
+          if (!access.hasSheet) return true;
+          const message = String(access.error && access.error.message || "").toLowerCase();
+          return message.includes("loading");
+        }
+        return document.readyState === "loading" && !access.hasSheet;
       };
 
       const fallbackStyleElement = () => (
@@ -107,9 +147,14 @@ extension BrowserModel {
         return id;
       };
 
+      const isStyleLoading = (element) => {
+        const id = loadingStyleIDsByElement.get(element);
+        return !!id && loadingStyles.has(id);
+      };
+
       const markStyleLoading = (element) => {
         if (!element) return;
-        if (unavailableStyleElements.has(element)) return;
+        unavailableStyleElements.delete(element);
         const id = loadingIDForElement(element);
         loadingStyles.add(id);
         ensureFallbackStyleText();
@@ -214,7 +259,7 @@ extension BrowserModel {
           }
         }
 
-        if ((cssText.includes("background-color: ;") || cssText.includes("background-image: ;") || cssText.includes("background:")) && !style.getPropertyValue("background")) {
+        if ((cssText.includes("background-color: ;") || cssText.includes("background-image: ;")) && !style.getPropertyValue("background")) {
           const match = cssText.match(/background\s*:\s*([^;]+)/);
           if (match && match[1]) {
             emit("background", match[1]);

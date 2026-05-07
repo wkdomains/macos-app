@@ -208,27 +208,131 @@ extension BrowserModel {
         return chunks.join("\n");
       };
 
-      const convertCSSRule = (rule) => {
+      const ignoredMedia = [
+        "aural",
+        "braille",
+        "embossed",
+        "handheld",
+        "print",
+        "projection",
+        "speech",
+        "tty",
+        "tv"
+      ];
+
+      const safeCSSRuleList = (rule) => {
         try {
-          if (rule.name && rule.syntax) {
+          return rule && rule.cssRules ? rule.cssRules : null;
+        } catch (_) {
+          return null;
+        }
+      };
+
+      const safeMediaText = (rule) => {
+        try {
+          return rule && rule.media ? String(rule.media.mediaText || rule.media || "") : "";
+        } catch (_) {
+          return "";
+        }
+      };
+
+      const mediaRuleApplies = (rule) => {
+        const mediaText = safeMediaText(rule).toLowerCase();
+        if (!mediaText) return true;
+        const parts = mediaText.split(",").map((part) => part.trim()).filter(Boolean);
+        if (parts.length === 0) return true;
+        const hasScreenOrAll = parts.some((part) => part.startsWith("screen") || part.startsWith("all") || part.startsWith("("));
+        const hasOnlyIgnored = parts.every((part) => ignoredMedia.some((ignored) => part.startsWith(ignored)));
+        return hasScreenOrAll || !hasOnlyIgnored;
+      };
+
+      const isStyleRule = (rule) => {
+        try {
+          return !!(rule && rule.selectorText && rule.style);
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const isImportRule = (rule) => {
+        try {
+          return !!(rule && rule.href && rule.styleSheet);
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const isMediaRule = (rule) => {
+        try {
+          return !!(rule && rule.media && safeCSSRuleList(rule));
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const isSupportsRule = (rule) => {
+        try {
+          return !!(rule && typeof rule.conditionText === "string" && safeCSSRuleList(rule) && !rule.media);
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const isPropertyRule = (rule) => {
+        try {
+          return !!(rule && rule.name && rule.syntax);
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const isLayerRule = (rule) => {
+        try {
+          return !!(rule && rule.name && safeCSSRuleList(rule) && !rule.syntax);
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const convertCSSRule = (rule, depth, seenRuleLists) => {
+        try {
+          if (isPropertyRule(rule)) {
             return convertCSSPropertyRule(rule);
           }
 
-          if (rule.type === CSSRule.STYLE_RULE) {
+          if (isStyleRule(rule)) {
             if (shouldIgnoreCSSSelector(rule.selectorText)) return "";
             const declarations = buildModifiedDeclarations(rule.style);
             return declarations.length > 0 ? `${rule.selectorText} {\n${declarations.join("\n")}\n}` : "";
           }
 
-          if (rule.type === CSSRule.IMPORT_RULE && rule.styleSheet) {
-            return convertCSSRules(rule.styleSheet.cssRules);
+          if (isImportRule(rule)) {
+            return convertCSSRules(rule.styleSheet.cssRules, depth + 1, seenRuleLists);
           }
 
-          if (rule.type === CSSRule.MEDIA_RULE || rule.type === CSSRule.SUPPORTS_RULE || (rule.cssRules && rule.cssText && rule.cssText.startsWith("@"))) {
-            const childRules = convertCSSRules(rule.cssRules);
+          if (isMediaRule(rule)) {
+            if (!mediaRuleApplies(rule)) return "";
+            const childRules = convertCSSRules(rule.cssRules, depth + 1, seenRuleLists);
             if (!childRules) return "";
-            const open = rule.cssText.indexOf("{");
-            const prefix = open > 0 ? rule.cssText.slice(0, open).trim() : "";
+            const mediaText = safeMediaText(rule);
+            const prefix = mediaText ? `@media ${mediaText}` : "";
+            return prefix ? `${prefix} {\n${childRules}\n}` : childRules;
+          }
+
+          if (isSupportsRule(rule)) {
+            const conditionText = String(rule.conditionText || "");
+            if (window.CSS && CSS.supports && conditionText && !CSS.supports(conditionText)) return "";
+            const childRules = convertCSSRules(rule.cssRules, depth + 1, seenRuleLists);
+            if (!childRules) return "";
+            const prefix = conditionText ? `@supports ${conditionText}` : "";
+            return prefix ? `${prefix} {\n${childRules}\n}` : childRules;
+          }
+
+          if (isLayerRule(rule)) {
+            const childRules = convertCSSRules(rule.cssRules, depth + 1, seenRuleLists);
+            if (!childRules) return "";
+            const name = String(rule.name || "").trim();
+            const prefix = name ? `@layer ${name}` : "@layer";
             return prefix ? `${prefix} {\n${childRules}\n}` : "";
           }
         } catch (_) {}
@@ -236,13 +340,20 @@ extension BrowserModel {
         return "";
       };
 
-      const convertCSSRules = (rules) => {
+      const convertCSSRules = (rules, depth = 0, seenRuleLists = new WeakSet()) => {
         if (!rules) return "";
+        if (depth > 8) return "";
+        if (seenRuleLists.has(rules)) return "";
+        seenRuleLists.add(rules);
         const chunks = [];
-        for (let index = 0; index < rules.length; index += 1) {
-          const converted = convertCSSRule(rules[index]);
+        const length = Number(rules.length) || 0;
+        if (depth === 0) __wkdomainsDarkModeDebug(`convert-rules-start:${length}`);
+        for (let index = 0; index < length; index += 1) {
+          if (depth === 0 && index % 10 === 0) __wkdomainsDarkModeDebug(`convert-rule:${index}`);
+          const converted = convertCSSRule(rules[index], depth, seenRuleLists);
           if (converted) chunks.push(converted);
         }
+        if (depth === 0) __wkdomainsDarkModeDebug(`convert-rules-end:${chunks.length}`);
         return chunks.join("\n");
       };
 

@@ -329,7 +329,9 @@ extension BrowserModel {
         ["IGNORE CSS URL", "ignoreCSSUrl"],
         ["IGNORE CSS URLs", "ignoreCSSUrl"],
         ["DISABLE STYLESHEET PROXY", "disableStyleSheetsProxy"],
-        ["DISABLE CUSTOM ELEMENT REGISTRY PROXY", "disableCustomElementRegistryProxy"]
+        ["DISABLE SHADOW ROOT PROXY", "disableShadowRootProxy"],
+        ["DISABLE CUSTOM ELEMENT REGISTRY PROXY", "disableCustomElementRegistryProxy"],
+        ["ENABLE CUSTOM ELEMENT REGISTRY PROXY", "enableCustomElementRegistryProxy"]
       ]);
 
       const isLikelySiteFixURLLine = (line) => /^[*.a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?(?:\s+[*.a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?)*$/i.test(line);
@@ -343,7 +345,9 @@ extension BrowserModel {
         ignoreCSS: [],
         ignoreCSSUrl: [],
         disableStyleSheetsProxy: false,
-        disableCustomElementRegistryProxy: false
+        disableShadowRootProxy: false,
+        disableCustomElementRegistryProxy: false,
+        enableCustomElementRegistryProxy: false
       });
 
       const parseSiteFixConfig = (configText) => {
@@ -371,7 +375,12 @@ extension BrowserModel {
           const normalizedHeader = trimmed.toUpperCase();
           if (SITE_FIX_SECTION_MAP.has(normalizedHeader)) {
             section = SITE_FIX_SECTION_MAP.get(normalizedHeader);
-            if (section === "disableStyleSheetsProxy" || section === "disableCustomElementRegistryProxy") {
+            if (
+              section === "disableStyleSheetsProxy"
+              || section === "disableShadowRootProxy"
+              || section === "disableCustomElementRegistryProxy"
+              || section === "enableCustomElementRegistryProxy"
+            ) {
               if (current) current[section] = true;
               section = null;
             }
@@ -467,7 +476,9 @@ extension BrowserModel {
           ignoreCSS: [],
           ignoreCSSUrl: [],
           disableStyleSheetsProxy: false,
-          disableCustomElementRegistryProxy: false
+          disableShadowRootProxy: false,
+          disableCustomElementRegistryProxy: false,
+          enableCustomElementRegistryProxy: false
         };
 
         for (const fix of fixes) {
@@ -480,7 +491,9 @@ extension BrowserModel {
             combined.css += `\n${fix.css}`;
           }
           combined.disableStyleSheetsProxy = combined.disableStyleSheetsProxy || fix.disableStyleSheetsProxy === true;
+          combined.disableShadowRootProxy = combined.disableShadowRootProxy || fix.disableShadowRootProxy === true;
           combined.disableCustomElementRegistryProxy = combined.disableCustomElementRegistryProxy || fix.disableCustomElementRegistryProxy === true;
+          combined.enableCustomElementRegistryProxy = combined.enableCustomElementRegistryProxy || fix.enableCustomElementRegistryProxy === true;
         }
 
         return combined;
@@ -489,18 +502,13 @@ extension BrowserModel {
       const parsedSiteFixes = parseSiteFixConfig(SITE_FIX_CONFIG);
       const allSiteFixes = SITE_FIXES.concat(parsedSiteFixes);
       const matchingSiteFixes = allSiteFixes.filter((fix) => Array.isArray(fix.url) && fix.url.some(siteFixMatchesPattern));
-      const genericSiteFix = matchingSiteFixes.find((fix) => fix.url.includes("*")) || null;
+      const genericSiteFixes = matchingSiteFixes.filter((fix) => fix.url.includes("*"));
       const specificSiteFixes = matchingSiteFixes.filter((fix) => !fix.url.includes("*"));
-      const mostSpecificSiteFix = specificSiteFixes.reduce((best, fix) => {
-        const specificity = siteFixSpecificity(fix);
-        if (!best || specificity > best.specificity) {
-          return { fix, specificity };
-        }
-        return best;
-      }, null);
+      const bestSpecificity = specificSiteFixes.reduce((best, fix) => Math.max(best, siteFixSpecificity(fix)), 0);
+      const mostSpecificSiteFixes = specificSiteFixes.filter((fix) => siteFixSpecificity(fix) === bestSpecificity && bestSpecificity > 0);
       const activeSiteFix = combineSiteFixes([
-        genericSiteFix,
-        mostSpecificSiteFix && mostSpecificSiteFix.fix
+        ...genericSiteFixes,
+        ...mostSpecificSiteFixes
       ].filter(Boolean));
 
       const activeSiteFixList = (key) => (

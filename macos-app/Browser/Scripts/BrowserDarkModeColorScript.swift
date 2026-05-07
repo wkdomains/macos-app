@@ -11,7 +11,7 @@ extension BrowserModel {
       const scale = (value, inLow, inHigh, outLow, outHigh) => outLow + ((value - inLow) / (inHigh - inLow)) * (outHigh - outLow);
       const colorParseCache = new Map();
       const colorProbe = document.createElement("span");
-      const COLOR_LITERAL_RE = /#[0-9a-f]{3,8}\b|\b(?:aliceblue|antiquewhite|aqua|aquamarine|azure|beige|bisque|black|blue|brown|coral|crimson|cyan|fuchsia|gold|gray|green|grey|indigo|ivory|khaki|lavender|lime|magenta|maroon|navy|olive|orange|orchid|pink|plum|purple|red|salmon|silver|tan|teal|tomato|transparent|violet|white|yellow)\b/gi;
+      const COLOR_LITERAL_RE = /#[0-9a-f]{3,8}\b|\b[a-z][-_a-z0-9]*\b/gi;
       const CSS_COLOR_FUNCTION_NAMES = [
         "color-mix",
         "light-dark",
@@ -70,6 +70,40 @@ extension BrowserModel {
         white: { r: 255, g: 255, b: 255, a: 1 },
         yellow: { r: 255, g: 255, b: 0, a: 1 }
       };
+      const CSS_NAMED_COLOR_KEYWORDS = new Set([
+        "aliceblue", "antiquewhite", "aqua", "aquamarine", "azure",
+        "beige", "bisque", "black", "blanchedalmond", "blue", "blueviolet", "brown", "burlywood",
+        "cadetblue", "chartreuse", "chocolate", "coral", "cornflowerblue", "cornsilk", "crimson", "cyan",
+        "darkblue", "darkcyan", "darkgoldenrod", "darkgray", "darkgreen", "darkgrey", "darkkhaki", "darkmagenta",
+        "darkolivegreen", "darkorange", "darkorchid", "darkred", "darksalmon", "darkseagreen", "darkslateblue",
+        "darkslategray", "darkslategrey", "darkturquoise", "darkviolet", "deeppink", "deepskyblue", "dimgray",
+        "dimgrey", "dodgerblue", "firebrick", "floralwhite", "forestgreen", "fuchsia",
+        "gainsboro", "ghostwhite", "gold", "goldenrod", "gray", "green", "greenyellow", "grey",
+        "honeydew", "hotpink", "indianred", "indigo", "ivory",
+        "khaki", "lavender", "lavenderblush", "lawngreen", "lemonchiffon", "lightblue", "lightcoral",
+        "lightcyan", "lightgoldenrodyellow", "lightgray", "lightgreen", "lightgrey", "lightpink", "lightsalmon",
+        "lightseagreen", "lightskyblue", "lightslategray", "lightslategrey", "lightsteelblue", "lightyellow",
+        "lime", "limegreen", "linen",
+        "magenta", "maroon", "mediumaquamarine", "mediumblue", "mediumorchid", "mediumpurple", "mediumseagreen",
+        "mediumslateblue", "mediumspringgreen", "mediumturquoise", "mediumvioletred", "midnightblue", "mintcream",
+        "mistyrose", "moccasin",
+        "navajowhite", "navy",
+        "oldlace", "olive", "olivedrab", "orange", "orangered", "orchid",
+        "palegoldenrod", "palegreen", "paleturquoise", "palevioletred", "papayawhip", "peachpuff", "peru",
+        "pink", "plum", "powderblue", "purple",
+        "rebeccapurple", "red", "rosybrown", "royalblue",
+        "saddlebrown", "salmon", "sandybrown", "seagreen", "seashell", "sienna", "silver", "skyblue",
+        "slateblue", "slategray", "slategrey", "snow", "springgreen", "steelblue",
+        "tan", "teal", "thistle", "tomato", "transparent", "turquoise",
+        "violet",
+        "wheat", "white", "whitesmoke",
+        "yellow", "yellowgreen"
+      ]);
+
+      const isColorLiteralToken = (token) => {
+        const value = String(token || "").trim().toLowerCase();
+        return value.startsWith("#") || CSS_NAMED_COLOR_KEYWORDS.has(value);
+      };
 
       const parseComponent = (value, isAlpha = false, scaleUnitInterval = false) => {
         if (!value) return isAlpha ? 1 : 0;
@@ -86,6 +120,14 @@ extension BrowserModel {
         return clamp(scaleUnitInterval && parsed <= 1 ? parsed * 255 : parsed, 0, 255);
       };
 
+      const parseUnitColorComponent = (value) => {
+        const token = String(value || "").trim().toLowerCase();
+        if (token === "none") return 0;
+        const parsed = Number.parseFloat(token);
+        if (!Number.isFinite(parsed)) return 0;
+        return token.endsWith("%") ? clamp(parsed / 100, 0, 1) : clamp(parsed, 0, 1);
+      };
+
       const parseRGBLike = (value) => {
         if (!value || value === "transparent" || value === "none" || value === "currentcolor") return null;
 
@@ -95,7 +137,7 @@ extension BrowserModel {
         if (open < 0 || close <= open) return null;
 
         const functionName = text.slice(0, open);
-        if (!["rgb", "rgba", "color"].includes(functionName)) return null;
+        if (!["rgb", "rgba"].includes(functionName)) return null;
 
         const parts = text
           .slice(open + 1, close)
@@ -105,15 +147,13 @@ extension BrowserModel {
           .map((part) => part.trim())
           .filter(Boolean);
 
-        const isColorFunction = functionName.includes("color");
-        const offset = isColorFunction && Number.isNaN(Number.parseFloat(parts[0])) ? 1 : 0;
-        if (parts.length - offset < 3) return null;
+        if (parts.length < 3) return null;
 
         return {
-          r: parseComponent(parts[offset], false, isColorFunction),
-          g: parseComponent(parts[offset + 1], false, isColorFunction),
-          b: parseComponent(parts[offset + 2], false, isColorFunction),
-          a: parseComponent(parts[offset + 3], true)
+          r: parseComponent(parts[0]),
+          g: parseComponent(parts[1]),
+          b: parseComponent(parts[2]),
+          a: parseComponent(parts[3], true)
         };
       };
 
@@ -217,6 +257,13 @@ extension BrowserModel {
         return clamp(channel * 255, 0, 255);
       };
 
+      const sRGBToLinear = (value) => {
+        const normalized = clamp(value, 0, 1);
+        return normalized <= 0.04045
+          ? normalized / 12.92
+          : Math.pow((normalized + 0.055) / 1.055, 2.4);
+      };
+
       const xyzD50ToSRGB = ({ x, y, z, a }) => {
         const x65 = 0.9555766 * x - 0.0230393 * y + 0.0631636 * z;
         const y65 = -0.0282895 * x + 1.0099416 * y + 0.0210077 * z;
@@ -258,6 +305,47 @@ extension BrowserModel {
           b: linearRGBToSRGB(-0.0041960863 * lCube - 0.7034186147 * mCube + 1.7076147010 * sCube),
           a: alpha
         };
+      };
+
+      const xyzD65ToSRGB = ({ x, y, z, a }) => ({
+        r: linearRGBToSRGB(3.2404542 * x - 1.5371385 * y - 0.4985314 * z),
+        g: linearRGBToSRGB(-0.9692660 * x + 1.8760108 * y + 0.0415560 * z),
+        b: linearRGBToSRGB(0.0556434 * x - 0.2040259 * y + 1.0572252 * z),
+        a
+      });
+
+      const parseColorSpaceFunction = (value) => {
+        const parsed = parseColorFunctionTokens(value, ["color"]);
+        if (!parsed || parsed.tokens.length < 4) return null;
+        const space = parsed.tokens[0];
+        const c1 = parseUnitColorComponent(parsed.tokens[1]);
+        const c2 = parseUnitColorComponent(parsed.tokens[2]);
+        const c3 = parseUnitColorComponent(parsed.tokens[3]);
+        const alpha = parseComponent(parsed.tokens[4], true);
+
+        if (space === "srgb") {
+          return { r: c1 * 255, g: c2 * 255, b: c3 * 255, a: alpha };
+        }
+        if (space === "srgb-linear") {
+          return {
+            r: linearRGBToSRGB(c1),
+            g: linearRGBToSRGB(c2),
+            b: linearRGBToSRGB(c3),
+            a: alpha
+          };
+        }
+        if (space === "display-p3") {
+          const r = sRGBToLinear(c1);
+          const g = sRGBToLinear(c2);
+          const b = sRGBToLinear(c3);
+          return xyzD65ToSRGB({
+            x: 0.48657095 * r + 0.26566769 * g + 0.19821729 * b,
+            y: 0.22897456 * r + 0.69173852 * g + 0.07928691 * b,
+            z: 0.00000000 * r + 0.04511338 * g + 1.04394437 * b,
+            a: alpha
+          });
+        }
+        return null;
       };
 
       const parseLabLike = (value) => {
@@ -349,6 +437,18 @@ extension BrowserModel {
         return result.filter(Boolean);
       };
 
+      const findTopLevelCSSComma = (value) => {
+        const text = String(value || "");
+        let depth = 0;
+        for (let index = 0; index < text.length; index += 1) {
+          const char = text[index];
+          if (char === "(") depth += 1;
+          else if (char === ")") depth = Math.max(0, depth - 1);
+          else if (char === "," && depth === 0) return index;
+        }
+        return -1;
+      };
+
       const parseColorWithOptionalPercent = (value) => {
         const text = String(value || "").trim();
         const percent = text.match(/\s+(-?(?:\d+|\d*\.\d+)%)\s*$/);
@@ -363,9 +463,13 @@ extension BrowserModel {
 
       const parseColorMix = (value) => {
         const text = String(value || "").trim();
-        const match = text.match(/^color-mix\(\s*in\s+[-_a-z0-9]+\s*,([\s\S]*)\)$/i);
+        const match = text.match(/^color-mix\(([\s\S]*)\)$/i);
         if (!match) return null;
-        const parts = splitTopLevelCSSArguments(match[1]);
+        const body = match[1].trim();
+        if (!body.toLowerCase().startsWith("in ")) return null;
+        const colorStart = findTopLevelCSSComma(body);
+        if (colorStart < 0) return null;
+        const parts = splitTopLevelCSSArguments(body.slice(colorStart + 1));
         if (parts.length < 2) return null;
         const first = parseColorWithOptionalPercent(parts[0]);
         const second = parseColorWithOptionalPercent(parts[1]);
@@ -439,13 +543,15 @@ extension BrowserModel {
         if (lab) return lab;
         const lch = parseLCHLike(text);
         if (lch) return lch;
+        const colorSpace = parseColorSpaceFunction(text);
+        if (colorSpace) return colorSpace;
         const mixed = parseColorMix(text);
         if (mixed) return mixed;
         const lightDark = parseLightDark(text);
         if (lightDark) return lightDark;
         const normalized = normalizeColor(value);
         if (normalized) {
-          const parsed = parseRGBLike(normalized) || parseHSLLike(normalized) || parseHWBLike(normalized) || parseLabLike(normalized) || parseLCHLike(normalized) || parseHexColor(normalized) || NAMED_COLORS[String(normalized).trim().toLowerCase()];
+          const parsed = parseRGBLike(normalized) || parseHSLLike(normalized) || parseHWBLike(normalized) || parseLabLike(normalized) || parseLCHLike(normalized) || parseColorSpaceFunction(normalized) || parseHexColor(normalized) || NAMED_COLORS[String(normalized).trim().toLowerCase()];
           if (parsed) return parsed;
         }
         return parseRGBLike(value);
@@ -661,6 +767,18 @@ extension BrowserModel {
         return -1;
       };
 
+      const isInsideCSSURL = (value, index) => {
+        const text = String(value || "").toLowerCase();
+        let searchIndex = text.lastIndexOf("url(", index);
+        while (searchIndex >= 0) {
+          const close = findMatchingParen(text, searchIndex + 3);
+          if (close < 0 || close >= index) return true;
+          if (searchIndex === 0) break;
+          searchIndex = text.lastIndexOf("url(", searchIndex - 1);
+        }
+        return false;
+      };
+
       const replaceCSSColorFunctions = (value, transformer) => {
         const text = String(value || "");
         let result = "";
@@ -693,9 +811,12 @@ extension BrowserModel {
         if (!value) return false;
         const text = String(value);
         COLOR_LITERAL_RE.lastIndex = 0;
-        if (COLOR_LITERAL_RE.test(text)) {
-          COLOR_LITERAL_RE.lastIndex = 0;
-          return true;
+        let match = null;
+        while ((match = COLOR_LITERAL_RE.exec(text))) {
+          if (isColorLiteralToken(match[0]) && !isInsideCSSURL(text, match.index)) {
+            COLOR_LITERAL_RE.lastIndex = 0;
+            return true;
+          }
         }
         COLOR_LITERAL_RE.lastIndex = 0;
         for (let index = 0; index < text.length; index += 1) {
@@ -708,7 +829,9 @@ extension BrowserModel {
         if (!hasCSSColor(value)) return value;
         const withFunctions = replaceCSSColorFunctions(value, transformer);
         COLOR_LITERAL_RE.lastIndex = 0;
-        return String(withFunctions).replace(COLOR_LITERAL_RE, (match) => {
+        return String(withFunctions).replace(COLOR_LITERAL_RE, (match, offset, source) => {
+          if (!isColorLiteralToken(match)) return match;
+          if (isInsideCSSURL(source, offset)) return match;
           const color = parseColor(match);
           return color ? (transformer(color) || match) : match;
         });

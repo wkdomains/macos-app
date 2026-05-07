@@ -201,6 +201,13 @@ extension BrowserModel {
         if consoleRecords.count > 200 {
             consoleRecords.removeFirst(consoleRecords.count - 200)
         }
+
+        let level = record.level.lowercased()
+        if level == "error" || level == "warn" || record.message.contains("wkdomains") {
+            NSLog(
+                "[wkdomains-debug] console level=\(record.level) host=\(record.pageHost ?? "nil") url=\(record.pageURL ?? "nil") message=\(record.message)"
+            )
+        }
     }
 
     func recordXHRMessage(_ message: [String: Any]) {
@@ -240,6 +247,9 @@ extension BrowserModel {
 
             xhrRecordIndexesByID[id] = xhrRecords.count
             xhrRecords.append(record)
+            if record.host == webView.url?.host?.lowercased() {
+                NSLog("[wkdomains-debug] xhr start id=\(id) method=\(record.method) url=\(record.url)")
+            }
             return
         }
 
@@ -257,6 +267,13 @@ extension BrowserModel {
         xhrRecords[index].jsonItems = Self.intValue(from: message["jsonItems"])
         xhrRecords[index].jsonShape = message["jsonShape"] as? String
         xhrRecords[index].error = message["error"] as? String
+
+        let record = xhrRecords[index]
+        if record.host == webView.url?.host?.lowercased() {
+            NSLog(
+                "[wkdomains-debug] xhr done id=\(id) status=\(record.status.map(String.init) ?? "nil") bytes=\(record.responseBytes.map(String.init) ?? "nil") error=\(record.error ?? "nil") url=\(record.url)"
+            )
+        }
 
         markScreenshotDirty(scheduleAfter: 0.45)
     }

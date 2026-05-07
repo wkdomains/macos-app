@@ -157,11 +157,11 @@ final class WebsiteDataReader {
     }
 
     func readDOM(completion: @escaping (Result<Any, Error>) -> Void) {
-        evaluateJSONScript(BrowserModel.domInspectionScript, completion: completion)
+        evaluateJSONScript(BrowserModel.domInspectionScript, label: "dom", completion: completion)
     }
 
     func readLinks(completion: @escaping (Result<Any, Error>) -> Void) {
-        evaluateJSONScript(BrowserModel.linksInspectionScript, completion: completion)
+        evaluateJSONScript(BrowserModel.linksInspectionScript, label: "links", completion: completion)
     }
 
     func readResources(completion: @escaping (DomainResourcesResponse) -> Void) {
@@ -229,15 +229,30 @@ final class WebsiteDataReader {
         return domain
     }
 
-    private func evaluateJSONScript(_ script: String, completion: @escaping (Result<Any, Error>) -> Void) {
+    private func evaluateJSONScript(_ script: String, label: String, completion: @escaping (Result<Any, Error>) -> Void) {
         guard browser.webView.url != nil else {
+            NSLog("[wkdomains-debug] local-api eval \(label) fail no-page")
             completion(.failure(InspectionError.noPageLoaded))
             return
         }
 
+        let startedAt = Date()
+        let startURL = browser.webView.url?.absoluteString ?? "nil"
+        NSLog("[wkdomains-debug] local-api eval \(label) start \(pageStateDescription()) scriptBytes=\(script.utf8.count)")
+
+        let slowWarning = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            NSLog(
+                "[wkdomains-debug] local-api eval \(label) slow elapsed=\(Self.formatElapsed(since: startedAt)) startURL=\(startURL) \(self.pageStateDescription())"
+            )
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: slowWarning)
+
         browser.webView.evaluateJavaScript(script) { value, error in
             Task { @MainActor in
+                slowWarning.cancel()
                 if let error {
+                    NSLog("[wkdomains-debug] local-api eval \(label) fail elapsed=\(Self.formatElapsed(since: startedAt)) error=\(error.localizedDescription) \(self.pageStateDescription())")
                     completion(.failure(error))
                     return
                 }
@@ -246,13 +261,23 @@ final class WebsiteDataReader {
                       let data = json.data(using: .utf8),
                       let object = try? JSONSerialization.jsonObject(with: data)
                 else {
+                    NSLog("[wkdomains-debug] local-api eval \(label) decode-fail elapsed=\(Self.formatElapsed(since: startedAt)) valueType=\(String(describing: type(of: value))) \(self.pageStateDescription())")
                     completion(.failure(InspectionError.couldNotDecodePageJSON))
                     return
                 }
 
+                NSLog("[wkdomains-debug] local-api eval \(label) done elapsed=\(Self.formatElapsed(since: startedAt)) jsonBytes=\(data.count) objectType=\(String(describing: type(of: object))) \(self.pageStateDescription())")
                 completion(.success(object))
             }
         }
+    }
+
+    private func pageStateDescription() -> String {
+        "url=\(browser.webView.url?.absoluteString ?? "nil") loading=\(browser.webView.isLoading) progress=\(String(format: "%.3f", browser.webView.estimatedProgress)) title=\(browser.webView.title ?? "nil")"
+    }
+
+    private static func formatElapsed(since startedAt: Date) -> String {
+        String(format: "%.3fs", Date().timeIntervalSince(startedAt))
     }
 
     private static func cookie(_ cookie: HTTPCookie, matches host: String) -> Bool {

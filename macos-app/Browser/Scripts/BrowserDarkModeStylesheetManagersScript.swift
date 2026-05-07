@@ -7,18 +7,7 @@ import Foundation
 
 extension BrowserModel {
     static let browserDarkModeStylesheetManagersScript = #"""
-      const renderStyleManager = (element) => {
-        const rules = safeGetRules(element.sheet);
-        if (!rules) {
-          if (element.sheet && document.readyState !== "loading") {
-            markStyleUnavailable(element);
-            return;
-          }
-          markStyleLoading(element);
-          return;
-        }
-        markStyleAccessible(element);
-
+      const ensureStyleManager = (element) => {
         let manager = styleManagers.get(element);
         if (!manager) {
           const syncStyle = element instanceof SVGStyleElement
@@ -26,8 +15,12 @@ extension BrowserModel {
             : document.createElement("style");
           syncStyle.classList.add(INLINE_CLASS, "darkreader", STYLE_SYNC_CLASS);
           syncStyle.media = "screen";
-          const onSheetChange = () => scheduleStyleSync(0);
-          manager = { syncStyle, signature: "", observer: null, onSheetChange };
+          manager = { syncStyle, signature: "", revision: 0, observer: null, onSheetChange: null };
+          const onSheetChange = () => {
+            manager.revision += 1;
+            scheduleStyleSync(0);
+          };
+          manager.onSheetChange = onSheetChange;
           styleManagers.set(element, manager);
           managedStyleElements.add(element);
           element.addEventListener(STYLE_UPDATE_EVENT, onSheetChange);
@@ -45,28 +38,90 @@ extension BrowserModel {
           }
         }
 
-        const signature = `${signatureForRules(rules)}:${hashString(element.textContent || "")}:${element.href || ""}`;
+        return manager;
+      };
+
+      const signatureForStyleManager = (element, manager, rules) => [
+        rules ? rules.length : 0,
+        variablesStore.version(),
+        manager.revision,
+        element.href || "",
+        element.media || "",
+        element.disabled ? "disabled" : "",
+        element instanceof HTMLStyleElement || element instanceof SVGStyleElement
+          ? hashString(element.textContent || "")
+          : ""
+      ].join(":");
+
+      const getStyleManagerDetails = (element, options = { secondRound: false }) => {
+        if (!shouldManageStyle(element)) return null;
+        const manager = ensureStyleManager(element);
+        const access = getStyleElementRulesOrError(element);
+
+        if (access.rules) {
+          markStyleAccessible(element);
+          return { manager, rules: access.rules };
+        }
+
+        if (options.secondRound) {
+          return null;
+        }
+
+        if (styleRulesAreStillLoading(element, access)) {
+          if (!isStyleLoading(element)) {
+            markStyleLoading(element);
+          }
+          return null;
+        }
+
+        if (access.hasSheet || access.error || document.readyState !== "loading") {
+          markStyleUnavailable(element);
+          return null;
+        }
+
+        markStyleLoading(element);
+        return null;
+      };
+
+      const renderStyleManager = (element) => {
+        const details = getStyleManagerDetails(element, { secondRound: true });
+        if (!details) return;
+
+        const { manager, rules } = details;
+        __wkdomainsDarkModeDebug(`render-style-start:${rules.length}`);
+        const signature = signatureForStyleManager(element, manager, rules);
         if (manager.signature === signature && manager.syncStyle.textContent) {
           if (manager.syncStyle.parentNode !== element.parentNode && element.parentNode) {
             element.parentNode.insertBefore(manager.syncStyle, element.nextSibling);
           }
+          __wkdomainsDarkModeDebug("render-style-cached");
           return;
         }
 
+        __wkdomainsDarkModeDebug(`render-style-convert:${rules.length}`);
         const css = convertCSSRules(rules);
         manager.signature = signature;
-        manager.syncStyle.textContent = css;
+        __wkdomainsDarkModeDebug(`render-style-write:${css.length}`);
+        withStylesheetProxyDisabled(() => {
+          manager.syncStyle.textContent = css;
+        });
 
         if (!css) {
-          manager.syncStyle.remove();
+          withStylesheetProxyDisabled(() => {
+            manager.syncStyle.remove();
+          });
+          __wkdomainsDarkModeDebug("render-style-empty");
           return;
         }
 
-        if (element.parentNode && manager.syncStyle.parentNode !== element.parentNode) {
-          element.parentNode.insertBefore(manager.syncStyle, element.nextSibling);
-        } else if (element.parentNode && manager.syncStyle.previousSibling !== element) {
-          element.parentNode.insertBefore(manager.syncStyle, element.nextSibling);
-        }
+        withStylesheetProxyDisabled(() => {
+          if (element.parentNode && manager.syncStyle.parentNode !== element.parentNode) {
+            element.parentNode.insertBefore(manager.syncStyle, element.nextSibling);
+          } else if (element.parentNode && manager.syncStyle.previousSibling !== element) {
+            element.parentNode.insertBefore(manager.syncStyle, element.nextSibling);
+          }
+        });
+        __wkdomainsDarkModeDebug("render-style-end");
       };
 
       const adoptedStyleTargetForRoot = (root) => {
@@ -124,20 +179,26 @@ extension BrowserModel {
         const nextSignature = signature.join(",");
         if (manager.signature !== nextSignature) {
           manager.signature = nextSignature;
-          manager.style.textContent = chunks.join("\n");
+          withStylesheetProxyDisabled(() => {
+            manager.style.textContent = chunks.join("\n");
+          });
         }
 
         const target = adoptedStyleTargetForRoot(root);
         if (!manager.style.textContent) {
-          manager.style.remove();
+          withStylesheetProxyDisabled(() => {
+            manager.style.remove();
+          });
           return;
         }
         if (manager.style.textContent && target && manager.style.parentNode !== target) {
-          try {
-            target.insertBefore(manager.style, target.firstChild);
-          } catch (_) {
-            target.appendChild(manager.style);
-          }
+          withStylesheetProxyDisabled(() => {
+            try {
+              target.insertBefore(manager.style, target.firstChild);
+            } catch (_) {
+              target.appendChild(manager.style);
+            }
+          });
         }
       };
 
@@ -169,7 +230,9 @@ extension BrowserModel {
         if (manager) {
           element.removeEventListener(STYLE_UPDATE_EVENT, manager.onSheetChange);
           if (manager.observer) manager.observer.disconnect();
-          manager.syncStyle.remove();
+          withStylesheetProxyDisabled(() => {
+            manager.syncStyle.remove();
+          });
           styleManagers.delete(element);
         }
         managedStyleElements.delete(element);
@@ -186,7 +249,9 @@ extension BrowserModel {
       const removeAdoptedStyleManager = (root) => {
         const manager = adoptedStyleManagers.get(root);
         if (manager) {
-          manager.style.remove();
+          withStylesheetProxyDisabled(() => {
+            manager.style.remove();
+          });
           adoptedStyleManagers.delete(root);
         }
         removeAdoptedStyleListeners(root);
@@ -209,9 +274,11 @@ extension BrowserModel {
         for (const root of Array.from(managedAdoptedRoots)) {
           removeAdoptedStyleManager(root);
         }
-        for (const style of document.querySelectorAll(`style.${STYLE_SYNC_CLASS}, style.${ADOPTED_STYLE_CLASS}`)) {
-          style.remove();
-        }
+        withStylesheetProxyDisabled(() => {
+          for (const style of document.querySelectorAll(`style.${STYLE_SYNC_CLASS}, style.${ADOPTED_STYLE_CLASS}`)) {
+            style.remove();
+          }
+        });
       };
 
       const getStylesheetSyncRoots = () => {
@@ -231,7 +298,10 @@ extension BrowserModel {
       const collectVariableInputs = (root) => {
         const styles = getManageableStyles(root);
         for (const style of styles) {
-          variablesStore.addRulesForMatching(safeGetRules(style.sheet));
+          const details = getStyleManagerDetails(style, { secondRound: false });
+          if (details) {
+            variablesStore.addRulesForMatching(details.rules);
+          }
         }
         collectAdoptedStyleSheetRules(root);
         if (root === document && document.documentElement) {
@@ -248,20 +318,25 @@ extension BrowserModel {
       };
 
       const syncAllStyles = () => {
+        __wkdomainsDarkModeDebug("sync-styles-start");
         stylesheetSyncNeeded = false;
         pruneStyleManagers();
         pruneAdoptedStyleManagers();
         variablesStore.clear();
 
         const roots = getStylesheetSyncRoots();
+        __wkdomainsDarkModeDebug(`sync-styles-roots:${roots.length}`);
         const stylesByRoot = new Map();
         for (const root of roots) {
           stylesByRoot.set(root, collectVariableInputs(root));
         }
 
+        __wkdomainsDarkModeDebug("sync-styles-match-vars");
         variablesStore.matchVariablesAndDependents();
+        __wkdomainsDarkModeDebug("sync-styles-root-vars");
         updateRootVariableStyle();
 
+        __wkdomainsDarkModeDebug("sync-styles-render");
         for (const root of roots) {
           renderManageableStyles(root, stylesByRoot.get(root) || []);
         }
@@ -269,6 +344,7 @@ extension BrowserModel {
         if (loadingStyles.size === 0 && document.readyState !== "loading") {
           cleanFallbackStyle();
         }
+        __wkdomainsDarkModeDebug("sync-styles-end");
       };
 
       const updateManageableStyles = () => {
@@ -279,6 +355,7 @@ extension BrowserModel {
       const scheduleStyleSync = (delay = 30) => {
         stylesheetSyncNeeded = true;
         if (stylesheetSyncScheduled) return;
+        __wkdomainsDarkModeDebug(`schedule-style-sync:${delay}`);
         stylesheetSyncScheduled = true;
         stylesheetSyncTimer = window.setTimeout(() => {
           stylesheetSyncScheduled = false;
@@ -290,6 +367,7 @@ extension BrowserModel {
       };
 
       const flushStyleSyncNow = () => {
+        __wkdomainsDarkModeDebug("flush-style-sync");
         if (!stylesheetSyncNeeded && !stylesheetSyncScheduled) return;
         if (stylesheetSyncTimer) {
           window.clearTimeout(stylesheetSyncTimer);

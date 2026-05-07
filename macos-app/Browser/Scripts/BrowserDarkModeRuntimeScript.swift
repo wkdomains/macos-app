@@ -549,7 +549,7 @@ extension BrowserModel {
       };
 
       const installShadowRootProxy = () => {
-        if (siteFixFlag("disableCustomElementRegistryProxy")) return;
+        if (siteFixFlag("disableShadowRootProxy")) return;
         shadowProxyActive = true;
         if (!Element.prototype.attachShadow || Element.prototype.__wkdomainsDarkModeShadowProxy) return;
         const nativeAttachShadow = Element.prototype.attachShadow;
@@ -565,7 +565,7 @@ extension BrowserModel {
       };
 
       const installCustomElementRegistryProxy = () => {
-        if (siteFixFlag("disableCustomElementRegistryProxy")) return;
+        if (siteFixFlag("disableCustomElementRegistryProxy") || !siteFixFlag("enableCustomElementRegistryProxy")) return;
         if (!window.customElements || customElements.__wkdomainsDarkModeRegistryProxy) {
           customElementRegistryProxyActive = true;
           return;
@@ -586,20 +586,24 @@ extension BrowserModel {
       };
 
       const run = () => {
+        __wkdomainsDarkModeDebug("run-start");
         scheduled = false;
         if (!document.documentElement || !document.body) return;
 
         forced = true;
 
         applying = true;
+        __wkdomainsDarkModeDebug("run-base-style");
         ensureBaseStyle();
         discoverExistingShadowRoots(document);
+        __wkdomainsDarkModeDebug("run-sync-styles");
         flushStyleSyncNow();
         ensureSiteFixStyle();
         tryInvertPDF();
 
         const roots = normalizeDirtyRoots();
         dirtyRoots.clear();
+        __wkdomainsDarkModeDebug(`run-apply-roots:${roots.length}`);
         withFallbackDisabled(() => {
           for (const root of roots) {
             applyRoot(root);
@@ -609,6 +613,7 @@ extension BrowserModel {
         tryInvertPDF();
 
         finalizeReadyWhenUseful();
+        __wkdomainsDarkModeDebug("run-end");
         window.setTimeout(() => {
           applying = false;
         }, 0);
@@ -625,6 +630,7 @@ extension BrowserModel {
       };
 
       const handleDOMReady = () => {
+        __wkdomainsDarkModeDebug("dom-ready");
         watchRoot(document);
         dirtyRoots.add(document);
         scheduleStyleSync(0);
@@ -632,12 +638,14 @@ extension BrowserModel {
       };
 
       const handleWindowLoad = () => {
+        __wkdomainsDarkModeDebug("window-load");
         dirtyRoots.add(document);
         scheduleStyleSync(0);
         schedule(40);
       };
 
       const handlePageShow = () => {
+        __wkdomainsDarkModeDebug("page-show");
         dirtyRoots.add(document);
         scheduleStyleSync(0);
         schedule(40);
@@ -646,23 +654,33 @@ extension BrowserModel {
       const runDynamicStyle = () => {
         if (dynamicStyleStarted) return;
         dynamicStyleStarted = true;
+        __wkdomainsDarkModeDebug("dynamic-start");
         installStylesheetProxy();
+        __wkdomainsDarkModeDebug("dynamic-after-stylesheet-proxy");
         installShadowRootProxy();
+        __wkdomainsDarkModeDebug("dynamic-after-shadow-proxy");
         installCustomElementRegistryProxy();
+        __wkdomainsDarkModeDebug("dynamic-after-custom-elements");
 
         document.addEventListener("DOMContentLoaded", handleDOMReady, { once: true });
         window.addEventListener("load", handleWindowLoad, { passive: true });
         window.addEventListener("pageshow", handlePageShow, { passive: true });
+        __wkdomainsDarkModeDebug("dynamic-after-listeners");
         cleanupTasks.push(() => {
           document.removeEventListener("DOMContentLoaded", handleDOMReady);
           window.removeEventListener("load", handleWindowLoad);
           window.removeEventListener("pageshow", handlePageShow);
         });
 
+        __wkdomainsDarkModeDebug("dynamic-before-watch-root");
         watchRoot(document);
+        __wkdomainsDarkModeDebug("dynamic-after-watch-root");
         dirtyRoots.add(document);
+        __wkdomainsDarkModeDebug("dynamic-before-schedule-style-sync");
         scheduleStyleSync(0);
+        __wkdomainsDarkModeDebug("dynamic-before-schedule-run");
         schedule(0);
+        __wkdomainsDarkModeDebug("dynamic-end");
       };
 
       const createThemeAndWatchForUpdates = () => {
@@ -734,6 +752,7 @@ extension BrowserModel {
       window.__wkdomainsRemoveDynamicTheme = removeDynamicTheme;
 
       const startDynamicTheme = () => {
+        __wkdomainsDarkModeDebug("start-theme");
         setupDocumentPiPFontFix();
 
         const ready = () => {

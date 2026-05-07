@@ -8,10 +8,20 @@ import Foundation
 extension BrowserModel {
     static let browserDarkModeStylesheetProxyScript = #"""
       const installStylesheetProxy = () => {
-        if (siteFixFlag("disableStyleSheetsProxy")) return;
-        if (!window.CSSStyleSheet) return;
+        __wkdomainsDarkModeDebug("proxy-install-start");
+        if (siteFixFlag("disableStyleSheetsProxy")) {
+          __wkdomainsDarkModeDebug("proxy-install-disabled");
+          return;
+        }
+        if (!window.CSSStyleSheet) {
+          __wkdomainsDarkModeDebug("proxy-install-no-cssstylesheet");
+          return;
+        }
         stylesheetProxyActive = true;
-        if (CSSStyleSheet.prototype.__wkdomainsDarkModeProxy) return;
+        if (CSSStyleSheet.prototype.__wkdomainsDarkModeProxy) {
+          __wkdomainsDarkModeDebug("proxy-install-already");
+          return;
+        }
         const proto = CSSStyleSheet.prototype;
         const nativeInsertRule = proto.insertRule;
         const nativeDeleteRule = proto.deleteRule;
@@ -137,6 +147,7 @@ extension BrowserModel {
         };
 
         defineHiddenProperty(proto, "__wkdomainsDarkModeProxy", true);
+        __wkdomainsDarkModeDebug("proxy-patch-cssstylesheet");
         if (nativeInsertRule) {
           rememberPropertyDescriptor(proto, "insertRule");
           proto.insertRule = function(rule, index) {
@@ -187,6 +198,7 @@ extension BrowserModel {
         }
 
         if (window.CSSStyleDeclaration && !CSSStyleDeclaration.prototype.__wkdomainsDarkModeProxy) {
+          __wkdomainsDarkModeDebug("proxy-patch-declarations");
           const declarationProto = CSSStyleDeclaration.prototype;
           const nativeSetProperty = declarationProto.setProperty;
           const nativeRemoveProperty = declarationProto.removeProperty;
@@ -261,6 +273,7 @@ extension BrowserModel {
 
         if (nativeRegisterProperty && !CSS.__wkdomainsDarkModeRegisterPropertyProxy) {
           try {
+            __wkdomainsDarkModeDebug("proxy-patch-register-property");
             defineHiddenProperty(CSS, "__wkdomainsDarkModeRegisterPropertyProxy", true);
             rememberPropertyDescriptor(CSS, "registerProperty");
             CSS.registerProperty = function(definition) {
@@ -279,6 +292,7 @@ extension BrowserModel {
 
         const patchGroupingRuleProxy = () => {
           if (!window.CSSGroupingRule || CSSGroupingRule.prototype.__wkdomainsDarkModeProxy) return;
+          __wkdomainsDarkModeDebug("proxy-patch-grouping");
           const groupingProto = CSSGroupingRule.prototype;
           const nativeGroupInsertRule = groupingProto.insertRule;
           const nativeGroupDeleteRule = groupingProto.deleteRule;
@@ -312,6 +326,7 @@ extension BrowserModel {
           if (!rootProto || rootProto.__wkdomainsDarkModeAdoptedProxy) return;
           const descriptor = Object.getOwnPropertyDescriptor(rootProto, "adoptedStyleSheets");
           if (!descriptor || !descriptor.set || !descriptor.get) return;
+          __wkdomainsDarkModeDebug("proxy-patch-adopted");
           defineHiddenProperty(rootProto, "__wkdomainsDarkModeAdoptedProxy", true);
           rememberPropertyDescriptor(rootProto, "adoptedStyleSheets");
           Object.defineProperty(rootProto, "adoptedStyleSheets", {
@@ -337,6 +352,7 @@ extension BrowserModel {
         if (window.ShadowRoot) {
           patchAdoptedStyleSheets(ShadowRoot.prototype);
         }
+        __wkdomainsDarkModeDebug("proxy-install-end");
       };
 
       const stopStylesheetProxy = () => {

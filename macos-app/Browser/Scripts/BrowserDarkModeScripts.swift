@@ -85,6 +85,12 @@ extension BrowserModel {
     (() => {
       if (window.__wkdomainsDarkModeInstalled) return;
       window.__wkdomainsDarkModeInstalled = true;
+      const __wkdomainsDarkModeDebug = (phase) => {
+        try {
+          console.debug("[wkdomains-dark]", phase, location.href, Math.round(performance.now()));
+        } catch (_) {}
+      };
+      __wkdomainsDarkModeDebug("install-start");
 
       const DISABLED_SITES = new Set([\#(disabledSiteList)]);
       const currentHost = String(location.hostname || "").toLowerCase().replace(/^\.+|\.+$/g, "");
@@ -93,6 +99,7 @@ extension BrowserModel {
         return currentHost === normalizedSite || currentHost.endsWith(`.${normalizedSite}`);
       };
       if (Array.from(DISABLED_SITES).some(disabledSiteMatches)) {
+        __wkdomainsDarkModeDebug("disabled-site");
         return;
       }
 
@@ -109,6 +116,7 @@ extension BrowserModel {
     \#(Self.browserDarkModeInlineDOMScript)
 
     \#(Self.browserDarkModeRuntimeScript)
+      __wkdomainsDarkModeDebug("install-end");
     })();
     """#
     }

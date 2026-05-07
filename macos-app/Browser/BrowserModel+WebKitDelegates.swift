@@ -33,6 +33,7 @@ extension BrowserModel: WKScriptMessageHandler {
 extension BrowserModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard let tab = tab(for: webView) else { return }
+        logNavigationEvent("didStartProvisionalNavigation", webView: webView, tab: tab)
 
         tab.errorMessage = nil
         tab.hasAttemptedNavigation = true
@@ -51,6 +52,7 @@ extension BrowserModel: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         guard let tab = tab(for: webView) else { return }
+        logNavigationEvent("didCommit", webView: webView, tab: tab)
 
         tab.errorMessage = nil
         tab.navigationFallbacks = []
@@ -69,6 +71,7 @@ extension BrowserModel: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let tab = tab(for: webView) else { return }
+        logNavigationEvent("didFinish", webView: webView, tab: tab)
 
         tab.errorMessage = nil
 
@@ -99,10 +102,12 @@ extension BrowserModel: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        logNavigationFailure("didFail", webView: webView, error: error)
         handleNavigationError(error, in: webView)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        logNavigationFailure("didFailProvisionalNavigation", webView: webView, error: error)
         if loadNextFallback(after: error, in: webView) {
             return
         }
@@ -125,7 +130,25 @@ extension BrowserModel: WKNavigationDelegate {
         if let browserWebView = webView as? BrowserWKWebView {
             browserWebView.configureForcedDarkPageBackground(settingsStore.usesDarkMode(for: url))
         }
+        if navigationAction.targetFrame?.isMainFrame != false {
+            NSLog(
+                "[wkdomains-debug] navigation policy allow url=\(url.absoluteString) type=\(navigationAction.navigationType.rawValue) dark=\(settingsStore.usesDarkMode(for: url))"
+            )
+        }
         decisionHandler(.allow)
+    }
+
+    private func logNavigationEvent(_ event: String, webView: WKWebView, tab: BrowserTabState) {
+        NSLog(
+            "[wkdomains-debug] navigation \(event) tab=\(String(tab.id.uuidString.prefix(8))) url=\(webView.url?.absoluteString ?? "nil") loading=\(webView.isLoading) progress=\(String(format: "%.3f", webView.estimatedProgress)) title=\(webView.title ?? "nil")"
+        )
+    }
+
+    private func logNavigationFailure(_ event: String, webView: WKWebView, error: Error) {
+        let nsError = error as NSError
+        NSLog(
+            "[wkdomains-debug] navigation \(event) url=\(webView.url?.absoluteString ?? "nil") domain=\(nsError.domain) code=\(nsError.code) message=\(error.localizedDescription)"
+        )
     }
 
     private func handleNavigationError(_ error: Error, in webView: WKWebView) {
