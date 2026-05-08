@@ -199,10 +199,10 @@ extension ContentView {
                 .fill(Color(nsColor: .separatorColor).opacity(0.35))
                 .frame(height: 1)
 
-            if browser.isLoading {
+            if browser.isLoading && browser.estimatedProgress > 0.02 && browser.estimatedProgress < 0.72 {
                 GeometryReader { proxy in
                     Rectangle()
-                        .fill(Color.accentColor)
+                        .fill(Color.accentColor.opacity(0.7))
                         .frame(width: max(24, proxy.size.width * browser.estimatedProgress), height: 2)
                         .animation(.easeOut(duration: 0.18), value: browser.estimatedProgress)
                 }

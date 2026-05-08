@@ -118,7 +118,7 @@ extension BrowserModel {
             skipped += 1;
             continue;
           }
-          variablesStore.addRulesForMatching(details.rules);
+          queueRulesForVariableMatching(element, manager, details.rules);
           detailsByStyle.push(element);
         }
 
@@ -182,6 +182,34 @@ extension BrowserModel {
           ? hashString(element.textContent || "")
           : ""
       ].join(":");
+
+      const variableInputSignatureForStyleManager = (element, manager, rules) => [
+        rules ? rules.length : 0,
+        manager ? manager.revision : 0,
+        element.href || "",
+        element.media || "",
+        element.disabled ? "disabled" : "",
+        element instanceof HTMLStyleElement || isSVGStyleElementNode(element)
+          ? hashString(element.textContent || "")
+          : ""
+      ].join(":");
+
+      const markVariableStoreForFullRebuild = () => {
+        variableStoreNeedsFullRebuild = true;
+      };
+
+      const queueRulesForVariableMatching = (element, manager, rules) => {
+        if (!rules) return false;
+        const signature = `${variableInputGeneration}:${variableInputSignatureForStyleManager(element, manager, rules)}`;
+        if (variableInputSignaturesByElement.get(element) === signature) {
+          variableRuleInputsReused += 1;
+          return false;
+        }
+        variableInputSignaturesByElement.set(element, signature);
+        variableRuleInputsQueued += 1;
+        variablesStore.addRulesForMatching(rules);
+        return true;
+      };
 
       const getStyleManagerDetails = (element, options = { secondRound: false }) => {
         if (!shouldManageStyle(element)) return null;
@@ -638,6 +666,7 @@ extension BrowserModel {
         }
         markStyleLoaded(element);
         if (manager) {
+          markVariableStoreForFullRebuild();
           cancelPendingStyleConversion(manager);
           element.removeEventListener(STYLE_UPDATE_EVENT, manager.onSheetChange);
           if (manager.observer) manager.observer.disconnect();
@@ -661,6 +690,7 @@ extension BrowserModel {
         const manager = adoptedStyleManagers.get(root);
         pendingAdoptedStyleUpdates.delete(root);
         if (manager) {
+          markVariableStoreForFullRebuild();
           cancelPendingStyleConversion(manager);
           withStylesheetProxyDisabled(() => {
             manager.style.remove();
@@ -715,7 +745,7 @@ extension BrowserModel {
         for (const style of styles) {
           const details = getStyleManagerDetails(style, { secondRound: false });
           if (details) {
-            variablesStore.addRulesForMatching(details.rules);
+            queueRulesForVariableMatching(style, details.manager, details.rules);
           }
         }
         collectAdoptedStyleSheetRules(root);
@@ -854,7 +884,13 @@ extension BrowserModel {
         pruneStyleManagers();
         pruneAdoptedStyleManagers();
         invalidateElementApplyCaches();
-        variablesStore.clear();
+        variableRuleInputsQueued = 0;
+        variableRuleInputsReused = 0;
+        if (variableStoreNeedsFullRebuild) {
+          variablesStore.clear();
+          variableInputGeneration += 1;
+          variableStoreNeedsFullRebuild = false;
+        }
 
         const allRoots = getStylesheetSyncRoots();
         const work = getStylesheetSyncWorkRoots(allRoots);
@@ -895,7 +931,7 @@ extension BrowserModel {
         __wkdomainsDarkModePerf(
           "sync-all-styles",
           syncStartedAt,
-          `roots=${roots.length}/${allRoots.length} styleManagers=${managedStyleElements.size} adopted=${managedAdoptedRoots.size} pendingRender=${pendingStyleRenderJobs.length} loading=${loadingStyles.size}`,
+          `roots=${roots.length}/${allRoots.length} styleManagers=${managedStyleElements.size} adopted=${managedAdoptedRoots.size} pendingRender=${pendingStyleRenderJobs.length} loading=${loadingStyles.size} varsQueued=${variableRuleInputsQueued} varsReused=${variableRuleInputsReused} varGeneration=${variableInputGeneration}`,
           8
         );
         __wkdomainsDarkModeDebug("sync-styles-end");

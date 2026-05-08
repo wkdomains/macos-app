@@ -70,6 +70,11 @@ extension BrowserModel {
       const unavailableStyleElements = new WeakSet();
       const registeredCustomPropertyTypes = new Map();
       const stylesheetCustomPropertyTypes = new Map();
+      const variableInputSignaturesByElement = new WeakMap();
+      let variableInputGeneration = 0;
+      let variableStoreNeedsFullRebuild = true;
+      let variableRuleInputsQueued = 0;
+      let variableRuleInputsReused = 0;
       let fallbackWasCleared = false;
       const stylesheetSyncInstalledAt = (() => {
         try { return performance.now(); } catch (_) { return Date.now(); }

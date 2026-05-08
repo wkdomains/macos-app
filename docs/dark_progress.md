@@ -291,11 +291,18 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - `variablesStore` type propagation now uses a work-queue over changed variables instead of repeatedly scanning the full reference and reverse-reference maps until stable
   - full-document inline root scans are deferred until the page load event, with a timeout fallback, so large `querySelectorAll(INLINE_STYLE_SELECTOR)` passes do not compete with WKWebView's visible load progress
   - `/api/v1/dark-mode` now exposes `pageLoadFired` to correlate pending root work with the page load lifecycle
+- Reduced repeated variable rebuilds and remaining pre-load root scans:
+  - stylesheet variable inputs are now signature-cached per managed stylesheet, so full style syncs queue only new or changed rule lists instead of re-inspecting every Gmail stylesheet on each loading-phase sync
+  - variable cache generation resets only when a stylesheet/adopted manager is removed and a full rebuild is needed
+  - non-inline dirty container root scans now wait until page load; direct inline-attribute elements can still be handled immediately
+- Reverted the overly aggressive page-load deferral after Gmail showed white sections:
+  - Dark Reader runs `createDynamicStyleOverrides()` immediately after fallback setup, so full dynamic stylesheet sync is no longer held until the page load event
+  - the native browser progress bar is now less eager and less visually dominant, hiding once WKWebView reports late-stage progress instead of drawing a long blue bar over already-interactive SPA pages
 
 ## Completion Estimates
 
-- Full `variablesStore` dependency graph for matching variables and dependents: 94%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 99%
+- Full `variablesStore` dependency graph for matching variables and dependents: 95%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 99.1%
 - Mature optimized DOM/style watchers: 99.9%
 - Robust adopted stylesheet management: 94%
 - Full stylesheet proxy behavior and cross-context coordination: 96%
@@ -305,11 +312,11 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 
 ## Remaining Gaps
 
-- Variables graph is still not a full Dark Reader port. Current estimate: 94%.
+- Variables graph is still not a full Dark Reader port. Current estimate: 95%.
   - no full scoped variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - scoped handling is stronger, but still not as exact as Dark Reader's full selector/dependency store
-- Per-stylesheet managers still need more mature behavior. Current estimate: 99%.
+- Per-stylesheet managers still need more mature behavior. Current estimate: 99.1%.
   - privileged cross-origin/background fetch parity
   - imported stylesheet retries
 - Watchers now have the main Dark Reader-style batching/dirty-root/attribute-scoped inline observer/self-write suppression pieces, including stranded-queue recovery and selector-engine inline root scanning, but still need more long-run observer pressure testing. Current estimate: 99.9%.
@@ -342,4 +349,6 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Gmail/Dark Reader source deep-dive pass narrowed inline queues to attribute-driven candidates, deferred computed fallback during startup, and sliced small style-manager startup render batches; the touched Swift fragments passed `xcrun swiftc -parse` and the touched embedded JavaScript fragments passed `node --check`.
 - Gmail timing follow-up found the narrowed inline root path was still scanning thousands of nodes through a JS `TreeWalker`; the touched Swift fragments passed `xcrun swiftc -parse` and the touched embedded JavaScript fragments passed `node --check`.
 - Gmail timing follow-up found repeated 120-150ms variable matching before load; the variables propagation algorithm and full-document root-scan load gating passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
+- Gmail timing follow-up still showed repeated variable matching and one pre-load container root scan; per-stylesheet variable input caching and broader pre-load container scan gating passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
+- Gmail timing follow-up showed page-load deferral caused white Gmail sections; reverting the deferral and toning down late-stage native progress indication passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
 - Current `/api/v1/timing` was reviewed before the latest source changes; the running bundle still showed root/element dark-mode work overlapping Gmail startup, which drove the attribute-scoped inline and startup render slicing pass above.

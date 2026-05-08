@@ -1049,6 +1049,18 @@ extension BrowserModel {
         }
         job.waitingForPageLoad = false;
 
+        const shouldWaitForPageLoadBeforeRootScan = () => {
+          if (pageLoadFired || elapsedSinceInstall() >= 7000) return false;
+          if (root === document) return true;
+          if (root.nodeType === Node.ELEMENT_NODE && root.matches && root.matches(ROOT_STYLE_OVERRIDE_SELECTOR)) {
+            return false;
+          }
+          if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && root.host) {
+            return false;
+          }
+          return !!(root && root.querySelectorAll);
+        };
+
         if (!job.initialized) {
           job.initialized = true;
           if (root.nodeType === Node.DOCUMENT_NODE) {
@@ -1063,7 +1075,7 @@ extension BrowserModel {
             }
           }
 
-          if (root === document && !pageLoadFired && elapsedSinceInstall() < 7000) {
+          if (shouldWaitForPageLoadBeforeRootScan()) {
             job.waitingForPageLoad = true;
             return false;
           }
@@ -1071,7 +1083,7 @@ extension BrowserModel {
           initializeRootApplyWalker(job, root);
         }
 
-        if (root === document && !pageLoadFired && elapsedSinceInstall() < 7000 && !job.walker && !job.fallbackElements) {
+        if (shouldWaitForPageLoadBeforeRootScan() && !job.walker && !job.fallbackElements) {
           job.waitingForPageLoad = true;
           return false;
         }
