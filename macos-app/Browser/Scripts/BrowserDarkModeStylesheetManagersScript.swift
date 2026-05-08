@@ -131,6 +131,12 @@ extension BrowserModel {
           return;
         }
 
+        if (variableStoreNeedsFullRebuild) {
+          styleManagerUpdatesSkipped += skipped + missingManagers + detailsByStyle.length;
+          scheduleStartupAwareStyleSync(0);
+          return;
+        }
+
         variablesStore.matchVariablesAndDependents();
         updateRootVariableStyle();
         invalidateElementApplyCaches();
@@ -173,6 +179,7 @@ extension BrowserModel {
 
       const signatureForStyleManager = (element, manager, rules) => [
         rules ? rules.length : 0,
+        cssRuleListSignature(rules),
         variablesStore.version(),
         manager.revision,
         element.href || "",
@@ -185,6 +192,7 @@ extension BrowserModel {
 
       const variableInputSignatureForStyleManager = (element, manager, rules) => [
         rules ? rules.length : 0,
+        cssRuleListSignature(rules),
         manager ? manager.revision : 0,
         element.href || "",
         element.media || "",
@@ -205,9 +213,20 @@ extension BrowserModel {
           variableRuleInputsReused += 1;
           return false;
         }
+        const hadVariableData = variableInputHasDataByElement.get(element) === true;
+        const hasVariableData = cssRulesHaveVariableData(rules);
+        if (
+          variableInputSignaturesByElement.has(element)
+          && !variableStoreFullRebuildInProgress
+          && (hadVariableData || hasVariableData)
+        ) {
+          markVariableStoreForFullRebuild();
+        }
+        variableInputHasDataByElement.set(element, hasVariableData);
         variableInputSignaturesByElement.set(element, signature);
         variableRuleInputsQueued += 1;
-        variablesStore.addRulesForMatching(rules);
+        const root = element && element.getRootNode ? element.getRootNode() : document;
+        variablesStore.addRulesForMatching(rules, { root });
         return true;
       };
 
@@ -375,7 +394,7 @@ extension BrowserModel {
       const adoptedSheetSignature = (sheet, rules) => [
         variablesStore.version(),
         adoptedSheetRevisionFor(sheet),
-        cssRuleListLength(rules)
+        cssRuleListSignature(rules)
       ].join(":");
 
       const convertAdoptedSheetWithCache = (sheet, rules) => {
@@ -499,8 +518,32 @@ extension BrowserModel {
 
       const collectAdoptedStyleSheetRules = (root) => {
         if (!root || !root.adoptedStyleSheets || !root.adoptedStyleSheets.length) return;
+        const ruleLists = [];
+        let hasVariableData = false;
         for (const sheet of root.adoptedStyleSheets) {
-          variablesStore.addRulesForMatching(safeGetRules(sheet));
+          const rules = safeGetRules(sheet);
+          if (!rules) continue;
+          ruleLists.push(rules);
+          hasVariableData = hasVariableData || cssRulesHaveVariableData(rules);
+        }
+        const signature = `${variableInputGeneration}:${ruleLists.map(cssRuleListSignature).join(",")}`;
+        if (adoptedVariableInputSignaturesByRoot.get(root) === signature) {
+          variableRuleInputsReused += 1;
+          return;
+        }
+        const hadVariableData = adoptedVariableInputHasDataByRoot.get(root) === true;
+        if (
+          adoptedVariableInputSignaturesByRoot.has(root)
+          && !variableStoreFullRebuildInProgress
+          && (hadVariableData || hasVariableData)
+        ) {
+          markVariableStoreForFullRebuild();
+        }
+        adoptedVariableInputSignaturesByRoot.set(root, signature);
+        adoptedVariableInputHasDataByRoot.set(root, hasVariableData);
+        for (const rules of ruleLists) {
+          variablesStore.addRulesForMatching(rules, { root });
+          variableRuleInputsQueued += 1;
         }
       };
 
@@ -528,6 +571,12 @@ extension BrowserModel {
 
         if (renderRoots.length === 0) {
           adoptedStyleUpdatesSkipped += skipped;
+          return;
+        }
+
+        if (variableStoreNeedsFullRebuild) {
+          adoptedStyleUpdatesSkipped += skipped + renderRoots.length;
+          scheduleStartupAwareStyleSync(0);
           return;
         }
 
@@ -675,6 +724,8 @@ extension BrowserModel {
           });
           styleManagers.delete(element);
         }
+        variableInputSignaturesByElement.delete(element);
+        variableInputHasDataByElement.delete(element);
         managedStyleElements.delete(element);
       };
 
@@ -697,6 +748,8 @@ extension BrowserModel {
           });
           adoptedStyleManagers.delete(root);
         }
+        adoptedVariableInputSignaturesByRoot.delete(root);
+        adoptedVariableInputHasDataByRoot.delete(root);
         removeAdoptedStyleListeners(root);
         managedAdoptedRoots.delete(root);
       };
@@ -886,6 +939,7 @@ extension BrowserModel {
         invalidateElementApplyCaches();
         variableRuleInputsQueued = 0;
         variableRuleInputsReused = 0;
+        const rebuildingVariableStore = variableStoreNeedsFullRebuild;
         if (variableStoreNeedsFullRebuild) {
           variablesStore.clear();
           variableInputGeneration += 1;
@@ -898,8 +952,17 @@ extension BrowserModel {
         __wkdomainsDarkModeDebug(`sync-styles-roots:${roots.length}/${allRoots.length}`);
         const stylesByRoot = new Map();
         const collectStartedAt = __wkdomainsDarkModeNow();
-        for (const root of roots) {
-          stylesByRoot.set(root, collectVariableInputs(root));
+        variableStoreFullRebuildInProgress = rebuildingVariableStore;
+        try {
+          for (const root of roots) {
+            stylesByRoot.set(root, collectVariableInputs(root));
+          }
+        } finally {
+          variableStoreFullRebuildInProgress = false;
+        }
+        if (variableStoreNeedsFullRebuild) {
+          scheduleStyleSync(0);
+          return;
         }
         __wkdomainsDarkModePerf("sync-all-styles-collect", collectStartedAt, `roots=${roots.length}/${allRoots.length}`, 12);
 

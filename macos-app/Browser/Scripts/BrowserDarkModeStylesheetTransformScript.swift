@@ -693,5 +693,26 @@ extension BrowserModel {
         return (hash >>> 0).toString(36);
       };
 
+      const cssRuleListSignature = (rules) => {
+        const length = cssRuleListLength(rules);
+        if (!length) return "0";
+        const sampleIndexes = new Set();
+        const sampleEdgeCount = Math.min(8, length);
+        for (let index = 0; index < sampleEdgeCount; index += 1) {
+          sampleIndexes.add(index);
+          sampleIndexes.add(length - 1 - index);
+        }
+        if (length > 16) {
+          sampleIndexes.add(Math.floor(length / 2));
+        }
+
+        const samples = [];
+        for (const index of Array.from(sampleIndexes).sort((a, b) => a - b)) {
+          const text = safeRuleText(rules[index]);
+          samples.push(`${index}:${hashString(text.slice(0, 512))}:${text.length}`);
+        }
+        return `${length}:${samples.join("|")}`;
+      };
+
     """#
 }

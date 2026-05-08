@@ -13,13 +13,14 @@ extension BrowserModel {
         const rootVarValues = new Map();
         const varRefs = new Map();
         const reverseVarRefs = new Map();
-        const rulesQueue = new Set();
+        const rulesQueue = new Map();
         const inlineQueue = [];
         let versionNumber = 0;
         let lastTypeSignature = "";
         let lastMatchedRuleLists = 0;
         let lastMatchedInlineStyles = 0;
         let lastVariableReferenceCount = 0;
+        let lastRootScopedVariableCount = 0;
 
         const clear = () => {
           varTypes.clear();
@@ -37,8 +38,20 @@ extension BrowserModel {
           varTypes.set(name, (varTypes.get(name) || 0) | type);
         };
 
-        const addRulesForMatching = (rules) => {
-          if (rules) rulesQueue.add(rules);
+        const addRulesForMatching = (rules, options = {}) => {
+          if (!rules) return;
+          const existing = rulesQueue.get(rules);
+          if (existing) {
+            if (options.root === document) {
+              existing.root = document;
+              existing.documentRoot = true;
+            }
+            return;
+          }
+          rulesQueue.set(rules, {
+            root: options.root || null,
+            documentRoot: options.root === document || !options.root
+          });
         };
 
         const addInlineStyleForMatching = (style) => {
@@ -114,23 +127,60 @@ extension BrowserModel {
           });
         };
 
-        const selectorHasRootScope = (selectorText) => {
+        const declarationBlockHasVariableData = (style) => {
+          if (!style) return false;
+          let found = false;
+          iterateCSSDeclarations(style, (property, value) => {
+            if (found) return;
+            if (property.startsWith("--") || String(value || "").includes("var(")) {
+              found = true;
+            }
+          });
+          return found;
+        };
+
+        const cssRulesHaveVariableData = (rules, depth = 0, seenRuleLists = new WeakSet()) => {
+          if (!rules || depth > 8 || seenRuleLists.has(rules)) return false;
+          seenRuleLists.add(rules);
+          for (let index = 0; index < rules.length; index += 1) {
+            const rule = rules[index];
+            try {
+              if (rule.name && rule.syntax) return true;
+              if (rule.style && declarationBlockHasVariableData(rule.style)) return true;
+              if (rule.cssRules && cssRulesHaveVariableData(rule.cssRules, depth + 1, seenRuleLists)) return true;
+              if (rule.type === CSSRule.IMPORT_RULE && rule.styleSheet && cssRulesHaveVariableData(rule.styleSheet.cssRules, depth + 1, seenRuleLists)) return true;
+            } catch (_) {}
+          }
+          return false;
+        };
+
+        const selectorHasRootScope = (selectorText, options = {}) => {
+          if (options.root && options.root !== document && !options.documentRoot) {
+            return false;
+          }
           const text = String(selectorText || "").toLowerCase();
           if (!text) return false;
           return text.split(",").some((selector) => {
             const trimmed = selector.trim();
-            return trimmed === ":root"
+            const normalized = trimmed.replace(/\s+/g, " ");
+            return normalized === ":root"
+              || normalized === ":where(:root)"
+              || normalized === ":is(:root)"
+              || normalized === ":where(html)"
+              || normalized === ":is(html)"
               || trimmed === "html"
-              || trimmed.startsWith(":root:")
-              || trimmed.startsWith(":root[")
-              || trimmed.startsWith(":root.")
-              || trimmed.startsWith("html:")
-              || trimmed.startsWith("html[")
-              || trimmed.startsWith("html.");
+              || normalized.startsWith(":root:")
+              || normalized.startsWith(":root[")
+              || normalized.startsWith(":root.")
+              || normalized.startsWith(":where(:root")
+              || normalized.startsWith(":is(:root")
+              || normalized.startsWith("html:")
+              || normalized.startsWith("html[")
+              || normalized.startsWith("html.");
           });
         };
 
-        const inspectRules = (rules) => {
+        const inspectRules = (rules, options = {}) => {
           if (!rules) return;
           for (let index = 0; index < rules.length; index += 1) {
             const rule = rules[index];
@@ -148,13 +198,13 @@ extension BrowserModel {
                 }
               }
               if (rule.style) {
-                inspectDeclarations(rule.style, { rootScope: selectorHasRootScope(rule.selectorText) });
+                inspectDeclarations(rule.style, { rootScope: selectorHasRootScope(rule.selectorText, options) });
               }
               if (rule.cssRules) {
-                inspectRules(rule.cssRules);
+                inspectRules(rule.cssRules, options);
               }
               if (rule.type === CSSRule.IMPORT_RULE && rule.styleSheet) {
-                inspectRules(rule.styleSheet.cssRules);
+                inspectRules(rule.styleSheet.cssRules, options);
               }
             } catch (_) {}
           }
@@ -236,12 +286,13 @@ extension BrowserModel {
         const matchVariablesAndDependents = () => {
           lastMatchedRuleLists = rulesQueue.size;
           lastMatchedInlineStyles = inlineQueue.length;
-          for (const rules of rulesQueue) inspectRules(rules);
+          for (const [rules, options] of rulesQueue) inspectRules(rules, options);
           for (const style of inlineQueue) inspectDeclarations(style);
           rulesQueue.clear();
           inlineQueue.splice(0);
           propagateTypes();
           updateVersion();
+          lastRootScopedVariableCount = rootVarValues.size;
         };
 
         const typesForVariable = (name) => varTypes.get(name) || 0;
@@ -308,6 +359,7 @@ extension BrowserModel {
             referenceOwners: varRefs.size,
             references: lastVariableReferenceCount,
             reverseReferenceOwners: reverseVarRefs.size,
+            rootScopedVariables: lastRootScopedVariableCount,
             matchedRuleLists: lastMatchedRuleLists,
             matchedInlineStyles: lastMatchedInlineStyles
           })

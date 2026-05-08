@@ -372,14 +372,15 @@ extension BrowserModel {
           } catch (_) {}
         }
 
-        const patchGroupingRuleProxy = () => {
-          if (!window.CSSGroupingRule || CSSGroupingRule.prototype.__wkdomainsDarkModeProxy) return;
-          __wkdomainsDarkModeDebug("proxy-patch-grouping");
-          const groupingProto = CSSGroupingRule.prototype;
+        const patchGroupingRulePrototype = (constructorName) => {
+          const constructor = window[constructorName];
+          if (!constructor || !constructor.prototype || constructor.prototype.__wkdomainsDarkModeGroupingProxy) return;
+          const groupingProto = constructor.prototype;
           const nativeGroupInsertRule = groupingProto.insertRule;
           const nativeGroupDeleteRule = groupingProto.deleteRule;
           if (!nativeGroupInsertRule && !nativeGroupDeleteRule) return;
-          defineHiddenProperty(groupingProto, "__wkdomainsDarkModeProxy", true);
+          __wkdomainsDarkModeDebug(`proxy-patch-grouping:${constructorName}`);
+          defineHiddenProperty(groupingProto, "__wkdomainsDarkModeGroupingProxy", true);
 
           if (nativeGroupInsertRule) {
             rememberPropertyDescriptor(groupingProto, "insertRule");
@@ -401,6 +402,19 @@ extension BrowserModel {
               }
               return result;
             };
+          }
+        };
+
+        const patchGroupingRuleProxy = () => {
+          for (const constructorName of [
+            "CSSGroupingRule",
+            "CSSMediaRule",
+            "CSSSupportsRule",
+            "CSSLayerBlockRule",
+            "CSSContainerRule",
+            "CSSScopeRule"
+          ]) {
+            patchGroupingRulePrototype(constructorName);
           }
         };
 

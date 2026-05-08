@@ -71,8 +71,12 @@ extension BrowserModel {
       const registeredCustomPropertyTypes = new Map();
       const stylesheetCustomPropertyTypes = new Map();
       const variableInputSignaturesByElement = new WeakMap();
+      const variableInputHasDataByElement = new WeakMap();
+      const adoptedVariableInputSignaturesByRoot = new WeakMap();
+      const adoptedVariableInputHasDataByRoot = new WeakMap();
       let variableInputGeneration = 0;
       let variableStoreNeedsFullRebuild = true;
+      let variableStoreFullRebuildInProgress = false;
       let variableRuleInputsQueued = 0;
       let variableRuleInputsReused = 0;
       let fallbackWasCleared = false;

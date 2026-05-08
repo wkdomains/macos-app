@@ -67,7 +67,9 @@ Variables support is strong but not complete:
 - Tracks variable references and reverse references, then propagates color usage types through alias chains.
 - Emits both wkdomains-prefixed variables and Dark Reader-compatible aliases such as `--darkreader-bg--token`.
 - Handles registered color custom properties from stylesheet `@property` and runtime `CSS.registerProperty()`.
+- Carries stylesheet root context into variable matching so document-root variables are separated from shadow/adopted rule inputs.
 - Uses cached per-stylesheet variable inputs to avoid repeated full graph rebuilds.
+- Falls back to a full variable graph rebuild when a changed stylesheet or adopted-sheet root previously contributed variable data, avoiding stale custom-property types after removals.
 
 Color conversion has broad modern coverage:
 
@@ -88,12 +90,13 @@ Adopted stylesheet handling is solid for WebKit:
 - Document and shadow-root adopted stylesheets are managed independently.
 - Page-world and isolated-world proxies observe adopted stylesheet assignment, in-place array changes, declaration changes, and sheet mutations.
 - Adopted conversion is sliced for large roots and cached per sheet revision across roots.
+- Lightweight rule-list signatures catch same-count stylesheet/adopted-sheet changes that miss a revision bump.
 - Disconnected shadow roots prune their observers, managers, dirty-root state, and pending work.
 
 Proxy and bridge coverage is broad:
 
 - Page-world bridge batches global CSSOM/shadow/custom-element events before notifying the isolated engine.
-- Proxy coverage includes `insertRule`, `deleteRule`, `addRule`, `removeRule`, `replace`, `replaceSync`, declaration `setProperty`, declaration `removeProperty`, declaration `cssText`, rule `selectorText`, keyframes append/delete, grouping rule insert/delete, `CSS.registerProperty`, `adoptedStyleSheets`, `attachShadow`, and opt-in custom element registry observation.
+- Proxy coverage includes `insertRule`, `deleteRule`, `addRule`, `removeRule`, `replace`, `replaceSync`, declaration `setProperty`, declaration `removeProperty`, declaration `cssText`, rule `selectorText`, keyframes append/delete, grouping rule insert/delete across `CSSGroupingRule` and WebKit's concrete grouping-rule constructors, `CSS.registerProperty`, `adoptedStyleSheets`, `attachShadow`, and opt-in custom element registry observation.
 - Hooks are reversible through saved descriptors and cleanup tasks.
 - Site-fix flags can disable stylesheet or shadow-root proxying and can opt into custom element registry proxying.
 
@@ -102,18 +105,19 @@ Config/fix support is much closer to upstream:
 - The upstream `dynamic-theme-fixes.config` corpus is bundled as an app resource.
 - Runtime config can be supplied through `wkdomains.darkModeDynamicThemeFixesConfig` or `wkdomains.darkModeDynamicThemeFixesConfigPath`.
 - Parser supports global blocks, multiple URL lines, separators, wildcard hosts, schemes, ports, paths, localhost, CSS templates, invert selectors, ignored inline styles, ignored image analysis, ignored CSS selectors, ignored CSS URLs, and proxy flags.
+- Unknown future section headers are skipped and reported instead of being leaked into the previous `CSS` section.
 - Selection combines generic fixes with the most-specific matching block or blocks.
 
 ## Remaining Work
 
 Highest-value gaps:
 
-- Variables-store parity: add a fuller scoped variable sheet lifecycle and improve selector/dependency precision for unusual custom-property scopes.
+- Variables-store parity: scoped matching and stale-input cleanup are better, but this is still not a full upstream variables sheet registration/release lifecycle.
 - Color parity: decide whether to port Dark Reader color math more directly or keep our compatible approximation and test against real sites.
 - Image handling: upstream image/background analysis is deeper than our generic media/backdrop avoidance.
-- Adopted stylesheet parity: current WebKit path works, but it is not equivalent to Dark Reader's full override/fallback model for every browser path.
-- CSSOM edge APIs: proxy coverage is broad, but obscure mutation APIs still need long-run testing against framework-heavy pages.
-- Config parser resilience: bundled corpus works, but future upstream nonstandard sections may need parser updates.
+- Adopted stylesheet parity: current WebKit path works, but it is still not equivalent to Dark Reader's full override/fallback model for every browser path.
+- CSSOM edge APIs: proxy coverage is broader now, but obscure mutation APIs still need long-run testing against framework-heavy pages.
+- Config parser resilience: unknown sections are guarded, but future upstream data shapes may still need parser updates.
 - Isolation boundary: the named content world is the right default, but page-world hooks are still required for page-owned CSSOM and shadow APIs.
 - Runtime validation: keep checking Gmail, Reddit, Hacker News, GitHub, docs sites, and at least one Web Component-heavy app after stylesheet or watcher changes.
 

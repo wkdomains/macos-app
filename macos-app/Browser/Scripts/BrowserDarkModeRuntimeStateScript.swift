@@ -70,6 +70,7 @@ extension BrowserModel {
                 registeredColors: registeredColorStats(),
                 variables: variablesStore.status(),
                 variableStoreNeedsFullRebuild,
+                variableStoreFullRebuildInProgress,
                 variableInputGeneration,
                 variableRuleInputsQueued,
                 variableRuleInputsReused,

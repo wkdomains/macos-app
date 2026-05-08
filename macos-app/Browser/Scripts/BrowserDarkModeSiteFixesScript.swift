@@ -17,15 +17,28 @@ extension BrowserModel {
         ["INVERT", "invert"],
         ["CSS", "css"],
         ["IGNORE INLINE STYLE", "ignoreInlineStyle"],
+        ["IGNORE INLINE STYLES", "ignoreInlineStyle"],
         ["IGNORE IMAGE ANALYSIS", "ignoreImageAnalysis"],
         ["IGNORE CSS", "ignoreCSS"],
         ["IGNORE CSS URL", "ignoreCSSUrl"],
         ["IGNORE CSS URLs", "ignoreCSSUrl"],
         ["DISABLE STYLESHEET PROXY", "disableStyleSheetsProxy"],
+        ["DISABLE STYLE SHEETS PROXY", "disableStyleSheetsProxy"],
         ["DISABLE SHADOW ROOT PROXY", "disableShadowRootProxy"],
         ["DISABLE CUSTOM ELEMENT REGISTRY PROXY", "disableCustomElementRegistryProxy"],
         ["ENABLE CUSTOM ELEMENT REGISTRY PROXY", "enableCustomElementRegistryProxy"]
       ]);
+      const UNKNOWN_SITE_FIX_SECTION = "__unknown";
+
+      const normalizeSiteFixSectionHeader = (line) => String(line || "").trim().toUpperCase().replace(/\s+/g, " ");
+
+      const isLikelyUnknownSiteFixSectionHeader = (line) => {
+        const value = normalizeSiteFixSectionHeader(line);
+        if (!value || SITE_FIX_SECTION_MAP.has(value) || isLikelySiteFixURLLine(value)) return false;
+        if (value.length > 72) return false;
+        if (!/^(IGNORE|DISABLE|ENABLE|INVERT|CSS|NO|ONLY)\b/.test(value)) return false;
+        return /^[A-Z][A-Z0-9 _-]*$/.test(value);
+      };
 
       const isLikelySiteFixURLToken = (token) => {
         const value = String(token || "").trim().replace(/^https?:\/\//i, "");
@@ -60,6 +73,8 @@ extension BrowserModel {
         let bestSpecificity = 0;
         let parsedFixCount = 0;
         let matchedFixCount = 0;
+        let unknownSectionCount = 0;
+        let skippedUnknownSectionLines = 0;
         let current = null;
         let section = null;
         let hadBlankLine = true;
@@ -100,7 +115,7 @@ extension BrowserModel {
             continue;
           }
 
-          const normalizedHeader = trimmed.toUpperCase();
+          const normalizedHeader = normalizeSiteFixSectionHeader(trimmed);
           if (SITE_FIX_SECTION_MAP.has(normalizedHeader)) {
             section = SITE_FIX_SECTION_MAP.get(normalizedHeader);
             if (
@@ -112,6 +127,13 @@ extension BrowserModel {
               if (current) current[section] = true;
               section = null;
             }
+            hadBlankLine = false;
+            continue;
+          }
+
+          if (current && isLikelyUnknownSiteFixSectionHeader(trimmed)) {
+            section = UNKNOWN_SITE_FIX_SECTION;
+            unknownSectionCount += 1;
             hadBlankLine = false;
             continue;
           }
@@ -134,6 +156,12 @@ extension BrowserModel {
             continue;
           }
 
+          if (section === UNKNOWN_SITE_FIX_SECTION) {
+            skippedUnknownSectionLines += 1;
+            hadBlankLine = false;
+            continue;
+          }
+
           if (section === "css") {
             current.css += `${line}\n`;
           } else if (Array.isArray(current[section])) {
@@ -146,7 +174,9 @@ extension BrowserModel {
         return {
           fixes: [...genericFixes, ...bestSpecificFixes],
           parsedFixCount,
-          matchedFixCount
+          matchedFixCount,
+          unknownSectionCount,
+          skippedUnknownSectionLines
         };
       };
 
@@ -269,6 +299,8 @@ extension BrowserModel {
         parsedFixes: parsedSiteFixResult.parsedFixCount,
         selectedParsedFixes: parsedSiteFixes.length,
         matchedParsedFixes: parsedSiteFixResult.matchedFixCount,
+        unknownSections: parsedSiteFixResult.unknownSectionCount,
+        skippedUnknownSectionLines: parsedSiteFixResult.skippedUnknownSectionLines,
         matchingFixes: matchingSiteFixes.length,
         active: !!activeSiteFix,
         activeUrls: activeSiteFix ? activeSiteFix.url.slice(0, 12) : [],
