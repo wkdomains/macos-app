@@ -223,6 +223,21 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/dark-mode" {
+            BrowserDebugLogging.log("[wkdomains-debug] local-api dark-mode start id=\(debugID)")
+            dataReader.readDarkModeStatus { [weak self] result in
+                switch result {
+                case .success(let response):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api dark-mode done id=\(debugID)")
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api dark-mode fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
         sendError(status: .notFound, message: "Endpoint not found.", on: connection)
     }
 

@@ -190,6 +190,114 @@ final class WebsiteDataReader {
         }
     }
 
+    func readDarkModeStatus(completion: @escaping (Result<Any, Error>) -> Void) {
+        guard browser.webView.url != nil else {
+            completion(.failure(InspectionError.noPageLoaded))
+            return
+        }
+
+        let script = """
+        JSON.stringify((() => {
+            const callStatus = (name) => {
+                try {
+                    const fn = window[name];
+                    return typeof fn === "function" ? fn() : null;
+                } catch (error) {
+                    return { error: String(error && error.message || error) };
+                }
+            };
+
+            return {
+                url: location.href,
+                title: document.title,
+                readyState: document.readyState,
+                pageWorldFlags: {
+                    darkModeInstalled: !!window.__wkdomainsDarkModeInstalled,
+                    pageProxyInstalled: !!window.__wkdomainsDarkModePageProxyInstalled
+                },
+                engine: callStatus("__wkdomainsDarkModeStatus"),
+                pageProxy: callStatus("__wkdomainsDarkModePageProxyStatus")
+            };
+        })())
+        """
+
+        let startedAt = Date()
+        BrowserDebugLogging.log("[wkdomains-debug] local-api dark-mode start \(pageStateDescription())")
+
+        var pageWorldObject: Any?
+        var defaultClientObject: Any?
+        var pageWorldError: String?
+        var defaultClientError: String?
+        var pending = 2
+
+        let decodeStatusObject = { (value: Any?) -> Any? in
+            guard let json = value as? String,
+                  let data = json.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data)
+            else {
+                return nil
+            }
+
+            return object
+        }
+
+        let finishIfReady = {
+            pending -= 1
+            guard pending == 0 else { return }
+
+            var response: [String: Any] = [
+                "url": self.browser.webView.url?.absoluteString ?? NSNull(),
+                "host": self.browser.webView.url?.host ?? NSNull(),
+                "title": self.browser.webView.title ?? NSNull(),
+                "isLoading": self.browser.webView.isLoading,
+                "estimatedProgress": self.browser.webView.estimatedProgress,
+                "contentWorlds": [
+                    "page": pageWorldObject ?? ["error": pageWorldError ?? "No page-world status returned."],
+                    "defaultClient": defaultClientObject ?? ["error": defaultClientError ?? "No default-client status returned."]
+                ]
+            ]
+
+            if let pageWorldError {
+                response["pageWorldError"] = pageWorldError
+            }
+            if let defaultClientError {
+                response["defaultClientError"] = defaultClientError
+            }
+
+            BrowserDebugLogging.log("[wkdomains-debug] local-api dark-mode done elapsed=\(Self.formatElapsed(since: startedAt)) \(self.pageStateDescription())")
+            completion(.success(response))
+        }
+
+        browser.webView.evaluateJavaScript(script) { value, error in
+            Task { @MainActor in
+                if let error {
+                    pageWorldError = error.localizedDescription
+                } else if let object = decodeStatusObject(value) {
+                    pageWorldObject = object
+                } else {
+                    pageWorldError = InspectionError.couldNotDecodePageJSON.localizedDescription
+                }
+                finishIfReady()
+            }
+        }
+
+        browser.webView.evaluateJavaScript(script, in: nil, in: .defaultClient) { result in
+            Task { @MainActor in
+                switch result {
+                case .success(let value):
+                    if let object = decodeStatusObject(value) {
+                        defaultClientObject = object
+                    } else {
+                        defaultClientError = InspectionError.couldNotDecodePageJSON.localizedDescription
+                    }
+                case .failure(let error):
+                    defaultClientError = error.localizedDescription
+                }
+                finishIfReady()
+            }
+        }
+    }
+
     func readPendingBotRequests() -> [[String: Any]] {
         browser.pendingBotRequests().map(Self.dictionary(from:))
     }

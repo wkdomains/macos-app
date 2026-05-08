@@ -119,6 +119,18 @@ Probes common machine-readable files for the current domain:
 Responses include status, content type, sampled byte count, and a short
 `bodyPreview` for text, JSON, and XML resources.
 
+## Dark mode status
+
+```sh
+curl http://localhost:9001/api/v1/dark-mode | jq .
+```
+
+Returns forced dark-mode runtime state from both JavaScript content worlds:
+
+- `contentWorlds.defaultClient.engine`: isolated dynamic-theme engine status
+- `contentWorlds.page.pageProxy`: page-world proxy status
+- bridge event counts, proxy config, stylesheet sync state, and manager counts
+
 ## XHR and fetch calls
 
 ```sh

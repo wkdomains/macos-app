@@ -18,6 +18,14 @@ extension BrowserModel {
       let shadowProxyActive = false;
       let customElementRegistryProxyActive = false;
       let pageProxyBridgeInstalled = false;
+      const bridgeStatus = {
+        installed: false,
+        configured: false,
+        events: Object.create(null),
+        lastEvent: "",
+        lastEventAt: 0,
+        config: null
+      };
       const INLINE_STYLE_MUTATION_ATTRIBUTES = new Set(INLINE_STYLE_ATTRS);
       const STYLE_SHEET_MUTATION_ATTRIBUTES = new Set(["href", "media", "disabled"]);
       let queuedMutations = [];
@@ -31,6 +39,36 @@ extension BrowserModel {
 
       const elapsedSinceInstall = () => {
         try { return performance.now() - installedAt; } catch (_) { return Date.now() - installedAt; }
+      };
+
+      const exposeEngineStatus = () => {
+        try {
+          Object.defineProperty(window, "__wkdomainsDarkModeStatus", {
+            configurable: true,
+            enumerable: false,
+            value() {
+              return {
+                installed: true,
+                engineWorld: "defaultClient",
+                dynamicStyleStarted,
+                pageProxyBridgeInstalled,
+                bridgeConfigured: bridgeStatus.configured,
+                bridgeLastEvent: bridgeStatus.lastEvent,
+                bridgeLastEventAt: bridgeStatus.lastEventAt,
+                bridgeEvents: { ...bridgeStatus.events },
+                bridgeConfig: bridgeStatus.config ? { ...bridgeStatus.config } : null,
+                stylesheetSyncScheduled,
+                stylesheetSyncNeeded,
+                loadingStyles: loadingStyles.size,
+                managedStyleElements: managedStyleElements.size,
+                managedAdoptedRoots: managedAdoptedRoots.size,
+                discoveredShadowRoots: discoveredShadowRoots.size,
+                rootObservers: rootObservers.size,
+                ready: document.documentElement?.getAttribute(READY_ATTRIBUTE) === "true"
+              };
+            }
+          });
+        } catch (_) {}
       };
 
       const removeNode = (node) => {
@@ -655,6 +693,7 @@ extension BrowserModel {
       const installPageProxyBridge = () => {
         if (pageProxyBridgeInstalled) return;
         pageProxyBridgeInstalled = true;
+        bridgeStatus.installed = true;
 
         const onPageProxyChange = (event) => {
           let kind = "";
@@ -663,6 +702,9 @@ extension BrowserModel {
             kind = String(event && event.detail && event.detail.kind || "");
             definition = event && event.detail && event.detail.definition || null;
           } catch (_) {}
+          bridgeStatus.lastEvent = kind;
+          try { bridgeStatus.lastEventAt = Math.round(performance.now()); } catch (_) {}
+          bridgeStatus.events[kind] = (bridgeStatus.events[kind] || 0) + 1;
 
           if (kind === "register-property") {
             try { registerColorCustomPropertyDefinition(definition); } catch (_) {}
@@ -683,18 +725,22 @@ extension BrowserModel {
         cleanupTasks.push(() => {
           document.removeEventListener(PAGE_PROXY_EVENT, onPageProxyChange);
           pageProxyBridgeInstalled = false;
+          bridgeStatus.installed = false;
         });
       };
 
       const configurePageProxy = () => {
+        const config = {
+          disableStyleSheetsProxy: siteFixFlag("disableStyleSheetsProxy"),
+          disableShadowRootProxy: siteFixFlag("disableShadowRootProxy"),
+          disableCustomElementRegistryProxy: siteFixFlag("disableCustomElementRegistryProxy"),
+          enableCustomElementRegistryProxy: siteFixFlag("enableCustomElementRegistryProxy")
+        };
+        bridgeStatus.config = config;
+        bridgeStatus.configured = true;
         try {
           document.dispatchEvent(new CustomEvent(PAGE_PROXY_CONFIG_EVENT, {
-            detail: {
-              disableStyleSheetsProxy: siteFixFlag("disableStyleSheetsProxy"),
-              disableShadowRootProxy: siteFixFlag("disableShadowRootProxy"),
-              disableCustomElementRegistryProxy: siteFixFlag("disableCustomElementRegistryProxy"),
-              enableCustomElementRegistryProxy: siteFixFlag("enableCustomElementRegistryProxy")
-            }
+            detail: config
           }));
         } catch (_) {}
       };
@@ -757,6 +803,8 @@ extension BrowserModel {
         applying = false;
         readyFinalized = false;
         dynamicStyleStarted = false;
+        bridgeStatus.configured = false;
+        bridgeStatus.config = null;
         fallbackWasCleared = false;
         shadowProxyActive = false;
         customElementRegistryProxyActive = false;
@@ -803,6 +851,7 @@ extension BrowserModel {
       };
 
       window.__wkdomainsRemoveDynamicTheme = removeDynamicTheme;
+      exposeEngineStatus();
 
       const startDynamicTheme = () => {
         __wkdomainsDarkModeDebug("start-theme");

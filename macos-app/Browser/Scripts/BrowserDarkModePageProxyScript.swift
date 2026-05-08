@@ -49,6 +49,18 @@ extension BrowserModel {
       const savedPropertyDescriptors = new WeakMap();
       let active = true;
       let configured = false;
+      let lastConfig = {};
+      const proxyStatus = {
+        installed: true,
+        active: true,
+        configured: false,
+        stylesheetProxy: false,
+        shadowRootProxy: false,
+        customElementRegistryProxy: false,
+        changes: Object.create(null),
+        lastChange: "",
+        lastChangeAt: 0
+      };
 
       const rememberPropertyDescriptor = (target, property) => {
         if (!target || !property) return;
@@ -99,7 +111,33 @@ extension BrowserModel {
       };
 
       const reportGlobalChange = (kind, detail = {}) => {
+        proxyStatus.lastChange = String(kind || "");
+        try { proxyStatus.lastChangeAt = Math.round(performance.now()); } catch (_) {}
+        proxyStatus.changes[proxyStatus.lastChange] = (proxyStatus.changes[proxyStatus.lastChange] || 0) + 1;
         dispatch(document, PAGE_PROXY_EVENT, { kind, ...detail });
+      };
+
+      const exposeStatus = () => {
+        try {
+          Object.defineProperty(window, "__wkdomainsDarkModePageProxyStatus", {
+            configurable: true,
+            enumerable: false,
+            value() {
+              return {
+                installed: proxyStatus.installed,
+                active: proxyStatus.active,
+                configured: proxyStatus.configured,
+                stylesheetProxy: proxyStatus.stylesheetProxy,
+                shadowRootProxy: proxyStatus.shadowRootProxy,
+                customElementRegistryProxy: proxyStatus.customElementRegistryProxy,
+                lastChange: proxyStatus.lastChange,
+                lastChangeAt: proxyStatus.lastChangeAt,
+                changes: { ...proxyStatus.changes },
+                config: { ...lastConfig }
+              };
+            }
+          });
+        } catch (_) {}
       };
 
       const isOwnGeneratedCSS = (text) => {
@@ -125,6 +163,7 @@ extension BrowserModel {
 
       const installStylesheetProxy = () => {
         if (!window.CSSStyleSheet || CSSStyleSheet.prototype.__wkdomainsDarkModePageProxy) return;
+        proxyStatus.stylesheetProxy = true;
 
         const proto = CSSStyleSheet.prototype;
         const nativeInsertRule = proto.insertRule;
@@ -414,6 +453,7 @@ extension BrowserModel {
 
       const installShadowRootProxy = () => {
         if (!Element.prototype.attachShadow || Element.prototype.__wkdomainsDarkModePageProxyShadow) return;
+        proxyStatus.shadowRootProxy = true;
         const nativeAttachShadow = Element.prototype.attachShadow;
         defineHiddenProperty(Element.prototype, "__wkdomainsDarkModePageProxyShadow", true);
         rememberPropertyDescriptor(Element.prototype, "attachShadow");
@@ -430,6 +470,7 @@ extension BrowserModel {
         if (!window.customElements || customElements.__wkdomainsDarkModePageProxyRegistry) return;
         const nativeDefine = customElements.define;
         if (!nativeDefine) return;
+        proxyStatus.customElementRegistryProxy = true;
         try {
           defineHiddenProperty(customElements, "__wkdomainsDarkModePageProxyRegistry", true);
           rememberPropertyDescriptor(customElements, "define");
@@ -451,6 +492,12 @@ extension BrowserModel {
         try {
           config = event && event.detail || {};
         } catch (_) {}
+        lastConfig = {
+          disableStyleSheetsProxy: config.disableStyleSheetsProxy === true,
+          disableShadowRootProxy: config.disableShadowRootProxy === true,
+          disableCustomElementRegistryProxy: config.disableCustomElementRegistryProxy === true,
+          enableCustomElementRegistryProxy: config.enableCustomElementRegistryProxy === true
+        };
 
         if (!config.disableStyleSheetsProxy) {
           installStylesheetProxy();
@@ -462,6 +509,7 @@ extension BrowserModel {
           installCustomElementRegistryProxy();
         }
 
+        proxyStatus.configured = true;
         reportGlobalChange("configured");
         __wkdomainsDarkModeDebug("configured");
       };
@@ -469,6 +517,7 @@ extension BrowserModel {
       const cleanup = () => {
         if (!active) return;
         active = false;
+        proxyStatus.active = false;
         restorePrototypePatches();
         const tasks = cleanupTasks.splice(0);
         for (const task of tasks) {
@@ -486,6 +535,7 @@ extension BrowserModel {
       cleanupTasks.push(() => document.removeEventListener(PAGE_PROXY_CLEANUP_EVENT, cleanup));
       cleanupTasks.push(() => document.removeEventListener("__darkreader__cleanUp", cleanup));
 
+      exposeStatus();
       __wkdomainsDarkModeDebug("waiting-config");
     })();
     """#
