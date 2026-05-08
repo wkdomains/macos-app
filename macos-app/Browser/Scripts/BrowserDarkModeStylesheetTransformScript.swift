@@ -366,30 +366,39 @@ extension BrowserModel {
       };
 
       const CSS_RULE_CONVERSION_ASYNC_THRESHOLD = 180;
+      const CSS_ADOPTED_RULE_CONVERSION_ASYNC_THRESHOLD = 80;
       const CSS_RULE_CONVERSION_BUDGET_MS = 7;
       const CSS_RULE_CONVERSION_MAX_PER_SLICE = 24;
 
+      const cssRuleListLength = (rules) => Number(rules && rules.length) || 0;
+
       const shouldConvertCSSRulesAsync = (rules) => {
-        const length = Number(rules && rules.length) || 0;
-        return length >= CSS_RULE_CONVERSION_ASYNC_THRESHOLD;
+        return cssRuleListLength(rules) >= CSS_RULE_CONVERSION_ASYNC_THRESHOLD;
       };
 
-      const convertCSSRulesAsync = (rules, callback) => {
-        if (!rules) {
-          callback("");
-          return () => {};
+      const cssRuleListsLength = (ruleLists) => {
+        let total = 0;
+        for (const rules of ruleLists || []) {
+          total += cssRuleListLength(rules);
         }
+        return total;
+      };
 
-        const seenRuleLists = new WeakSet();
-        if (seenRuleLists.has(rules)) {
+      const shouldConvertCSSRuleListsAsync = (ruleLists, threshold = CSS_RULE_CONVERSION_ASYNC_THRESHOLD) => {
+        return cssRuleListsLength(ruleLists) >= threshold;
+      };
+
+      const convertCSSRuleListsAsync = (ruleLists, callback) => {
+        const lists = (ruleLists || []).filter(Boolean);
+        if (lists.length === 0) {
           callback("");
           return () => {};
         }
-        seenRuleLists.add(rules);
 
         const chunks = [];
-        const length = Number(rules.length) || 0;
-        let index = 0;
+        let listIndex = 0;
+        let ruleIndex = 0;
+        let seenRuleLists = null;
         let cancelled = false;
 
         const now = () => {
@@ -401,22 +410,36 @@ extension BrowserModel {
           const started = now();
           let convertedInSlice = 0;
 
-          while (index < length) {
-            const converted = convertCSSRule(rules[index], 0, seenRuleLists);
-            if (converted) chunks.push(converted);
-            index += 1;
-            convertedInSlice += 1;
-
-            if (
-              convertedInSlice >= CSS_RULE_CONVERSION_MAX_PER_SLICE
-              || now() - started >= CSS_RULE_CONVERSION_BUDGET_MS
-            ) {
-              break;
+          while (listIndex < lists.length) {
+            const rules = lists[listIndex];
+            const length = cssRuleListLength(rules);
+            if (!seenRuleLists) {
+              seenRuleLists = new WeakSet();
+              seenRuleLists.add(rules);
             }
+
+            while (ruleIndex < length) {
+              const converted = convertCSSRule(rules[ruleIndex], 0, seenRuleLists);
+              if (converted) chunks.push(converted);
+              ruleIndex += 1;
+              convertedInSlice += 1;
+
+              if (
+                convertedInSlice >= CSS_RULE_CONVERSION_MAX_PER_SLICE
+                || now() - started >= CSS_RULE_CONVERSION_BUDGET_MS
+              ) {
+                break;
+              }
+            }
+
+            if (ruleIndex < length) break;
+            listIndex += 1;
+            ruleIndex = 0;
+            seenRuleLists = null;
           }
 
           if (cancelled) return;
-          if (index < length) {
+          if (listIndex < lists.length) {
             window.setTimeout(step, 0);
             return;
           }
@@ -429,6 +452,8 @@ extension BrowserModel {
           cancelled = true;
         };
       };
+
+      const convertCSSRulesAsync = (rules, callback) => convertCSSRuleListsAsync([rules], callback);
 
       const hashString = (value) => {
         const text = String(value || "");

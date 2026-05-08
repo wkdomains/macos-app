@@ -7,6 +7,14 @@ import Foundation
 
 extension BrowserModel {
     static let browserDarkModeStylesheetManagersScript = #"""
+      const cancelPendingStyleConversion = (manager) => {
+        if (!manager || !manager.cancelConversion) return;
+        manager.cancelConversion();
+        manager.cancelConversion = null;
+        manager.pendingSignature = "";
+        asyncStyleConversionsCancelled += 1;
+      };
+
       const ensureStyleManager = (element) => {
         let manager = styleManagers.get(element);
         if (!manager) {
@@ -111,11 +119,7 @@ extension BrowserModel {
             __wkdomainsDarkModeDebug("render-style-pending");
             return;
           }
-          if (manager.cancelConversion) {
-            manager.cancelConversion();
-            manager.cancelConversion = null;
-            asyncStyleConversionsCancelled += 1;
-          }
+          cancelPendingStyleConversion(manager);
           manager.pendingSignature = signature;
           asyncStyleConversionsStarted += 1;
           __wkdomainsDarkModeDebug(`render-style-async:${rules.length}`);
@@ -155,12 +159,7 @@ extension BrowserModel {
           return;
         }
 
-        if (manager.cancelConversion) {
-          manager.cancelConversion();
-          manager.cancelConversion = null;
-          manager.pendingSignature = "";
-          asyncStyleConversionsCancelled += 1;
-        }
+        cancelPendingStyleConversion(manager);
 
         __wkdomainsDarkModeDebug(`render-style-convert:${rules.length}`);
         const css = convertCSSRules(rules);
@@ -224,46 +223,90 @@ extension BrowserModel {
           const style = document.createElement("style");
           style.classList.add(INLINE_CLASS, "darkreader", ADOPTED_STYLE_CLASS);
           style.media = "screen";
-          manager = { style, signature: "" };
+          manager = {
+            style,
+            signature: "",
+            pendingSignature: "",
+            cancelConversion: null
+          };
           adoptedStyleManagers.set(root, manager);
           managedAdoptedRoots.add(root);
           ensureAdoptedStyleListeners(root);
         }
 
-        const chunks = [];
+        const ruleLists = [];
         const signature = [];
         for (const sheet of root.adoptedStyleSheets) {
           const rules = safeGetRules(sheet);
           if (!rules) continue;
           signature.push(signatureForRules(rules));
-          const css = convertCSSRules(rules);
-          if (css) chunks.push(css);
+          ruleLists.push(rules);
         }
 
         const nextSignature = signature.join(",");
-        if (manager.signature !== nextSignature) {
-          manager.signature = nextSignature;
-          withStylesheetProxyDisabled(() => {
-            manager.style.textContent = chunks.join("\n");
-          });
+        const target = adoptedStyleTargetForRoot(root);
+        const insertAdoptedStyle = () => {
+          if (!manager.style.textContent) {
+            withStylesheetProxyDisabled(() => {
+              manager.style.remove();
+            });
+            return;
+          }
+          if (target && manager.style.parentNode !== target) {
+            withStylesheetProxyDisabled(() => {
+              try {
+                target.insertBefore(manager.style, target.firstChild);
+              } catch (_) {
+                target.appendChild(manager.style);
+              }
+            });
+          }
+        };
+
+        if (manager.signature === nextSignature) {
+          insertAdoptedStyle();
+          return;
         }
 
-        const target = adoptedStyleTargetForRoot(root);
-        if (!manager.style.textContent) {
-          withStylesheetProxyDisabled(() => {
-            manager.style.remove();
+        if (shouldConvertCSSRuleListsAsync(ruleLists, CSS_ADOPTED_RULE_CONVERSION_ASYNC_THRESHOLD)) {
+          if (manager.pendingSignature === nextSignature) {
+            return;
+          }
+          cancelPendingStyleConversion(manager);
+          manager.pendingSignature = nextSignature;
+          asyncStyleConversionsStarted += 1;
+          manager.cancelConversion = convertCSSRuleListsAsync(ruleLists, (css) => {
+            manager.cancelConversion = null;
+            const disconnected = root !== document && root.host && !root.host.isConnected;
+            if (manager.pendingSignature !== nextSignature || disconnected) {
+              if (manager.pendingSignature === nextSignature) {
+                manager.pendingSignature = "";
+              }
+              asyncStyleConversionsCancelled += 1;
+              return;
+            }
+            manager.pendingSignature = "";
+            manager.signature = nextSignature;
+            asyncStyleConversionsCompleted += 1;
+            withStylesheetProxyDisabled(() => {
+              manager.style.textContent = css;
+            });
+            insertAdoptedStyle();
           });
           return;
         }
-        if (manager.style.textContent && target && manager.style.parentNode !== target) {
-          withStylesheetProxyDisabled(() => {
-            try {
-              target.insertBefore(manager.style, target.firstChild);
-            } catch (_) {
-              target.appendChild(manager.style);
-            }
-          });
+
+        cancelPendingStyleConversion(manager);
+        const chunks = [];
+        for (const rules of ruleLists) {
+          const css = convertCSSRules(rules);
+          if (css) chunks.push(css);
         }
+        manager.signature = nextSignature;
+        withStylesheetProxyDisabled(() => {
+          manager.style.textContent = chunks.join("\n");
+        });
+        insertAdoptedStyle();
       };
 
       const collectAdoptedStyleSheetRules = (root) => {
@@ -292,11 +335,7 @@ extension BrowserModel {
         }
         markStyleLoaded(element);
         if (manager) {
-          if (manager.cancelConversion) {
-            manager.cancelConversion();
-            manager.cancelConversion = null;
-            asyncStyleConversionsCancelled += 1;
-          }
+          cancelPendingStyleConversion(manager);
           element.removeEventListener(STYLE_UPDATE_EVENT, manager.onSheetChange);
           if (manager.observer) manager.observer.disconnect();
           withStylesheetProxyDisabled(() => {
@@ -318,6 +357,7 @@ extension BrowserModel {
       const removeAdoptedStyleManager = (root) => {
         const manager = adoptedStyleManagers.get(root);
         if (manager) {
+          cancelPendingStyleConversion(manager);
           withStylesheetProxyDisabled(() => {
             manager.style.remove();
           });

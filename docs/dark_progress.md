@@ -141,13 +141,17 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - top-level CSSRuleLists above the large-sheet threshold are converted in small timer slices instead of one synchronous render burst
   - pending async conversions are cancelled when a stylesheet changes or is removed
   - `/api/v1/dark-mode` reports async conversion started/completed/cancelled/pending counters
+- Extended incremental conversion to adopted stylesheets:
+  - a shadow/document root's adopted CSSRuleLists are grouped into one cancellable sliced render
+  - large adopted-sheet roots use a lower async threshold because Web Component SPAs often spread CSS across many roots
+  - adopted async renders are cancelled when the root changes or disconnects
 
 ## Completion Estimates
 
 - Full `variablesStore` dependency graph for matching variables and dependents: 77%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 91%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 92%
 - Mature optimized DOM/style watchers: 82%
-- Robust adopted stylesheet management: 81%
+- Robust adopted stylesheet management: 83%
 - Full stylesheet proxy behavior and cross-context coordination: 85%
 - Dark Reader's color pipeline and extensive config corpus: 64%
 - Mature fix selection/config parser behavior across many sites: 65%
@@ -159,12 +163,12 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - no full variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - limited scoped variable handling
-- Per-stylesheet managers still need more mature behavior. Current estimate: 91%.
+- Per-stylesheet managers still need more mature behavior. Current estimate: 92%.
   - inaccessible/CORS sheets
   - imported stylesheet retries
   - deeper nested-rule async rendering
 - Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 82%.
-- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 81%.
+- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 83%.
 - Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 85%.
 - Color pipeline is still a major gap. Current estimate: 64%.
   - no full Dark Reader palette/cache system
