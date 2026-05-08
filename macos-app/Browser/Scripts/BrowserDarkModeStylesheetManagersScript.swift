@@ -90,6 +90,11 @@ extension BrowserModel {
           return null;
         }
 
+        if (element instanceof HTMLLinkElement && startStyleSheetFetchCopy(element)) {
+          markStyleLoading(element);
+          return null;
+        }
+
         if (access.hasSheet || access.error || document.readyState !== "loading") {
           markStyleUnavailable(element);
           return null;
@@ -196,7 +201,13 @@ extension BrowserModel {
 
       const ensureAdoptedStyleListeners = (root) => {
         if (!root || adoptedStyleListenersByRoot.has(root)) return;
-        const onChange = () => scheduleStyleSync(0);
+        const onChange = () => {
+          const manager = adoptedStyleManagers.get(root);
+          if (manager) {
+            manager.revision += 1;
+          }
+          scheduleStyleSync(0);
+        };
         root.addEventListener(ADOPTED_STYLE_CHANGE_EVENT, onChange);
         root.addEventListener(ADOPTED_STYLES_CHANGE_EVENT, onChange);
         root.addEventListener(ADOPTED_DECLARATION_CHANGE_EVENT, onChange);
@@ -227,6 +238,7 @@ extension BrowserModel {
             style,
             signature: "",
             pendingSignature: "",
+            revision: 0,
             cancelConversion: null
           };
           adoptedStyleManagers.set(root, manager);
@@ -239,11 +251,16 @@ extension BrowserModel {
         for (const sheet of root.adoptedStyleSheets) {
           const rules = safeGetRules(sheet);
           if (!rules) continue;
-          signature.push(signatureForRules(rules));
+          signature.push(cssRuleListLength(rules));
           ruleLists.push(rules);
         }
 
-        const nextSignature = signature.join(",");
+        const nextSignature = [
+          root.adoptedStyleSheets.length,
+          variablesStore.version(),
+          manager.revision,
+          signature.join(",")
+        ].join(":");
         const target = adoptedStyleTargetForRoot(root);
         const insertAdoptedStyle = () => {
           if (!manager.style.textContent) {

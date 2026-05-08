@@ -10,6 +10,10 @@ extension BrowserModel {
         (UserDefaults.standard.object(forKey: "wkdomains.darkModeUseIsolatedWorld") as? Bool) ?? true
     }
 
+    static var darkModeSiteFixConfig: String {
+        UserDefaults.standard.string(forKey: "wkdomains.darkModeDynamicThemeFixesConfig") ?? ""
+    }
+
     static let renderInvalidationScript = #"""
     (() => {
       if (window.__wkdomainsRenderInstalled) return;
@@ -114,7 +118,7 @@ extension BrowserModel {
 
     \#(Self.browserDarkModeColorScript)
 
-    \#(Self.browserDarkModeSiteFixesScript)
+    \#(Self.browserDarkModeSiteFixesScript(siteFixConfig: Self.darkModeSiteFixConfig))
 
     \#(Self.browserDarkModeStaticStyleScript)
 

@@ -22,12 +22,18 @@ extension BrowserModel {
       let asyncStyleConversionsStarted = 0;
       let asyncStyleConversionsCompleted = 0;
       let asyncStyleConversionsCancelled = 0;
+      let stylesheetFetchCopyStarted = 0;
+      let stylesheetFetchCopyCompleted = 0;
+      let stylesheetFetchCopyFailed = 0;
       let stylesheetProxyActive = false;
       let loadingStylesCounter = 0;
       const loadingStyles = new Set();
       const loadingStyleIDsByElement = new WeakMap();
       const loadingStyleListenersByElement = new WeakMap();
       const loadingStyleTimeoutsByElement = new WeakMap();
+      const fetchedStyleSheetCopiesByElement = new WeakMap();
+      const fetchingStyleSheetURLsByElement = new WeakMap();
+      const failedStyleSheetFetchURLsByElement = new WeakMap();
       const unavailableStyleElements = new WeakSet();
       const registeredCustomPropertyTypes = new Map();
       let fallbackWasCleared = false;
@@ -96,7 +102,86 @@ extension BrowserModel {
 
       const safeGetRules = (sheet) => getRulesOrError(sheet).rules;
 
+      const cssURLNeedsRewrite = (url) => {
+        const value = String(url || "").trim();
+        return !!value
+          && !value.startsWith("#")
+          && !/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(value);
+      };
+
+      const rewriteRelativeCSSURLs = (cssText, baseURL) => String(cssText || "").replace(
+        /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi,
+        (match, quote, url) => {
+          const rawURL = String(url || "").trim();
+          if (!cssURLNeedsRewrite(rawURL)) return match;
+          try {
+            const absoluteURL = new URL(rawURL, baseURL).href.replaceAll('"', "%22");
+            return `url("${absoluteURL}")`;
+          } catch (_) {
+            return match;
+          }
+        }
+      );
+
+      const fetchedStyleSheetRulesFor = (element) => {
+        const copy = fetchedStyleSheetCopiesByElement.get(element);
+        if (!copy || copy.href !== element.href) return null;
+        return copy.rules || null;
+      };
+
+      const startStyleSheetFetchCopy = (element) => {
+        if (!(element instanceof HTMLLinkElement) || !element.href || !window.fetch) return false;
+        if (!window.CSSStyleSheet || !CSSStyleSheet.prototype.replaceSync) return false;
+        if (fetchedStyleSheetRulesFor(element)) return true;
+        if (fetchingStyleSheetURLsByElement.get(element) === element.href) return true;
+        if (failedStyleSheetFetchURLsByElement.get(element) === element.href) return false;
+
+        const href = element.href;
+        fetchingStyleSheetURLsByElement.set(element, href);
+        stylesheetFetchCopyStarted += 1;
+        fetch(href, { cache: "force-cache", credentials: "include" })
+          .then((response) => {
+            if (!response || !response.ok) {
+              throw new Error(`Stylesheet fetch failed: ${response ? response.status : "no-response"}`);
+            }
+            return response.text();
+          })
+          .then((cssText) => {
+            if (element.href !== href) return;
+            const sheet = new CSSStyleSheet();
+            sheet.replaceSync(rewriteRelativeCSSURLs(cssText, href));
+            fetchedStyleSheetCopiesByElement.set(element, {
+              href,
+              sheet,
+              rules: sheet.cssRules,
+              textLength: String(cssText || "").length
+            });
+            stylesheetFetchCopyCompleted += 1;
+            failedStyleSheetFetchURLsByElement.delete(element);
+            markStyleLoaded(element);
+            scheduleStyleSync(0);
+          })
+          .catch(() => {
+            if (element.href === href) {
+              failedStyleSheetFetchURLsByElement.set(element, href);
+            }
+            stylesheetFetchCopyFailed += 1;
+            markStyleLoaded(element);
+          })
+          .finally(() => {
+            if (fetchingStyleSheetURLsByElement.get(element) === href) {
+              fetchingStyleSheetURLsByElement.delete(element);
+            }
+          });
+        return true;
+      };
+
       const getStyleElementRulesOrError = (element) => {
+        const fetchedRules = fetchedStyleSheetRulesFor(element);
+        if (fetchedRules) {
+          return { rules: fetchedRules, error: null, hasSheet: true };
+        }
+
         let sheet = null;
         try {
           sheet = element ? element.sheet : null;

@@ -6,7 +6,10 @@
 import Foundation
 
 extension BrowserModel {
-    static let browserDarkModeSiteFixesScript = #"""
+    static func browserDarkModeSiteFixesScript(siteFixConfig: String) -> String {
+        let siteFixConfigLiteral = javaScriptStringLiteral(siteFixConfig)
+
+        return #"""
       const SITE_FIXES = [
         {
           url: ["mail.google.com"],
@@ -319,7 +322,7 @@ extension BrowserModel {
         }
       ];
 
-      const SITE_FIX_CONFIG = ``;
+      const SITE_FIX_CONFIG = \#(siteFixConfigLiteral);
       const SITE_FIX_SECTION_MAP = new Map([
         ["INVERT", "invert"],
         ["CSS", "css"],
@@ -531,6 +534,24 @@ extension BrowserModel {
       const ignoredCSSSelectors = activeSiteFixList("ignoreCSS");
       const ignoredCSSURLPatterns = activeSiteFixList("ignoreCSSUrl");
       const siteFixFlag = (key) => activeSiteFix && activeSiteFix[key] === true;
+      const siteFixDebugStatus = () => ({
+        configBytes: SITE_FIX_CONFIG.length,
+        builtInFixes: SITE_FIXES.length,
+        parsedFixes: parsedSiteFixes.length,
+        matchingFixes: matchingSiteFixes.length,
+        active: !!activeSiteFix,
+        activeUrls: activeSiteFix ? activeSiteFix.url.slice(0, 12) : [],
+        cssBytes: activeSiteFix ? String(activeSiteFix.css || "").length : 0,
+        invertCount: activeSiteFixList("invert").length,
+        ignoreInlineStyleCount: ignoredInlineSelectors.length,
+        ignoreImageAnalysisCount: ignoredImageAnalysisSelectors.length,
+        ignoreCSSCount: ignoredCSSSelectors.length,
+        ignoreCSSUrlCount: ignoredCSSURLPatterns.length,
+        disableStyleSheetsProxy: siteFixFlag("disableStyleSheetsProxy"),
+        disableShadowRootProxy: siteFixFlag("disableShadowRootProxy"),
+        disableCustomElementRegistryProxy: siteFixFlag("disableCustomElementRegistryProxy"),
+        enableCustomElementRegistryProxy: siteFixFlag("enableCustomElementRegistryProxy")
+      });
 
       const matchesAnySiteFixSelector = (element, selectors) => {
         if (!element || !element.matches || !selectors || selectors.length === 0) return false;
@@ -577,4 +598,5 @@ extension BrowserModel {
 
       const getSiteFixStyle = () => activeSiteFix ? replaceSiteCSSTemplates(activeSiteFix.css || "") : "";
     """#
+    }
 }

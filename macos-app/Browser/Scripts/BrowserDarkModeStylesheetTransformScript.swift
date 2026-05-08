@@ -365,6 +365,61 @@ extension BrowserModel {
         return chunks.join("\n");
       };
 
+      const convertCSSLeafRule = (rule) => {
+        try {
+          if (isPropertyRule(rule)) {
+            return convertCSSPropertyRule(rule);
+          }
+
+          if (isStyleRule(rule)) {
+            if (shouldIgnoreCSSSelector(rule.selectorText)) return "";
+            const declarations = buildModifiedDeclarations(rule.style);
+            return declarations.length > 0 ? `${rule.selectorText} {\n${declarations.join("\n")}\n}` : "";
+          }
+        } catch (_) {}
+
+        return null;
+      };
+
+      const cssRuleGroupDetails = (rule) => {
+        try {
+          if (isImportRule(rule)) {
+            return { rules: safeCSSRuleList(rule.styleSheet), prefix: "", suffix: "" };
+          }
+
+          if (isMediaRule(rule)) {
+            if (!mediaRuleApplies(rule)) return null;
+            const mediaText = safeMediaText(rule);
+            return {
+              rules: safeCSSRuleList(rule),
+              prefix: mediaText ? `@media ${mediaText} {\n` : "",
+              suffix: mediaText ? "\n}" : ""
+            };
+          }
+
+          if (isSupportsRule(rule)) {
+            const conditionText = String(rule.conditionText || "");
+            if (window.CSS && CSS.supports && conditionText && !CSS.supports(conditionText)) return null;
+            return {
+              rules: safeCSSRuleList(rule),
+              prefix: conditionText ? `@supports ${conditionText} {\n` : "",
+              suffix: conditionText ? "\n}" : ""
+            };
+          }
+
+          if (isLayerRule(rule)) {
+            const name = String(rule.name || "").trim();
+            return {
+              rules: safeCSSRuleList(rule),
+              prefix: name ? `@layer ${name} {\n` : "@layer {\n",
+              suffix: "\n}"
+            };
+          }
+        } catch (_) {}
+
+        return null;
+      };
+
       const CSS_RULE_CONVERSION_ASYNC_THRESHOLD = 180;
       const CSS_ADOPTED_RULE_CONVERSION_ASYNC_THRESHOLD = 80;
       const CSS_RULE_CONVERSION_BUDGET_MS = 7;
@@ -397,49 +452,98 @@ extension BrowserModel {
 
         const chunks = [];
         let listIndex = 0;
-        let ruleIndex = 0;
-        let seenRuleLists = null;
+        let stack = [];
+        let seenRuleLists = new WeakSet();
         let cancelled = false;
 
         const now = () => {
           try { return performance.now(); } catch (_) { return Date.now(); }
         };
 
+        const startNextList = () => {
+          stack = [];
+          seenRuleLists = new WeakSet();
+          while (listIndex < lists.length) {
+            const rules = lists[listIndex];
+            listIndex += 1;
+            if (!rules || seenRuleLists.has(rules)) continue;
+            seenRuleLists.add(rules);
+            stack.push({
+              rules,
+              index: 0,
+              depth: 0,
+              chunks: [],
+              prefix: "",
+              suffix: ""
+            });
+            return;
+          }
+        };
+
+        const finishFrame = () => {
+          const frame = stack.pop();
+          if (!frame) return;
+          const body = frame.chunks.join("\n");
+          if (!body) return;
+          const css = frame.prefix ? `${frame.prefix}${body}${frame.suffix}` : body;
+          if (stack.length > 0) {
+            stack[stack.length - 1].chunks.push(css);
+          } else {
+            chunks.push(css);
+          }
+        };
+
+        startNextList();
+
         const step = () => {
           if (cancelled) return;
           const started = now();
           let convertedInSlice = 0;
 
-          while (listIndex < lists.length) {
-            const rules = lists[listIndex];
-            const length = cssRuleListLength(rules);
-            if (!seenRuleLists) {
-              seenRuleLists = new WeakSet();
-              seenRuleLists.add(rules);
+          while (stack.length > 0) {
+            const frame = stack[stack.length - 1];
+            const length = cssRuleListLength(frame.rules);
+
+            if (frame.index >= length) {
+              finishFrame();
+              if (stack.length === 0) {
+                startNextList();
+              }
+              continue;
             }
 
-            while (ruleIndex < length) {
-              const converted = convertCSSRule(rules[ruleIndex], 0, seenRuleLists);
-              if (converted) chunks.push(converted);
-              ruleIndex += 1;
-              convertedInSlice += 1;
+            const rule = frame.rules[frame.index];
+            frame.index += 1;
+            convertedInSlice += 1;
 
-              if (
-                convertedInSlice >= CSS_RULE_CONVERSION_MAX_PER_SLICE
-                || now() - started >= CSS_RULE_CONVERSION_BUDGET_MS
-              ) {
-                break;
+            const leaf = convertCSSLeafRule(rule);
+            if (leaf !== null) {
+              if (leaf) frame.chunks.push(leaf);
+            } else if (frame.depth < 8) {
+              const group = cssRuleGroupDetails(rule);
+              if (group && group.rules && !seenRuleLists.has(group.rules)) {
+                seenRuleLists.add(group.rules);
+                stack.push({
+                  rules: group.rules,
+                  index: 0,
+                  depth: frame.depth + 1,
+                  chunks: [],
+                  prefix: group.prefix,
+                  suffix: group.suffix
+                });
               }
             }
 
-            if (ruleIndex < length) break;
-            listIndex += 1;
-            ruleIndex = 0;
-            seenRuleLists = null;
+            if (
+              convertedInSlice >= CSS_RULE_CONVERSION_MAX_PER_SLICE
+              || now() - started >= CSS_RULE_CONVERSION_BUDGET_MS
+            ) {
+              break;
+            }
           }
 
           if (cancelled) return;
-          if (listIndex < lists.length) {
+          if (stack.length > 0) {
             window.setTimeout(step, 0);
             return;
           }
@@ -465,17 +569,5 @@ extension BrowserModel {
         return (hash >>> 0).toString(36);
       };
 
-      const signatureForRules = (rules) => {
-        if (!rules) return "no-rules";
-        const parts = [rules.length, variablesStore.version()];
-        for (let index = 0; index < rules.length; index += 1) {
-          try {
-            parts.push(hashString(rules[index].cssText));
-          } catch (_) {
-            parts.push("x");
-          }
-        }
-        return parts.join(":");
-      };
     """#
 }

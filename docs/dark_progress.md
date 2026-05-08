@@ -145,16 +145,27 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - a shadow/document root's adopted CSSRuleLists are grouped into one cancellable sliced render
   - large adopted-sheet roots use a lower async threshold because Web Component SPAs often spread CSS across many roots
   - adopted async renders are cancelled when the root changes or disconnects
+- Improved large/nested stylesheet rendering:
+  - async CSS conversion now walks nested `@media`, `@supports`, `@layer`, and `@import` rule groups with an explicit stack
+  - deeply nested group rules no longer fall back into one synchronous recursive conversion burst
+  - adopted stylesheet signatures now use root revision and rule counts instead of serializing every `CSSRule.cssText`
+- Added a first stylesheet fetch-copy fallback:
+  - inaccessible `<link rel="stylesheet">` rules can be fetched and parsed into a constructed `CSSStyleSheet` when page-world `fetch()` and CORS allow it
+  - relative `url(...)` references in fetched copies are rewritten against the stylesheet URL before parsing
+  - `/api/v1/dark-mode` reports fetch-copy started/completed/failed counters
+- Improved site-fix config plumbing:
+  - `wkdomains.darkModeDynamicThemeFixesConfig` can now provide a Dark Reader-style dynamic-theme config corpus without editing the content script
+  - `/api/v1/dark-mode` reports active site-fix counts, config size, matched URLs, CSS bytes, and proxy flags
 
 ## Completion Estimates
 
 - Full `variablesStore` dependency graph for matching variables and dependents: 77%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 92%
-- Mature optimized DOM/style watchers: 82%
-- Robust adopted stylesheet management: 83%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 94%
+- Mature optimized DOM/style watchers: 83%
+- Robust adopted stylesheet management: 84%
 - Full stylesheet proxy behavior and cross-context coordination: 85%
 - Dark Reader's color pipeline and extensive config corpus: 64%
-- Mature fix selection/config parser behavior across many sites: 65%
+- Mature fix selection/config parser behavior across many sites: 68%
 - Extension-world isolation: 58%
 
 ## Remaining Gaps
@@ -163,20 +174,20 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - no full variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - limited scoped variable handling
-- Per-stylesheet managers still need more mature behavior. Current estimate: 92%.
-  - inaccessible/CORS sheets
+- Per-stylesheet managers still need more mature behavior. Current estimate: 94%.
+  - privileged cross-origin/background fetch parity
   - imported stylesheet retries
-  - deeper nested-rule async rendering
-- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 82%.
-- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 83%.
+  - CSS text import expansion for fetched copies
+- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 83%.
+- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 84%.
 - Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 85%.
 - Color pipeline is still a major gap. Current estimate: 64%.
   - no full Dark Reader palette/cache system
   - limited image analysis
   - limited relative-color handling
   - no theme knob parity
-- Config/fix support is still hardcoded. Current estimate: 65%.
-  - parser exists, but no bundled Dark Reader config corpus yet
+- Config/fix support is still incomplete. Current estimate: 68%.
+  - parser and runtime config injection exist, but no bundled Dark Reader config corpus yet
   - no broad site corpus
   - only a small set of targeted fixes
 - Extension-world isolation is not solved. Current estimate: 58%.
