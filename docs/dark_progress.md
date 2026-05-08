@@ -1,377 +1,145 @@
-# Dark Mode Progress
+# Dark Mode Baseline
 
 Last updated: 2026-05-08
 
-## Current Focus
+## Reference Point
 
-Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-theme architecture, with Reddit as the main stress case.
+Upstream reference: [Dark Reader `src/inject/dynamic-theme/index.ts`](https://github.com/darkreader/darkreader/blob/main/src/inject/dynamic-theme/index.ts).
 
-## Progress
+That file is the dynamic-theme coordinator. It owns:
 
-- Expanded color handling:
-  - direct `hsl()`, `hsla()`, and `hwb()` parsing
-  - simple `color-mix()` parsing
-  - balanced CSS color-function scanning so nested functions are not truncated by the old regex path
-  - color replacement now covers literals and supported functions without double-transforming generated `rgb(...)`
-- Added custom property registration awareness:
-  - `@property --token { syntax: "<color>"; ... }` rules are included in variable matching
-  - `CSS.registerProperty({ name, syntax: "<color>" })` is proxied and schedules a stylesheet sync
-- Improved watcher efficiency with dirty-root compression:
-  - descendant dirty roots are skipped when an ancestor is already queued
-  - very noisy mutation batches fall back to a single document pass
-- Improved adopted stylesheet/proxy bookkeeping:
-  - adopted stylesheet ownership is refreshed per root instead of accumulating stale owners
-  - adopted rule declaration tracking now recurses through nested rule lists
-  - empty adopted override styles are removed
-- Improved stylesheet loading cleanup:
-  - stale link `load`/`error` listeners are removed when a sheet loads, errors, times out, or is removed
-- Site-fix matching now supports wildcard hosts and path patterns instead of treating every fix as host-only.
-- Replaced regex-only `var()` handling with balanced variable-reference scanning:
-  - nested fallbacks are now discovered for dependency matching
-  - fallback values are recursively rewritten when generating wrapped dark variables
-  - color/raw-color fallbacks are transformed after nested variables are preserved
-- Reduced expensive SPA work:
-  - inline DOM passes no longer force a full stylesheet conversion every run
-  - stylesheet sync now has an explicit dirty flag and immediate flush path
-  - very noisy mutation batches collapse into one document pass instead of retaining hundreds of mutation records
-- Improved custom property registration behavior:
-  - color `@property` rules now emit wrapped dark-property registrations with transformed `initial-value`
-  - proxied `CSS.registerProperty()` now mirrors color properties into bg/text/border wrapped registrations when possible
-- Stylesheet proxy now catches nested `CSSGroupingRule.insertRule()` and `deleteRule()` changes inside media/supports/container-style rule groups.
-- Color parsing now understands `light-dark()` by selecting the dark branch before applying the relevant transformer.
-- Expanded modern color-space handling:
-  - direct `lab()` and `lch()` parsing with D50-to-sRGB conversion
-  - direct `oklab()` and `oklch()` parsing with OKLab-to-sRGB conversion
-  - unsupported `color-*()` functions no longer fall through the generic `color()` parser and turn into bogus black values
-- Improved shorthand color coverage:
-  - named-color detection now uses browser-backed parsing instead of a short hardcoded keyword subset
-  - literal replacement skips tokens inside `url(...)` so filenames like `red-icon.svg` are not rewritten
-  - `color(srgb ...)`, `color(srgb-linear ...)`, and `color(display-p3 ...)` are parsed directly
-  - `color-mix()` now accepts interpolation methods with multiple tokens before the first comma
-- Added the first Dark Reader-style site-fix config parser:
-  - URL blocks with `INVERT`, `CSS`, `IGNORE INLINE STYLE`, `IGNORE IMAGE ANALYSIS`, `IGNORE CSS`, and CSS URL ignore sections can now be parsed into fix objects
-  - stylesheet conversion can skip selectors listed under `IGNORE CSS`
-- Improved parsed/configured site-fix selection:
-  - all generic fixes are combined
-  - equally specific matching fixes are combined instead of dropping all but one
-  - config parsing now supports `DISABLE SHADOW ROOT PROXY` and opt-in `ENABLE CUSTOM ELEMENT REGISTRY PROXY`
-- Reduced page-world residue from prototype hooks:
-  - patched prototype/object descriptors are remembered before wrapping
-  - cleanup restores stylesheet, adopted stylesheet, custom element, and shadow-root hooks instead of only disabling callbacks
-  - descriptor restore tasks are queued on every install cycle so cleanup stays reversible after remove/reinstall
-  - `customElements.define` is no longer patched by default; it is site-fix opt-in only
-- Added HN regression diagnostics and replaced the temporary bypass with a general stylesheet-manager fix:
-  - native `[wkdomains-debug]` logs now trace navigation, script installation, console warnings/errors, XHR, and local API evaluation timing
-  - dark-mode injection emits `[wkdomains-dark]` phase pings around startup, proxy install, stylesheet sync, and root application
-  - startup diagnostics now cover listener setup, root observer setup, initial style-sync scheduling, and stylesheet-sync phases
-  - stylesheet rule access now follows Dark Reader's `details()`/render split: first pass creates managers and starts guarded loading, second pass renders only readable rules
-  - stylesheet render signatures are now manager-revision based instead of serializing every `CSSRule.cssText` during startup render
-  - generated sync/adopted stylesheet writes now temporarily suppress stylesheet-proxy callbacks to avoid page-world reentry during our own rendering
-  - stylesheet conversion now uses Dark Reader-style duck-typed CSS rule handling, media filtering, and recursion guards instead of relying on `rule.type` and grouping `rule.cssText`
-  - declaration iteration now matches Dark Reader's narrower empty-background-shorthand fallback instead of probing every `background` shorthand
-  - fixed an infinite loop in URL detection when a CSS value has `url(...)` before a later color token, e.g. image backgrounds with transparent gradients
-  - the HN-specific stylesheet-processing disable was removed so simple legacy stylesheets are handled by the shared pipeline
-- Added unavailable stylesheet lifecycle handling:
-  - stylesheets that never expose readable `cssRules` no longer hold the fallback style open forever
-  - loading stylesheets now time out after 3.5s and are marked unavailable until they become readable
-  - rejected `CSSStyleSheet.replace()` promises no longer create unhandled observer noise from our proxy
-- Fixed a regression where the `adoptedStyleSheets` proxy recursively called its own getter from `rememberAdoptedSheetOwners`, causing `Maximum call stack size exceeded` and aborting dark-mode rendering on simple pages like Hacker News.
-- Stylesheet code was split into focused files:
-  - `BrowserDarkModeStylesheetStateScript.swift`
-  - `BrowserDarkModeStylesheetVariablesScript.swift`
-  - `BrowserDarkModeStylesheetTransformScript.swift`
-  - `BrowserDarkModeStylesheetManagersScript.swift`
-  - `BrowserDarkModeStylesheetProxyScript.swift`
-  - `BrowserDarkModeStylesheetScript.swift` now only preserves the injection order.
-- Variables graph is now bidirectional enough to propagate usage types from color-like aliases back to their owners and forward to referenced variables.
-- Stylesheet sync is two-pass:
-  - collect document and shadow stylesheet inputs
-  - match variable dependencies once
-  - render document and shadow managers from the shared graph
-- Per-stylesheet managers handle loading fallback, load/error listeners, stale manager cleanup, and Dark Reader-style `__darkreader__updateSheet` events.
-- Adopted stylesheet management handles document and shadow-root insertion targets separately.
-- Adopted stylesheet managers now listen for Dark Reader-style adopted sheet/declaration events.
-- Stylesheet proxy now covers:
-  - `insertRule`
-  - `deleteRule`
-  - `addRule`
-  - `removeRule`
-  - `replace`
-  - `replaceSync`
-  - declaration `setProperty`
-  - declaration `removeProperty`
-  - `adoptedStyleSheets` getter/setter
-  - in-place adopted stylesheet array changes such as `push`, `splice`, and `length` updates
-- DOM/style mutation watchers are batched and narrowed to style-relevant attributes and added/removed stylesheet nodes.
-- Color handling supports named colors, hex colors, rgb-like functions, and raw RGB variable values.
-- Site fix selection combines generic fixes with the most-specific matching fix.
-- Improved Dark Reader config compatibility:
-  - parsed config URL blocks now accept the global `*` block used by upstream `dynamic-theme-fixes.config`
-  - generated custom-property overrides now emit both wkdomains-prefixed variables and Dark Reader-compatible aliases such as `--darkreader-bg--token`
-  - registered color custom properties are mirrored into both variable namespaces
-  - inline cleanup and proxy-generated-property checks recognize the Dark Reader-compatible alias namespace
-- Added the first extension-world isolation spike:
-  - the main dynamic-theme engine now installs into an isolated content world by default
-  - a small page-world proxy remains for page-owned APIs that must be observed where the site's JavaScript runs
-  - page-world proxy coverage includes CSSStyleSheet mutation APIs, CSSStyleDeclaration mutation APIs, CSS.registerProperty, adoptedStyleSheets, grouping rules, and attachShadow
-  - proxy-to-engine DOM events schedule isolated-world stylesheet sync and carry color custom-property registrations when possible
-  - `wkdomains.darkModeUseIsolatedWorld=false` falls back to the old all-page-world path
-- Tightened isolated/page-world coordination:
-  - the page-world proxy now waits for an isolated-engine config event before patching prototypes
-  - site-fix flags such as `DISABLE STYLESHEET PROXY`, `DISABLE SHADOW ROOT PROXY`, and custom-element registry enable/disable now apply to the page-world proxy too
-  - page-world custom-element registry proxying is now available only when a fix explicitly opts in
-- Added runtime isolation status:
-  - isolated engine exposes `window.__wkdomainsDarkModeStatus()` inside the dark-mode content world
-  - page-world proxy exposes `window.__wkdomainsDarkModePageProxyStatus()` inside the page world
-  - `/api/v1/dark-mode` reads both content worlds and reports bridge/proxy configuration, event counts, sync state, and manager counts
-- Added Reddit startup performance gating:
-  - shadow-root discovery is now coalesced instead of rescanning the whole document for every page-proxy shadow/custom-element event
-  - newly discovered shadow roots queue inline application work instead of applying synchronously during discovery
-  - queued root application runs in small time-budgeted slices
-  - early stylesheet sync limits shadow/adopted-root rendering to startup slices, then schedules follow-up passes
-  - bridge-driven stylesheet sync is slightly delayed during the first 2.5s so bursty page-proxy events collapse
-- Added page-proxy event batching:
-  - page-world global proxy changes are now grouped into 50ms bridge batches before notifying the isolated engine
-  - per-root adopted stylesheet notifications are coalesced before dispatch
-  - page-proxy status now reports dispatched bridge batches, dispatched root-event batches, and pending batch queues
-- Added more long-session/runtime pruning:
-  - disconnected shadow roots now drop their root observers, adopted stylesheet managers, dirty-root entries, and queued root-apply/discovery work
-  - `/api/v1/dark-mode` reports pruned root and observer counts so stale SPA churn is visible
-- Added incremental large-stylesheet conversion:
-  - top-level CSSRuleLists above the large-sheet threshold are converted in small timer slices instead of one synchronous render burst
-  - pending async conversions are cancelled when a stylesheet changes or is removed
-  - `/api/v1/dark-mode` reports async conversion started/completed/cancelled/pending counters
-- Extended incremental conversion to adopted stylesheets:
-  - a shadow/document root's adopted CSSRuleLists are grouped into one cancellable sliced render
-  - large adopted-sheet roots use a lower async threshold because Web Component SPAs often spread CSS across many roots
-  - adopted async renders are cancelled when the root changes or disconnects
-- Improved large/nested stylesheet rendering:
-  - async CSS conversion now walks nested `@media`, `@supports`, `@layer`, and `@import` rule groups with an explicit stack
-  - deeply nested group rules no longer fall back into one synchronous recursive conversion burst
-  - adopted stylesheet signatures now use root revision and rule counts instead of serializing every `CSSRule.cssText`
-- Added a first stylesheet fetch-copy fallback:
-  - inaccessible `<link rel="stylesheet">` rules can be fetched and parsed into a constructed `CSSStyleSheet` when page-world `fetch()` and CORS allow it
-  - relative `url(...)` references in fetched copies are rewritten against the stylesheet URL before parsing
-  - `/api/v1/dark-mode` reports fetch-copy started/completed/failed counters
-- Improved site-fix config plumbing:
-  - `wkdomains.darkModeDynamicThemeFixesConfig` can now provide a Dark Reader-style dynamic-theme config corpus without editing the content script
-  - `/api/v1/dark-mode` reports active site-fix counts, config size, matched URLs, CSS bytes, and proxy flags
-- Improved large config handling:
-  - the dynamic-theme config parser now keeps only the global block plus the most-specific matching block instead of building every parsed fix on every page
-  - parser status now reports total parsed fixes, selected parsed fixes, and matched parsed fixes
-  - URL patterns with schemes, ports, localhost, wildcards, and paths are accepted by the shared parser
-- Improved custom-property registration lifecycle:
-  - stylesheet `@property` registrations are recomputed per stylesheet pass and no longer live forever after the source sheet changes
-  - runtime `CSS.registerProperty()` registrations remain persistent, matching the browser API behavior
-  - `/api/v1/dark-mode` reports runtime and stylesheet custom-property registration counts separately
-- Expanded relative color handling:
-  - `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`, and `color()` relative forms now resolve source channels
-  - `color()` now handles `srgb`, `srgb-linear`, `display-p3`, `xyz`, `xyz-d65`, and `xyz-d50`
-  - modified colors are registered through a Dark Reader-style palette variable cache while raw RGB custom-property values still emit raw channels when they are used inside `rgb(var(--token))`
-- Added generic light-surface recovery for late dynamic UI:
-  - editable controls, ARIA controls, and modal-like surfaces now sample their original computed styles when stylesheet conversion misses a light surface
-  - control ancestors are checked in a small bounded walk so opaque parent rows/toolbars around inputs can be darkened without site-specific selectors
-  - runtime status now reports light-surface fallback apply/clear counters
-  - class, role, open/hidden, popover, and ARIA modal/expanded/hidden mutations now dirty relevant surfaces so dynamic dialogs are rechecked
-- Improved Material-style custom property typing:
-  - tokens such as `--*-on-surface`, `--*-content`, `--*-label`, and `--*-foreground` are treated as text colors instead of background colors
-  - `--*-surface` and related surface/canvas/container tokens continue to resolve as background colors
-- Added shared `color-scheme` rewriting:
-  - stylesheet and inline `color-scheme` declarations are rewritten to dark
-  - semantic dialogs/popovers and ARIA controls now get a dark color scheme from the static user-agent style
-- Improved modern group-rule conversion:
-  - `@container` and `@scope` blocks are preserved as their original group preludes instead of being misclassified as `@supports` or `@layer`
-  - async and sync CSS conversion now share the same group-rule recognition
-  - media/supports/layer conversion avoids serializing full nested `cssText` when CSSOM fields are enough
-- Added broad upstream config/corpus support:
-  - the full upstream Dark Reader `dynamic-theme-fixes.config` is now checked in as an app resource
-  - parser handling now treats `================================` as a block separator instead of leaking it into CSS sections
-  - consecutive URL lines in a block are now collected, matching the upstream config format
-  - old built-in site-specific fallback fixes were removed; site-specific behavior now comes from the upstream Dark Reader config corpus
-- Added Dark Reader-style theme knobs:
-  - UserDefaults can now provide brightness, contrast, sepia, grayscale, and dark/light scheme colors
-  - generated palette variables, fallback styles, controls, selection colors, meta theme-color, and inline root colors now use the configured theme
-  - `/api/v1/dark-mode` reports the active theme values
-- Improved variables-store matching:
-  - inline custom properties and inline `var(...)` dependents are collected across document and shadow roots, not just from `:root`
-  - variable propagation depth was raised for longer alias chains
-  - runtime status now reports variable/dependency graph counts
-- Improved large DOM watcher/application behavior:
-  - large root application now walks elements in time-budgeted slices instead of processing an entire document root synchronously
-  - hidden-tab mutation storms are deferred until the document becomes visible
-  - runtime status now reports mutation overflow/hidden deferral counters
-- Improved early dynamic UI recovery and startup scheduling:
-  - newly inserted inline/color/control/surface elements get a bounded priority pass before the full dirty-root pass catches up
-  - priority subtree discovery uses a bounded tree walk instead of unbounded selector scans on large SPA insertions
-  - class/ARIA/open/style mutations enqueue the affected element immediately so transient dialogs/toolbars do not stay light until the next full root slice
-  - startup stylesheet sync requests from the engine, stylesheet managers, page proxy, fetched stylesheets, and adopted stylesheet events now share one startup-aware scheduler
-  - the first dynamic run no longer forces a synchronous stylesheet flush during the startup window
-  - medium-size stylesheets switch to sliced async conversion during startup, not only very large stylesheets
-  - per-stylesheet rendering can drain through time-budgeted startup jobs so many medium stylesheets do not block the UI in one burst
-  - runtime status now reports deferred startup syncs, deferred synchronous flushes, priority element applies, and pending style-render jobs
-- Reduced large mail-app ARIA/control startup pressure:
-  - computed-style fallback no longer treats every `[role="button"]` as an editable control
-  - priority DOM passes focus on inline styles, editable controls, and real modal/popover/surface containers
-  - broad `role=group/region/form` and generic `container/content` light-surface matching were removed from the computed fallback path
-  - media-backdrop descendant scans are skipped for direct editable/control fallback and kept for real surface fallback
-  - startup root application now uses smaller slices and longer reschedule delays so large mail-style DOMs yield to browser UI sooner
-  - startup inline variable collection uses a bounded walker before the later full sync catches the remaining long tail
-- Improved generic dynamic form-surface recovery:
-  - labeled regions and form-like containers with editable fields now get Dark Reader-style dark form-surface treatment through generic `:has()` selectors
-  - action controls are back in the inline fallback path, but only when their original computed background is visibly light and their geometry looks like a real control surface
-  - direct action/control fallback avoids descendant media scans so large ARIA button trees do not create a new startup stall
-  - no app-specific selectors are used in this path; dynamic form/dialog/region handling is generic
-- Improved stylesheet/adopted stylesheet behavior:
-  - fetched stylesheet copies now expand same-CORS `@import` rules recursively before parsing
-  - failed fetch-copy attempts now get a guarded retry instead of permanently marking a stylesheet unavailable
-  - adopted stylesheets now have per-sheet revision tracking and a shared conversion cache across roots
-  - runtime status now reports import expansion and adopted cache hit/miss counters
-- Improved CSSOM proxy coverage:
-  - `CSSStyleDeclaration.cssText` writes are now observed
-  - `CSSStyleRule.selectorText` writes are now observed
-  - `CSSKeyframesRule.appendRule()` and `deleteRule()` are now observed in both the isolated engine and page-world bridge
-  - `@keyframes` blocks are converted through the same sync/async stylesheet pipeline
-- Improved isolation:
-  - the main dark-mode engine now runs in a named `wkdomainsDarkMode` content world instead of sharing `WKContentWorld.defaultClient`
-  - `/api/v1/dark-mode` now reads page world, default client world, and the named dark-mode world separately
-- Reduced production logging and startup pressure:
-  - performance logging is now opt-in through `wkdomains.performanceDebugLogging` instead of being enabled by default
-  - page console tracking now forwards warnings/errors and wkdomains diagnostics, not every `console.log/debug/info` call from large SPAs
-  - queued fallback/root work samples element-local source styles instead of toggling a document-wide sampling attribute for each slice
-  - stylesheet sync requests now use idle scheduling where available, so large Gmail-style startup work yields to browser UI sooner
-- Improved variables/config parity:
-  - root-scoped custom properties from stylesheet rules are now mirrored into the root variable override style, not only inline `:root` variables
-  - variable type propagation now carries referenced color types back to alias variables when the alias is var-based
-  - site-fix `${...}` color templates are now transformed with declaration context, so background, text, border, and shadow colors use the appropriate color pipeline
-  - bare hex template tokens such as `${fff}` are accepted like upstream config shorthand
-- Improved watcher/self-write parity:
-  - inline cache keys now ignore generated dark-mode custom properties, so our own `--wkdomains-*` and Dark Reader-compatible aliases do not look like page-authored inline style changes
-  - style-attribute mutation handling now compares source declarations with generated declarations stripped out before queueing inline re-application
-  - this reduces self-triggered inline reprocessing and prevents repeated transforms from washing out accent backgrounds such as legacy `bgcolor` bars
-- Improved Dark Reader-style per-stylesheet update behavior:
-  - `__darkreader__updateSheet` events and source stylesheet mutations now queue targeted style-manager updates instead of forcing a full all-stylesheet rebuild
-  - targeted manager batches add changed rules to the variable matcher, match dependencies once, refresh root variable overrides, and render only the affected stylesheet managers
-  - adopted stylesheet events now queue root-local adopted manager updates through the same batched path
-  - owned CSSOM stylesheet changes in the isolated engine now rely on the manager-local update path first, while page-world bridge events schedule slower fallback syncs only when needed
-- Reduced Gmail-style startup pressure from timing and watcher paths:
-  - dynamic DOM runs no longer request a full stylesheet sync unless the stylesheet scheduler already has dirty work
-  - inline/style-relevant mutations that are already handled by priority element updates no longer also queue a root scan
-  - debug-only native messages are no longer recorded into `/api/v1/timing` by default; elapsed dark-mode and network timings remain recorded
-- Reduced remaining inline declaration and fallback-application pressure:
-  - page-world inline `CSSStyleDeclaration` writes no longer schedule full stylesheet syncs; stylesheet/adopted declarations still route to their managers
-  - inline custom-property changes are batched through the variables store and root variable style instead of going through the full stylesheet pipeline
-  - root/element fallback application uses smaller time slices and bounded media-backdrop scanning to keep large compose/dialog surfaces from monopolizing the main thread
-- Reduced Gmail-style root/element application stalls:
-  - root fallback application now uses an incremental `TreeWalker` with match and scan budgets instead of materializing `querySelectorAll(...)` results before slicing
-  - element fallback application now has a Dark Reader-style source/theme cache, so priority passes and later root sweeps do not recompute unchanged nodes
-  - style-manager, adopted stylesheet, and full stylesheet updates invalidate the element/source caches when computed styles can legitimately change
-  - class/ARIA/open surface mutations now update direct or already-known fallback candidates instead of rescanning descendants on generic class churn
-  - DOM-ready/load/pageshow handlers no longer force a full stylesheet sync unless stylesheet work is already dirty
-- Hardened the remaining Gmail startup queues:
-  - element/root apply loops now catch per-element failures and continue draining instead of leaving hundreds of queued applies stranded
-  - `/api/v1/dark-mode` now exposes element apply scheduling, watchdog, and error counters so stranded queues are visible immediately
-  - a low-frequency apply-queue watchdog restarts root/element draining if an idle callback or unexpected exception leaves pending work unscheduled
-  - SVG constructor checks now use guarded `window.SVG*` lookups before `instanceof`, avoiding cross-browser constructor reference errors
-  - DOM-ready/load/pageshow no longer schedule a full stylesheet rebuild just because a stylesheet is loading; manager load/error listeners handle targeted updates
-  - fixed the element fallback cache key to use the configured `THEME` object instead of an undefined lower-case `theme`, which was causing Gmail inline/root applies to fail and leaving Gmail's loading UI visible longer
-- Narrowed the startup inline/root sweep closer to Dark Reader's inline-style path:
-  - full root fallback scans now only walk inline-style candidates instead of broad editable-control/SVG/button/dialog/surface selectors
-  - newly inserted inline-style candidates are still handled through the bounded priority element queue, but generic SVG/control/surface subtree additions no longer force a dirty-root scan
-  - `/api/v1/timing` now records lightweight native `page-load-state` events so slow native progress can be separated from page dark-mode work on the next run
-- Deepened the Dark Reader inline-style parity pass after Gmail timing still showed blue-bar overlap:
-  - root and priority inline queues now match Dark Reader's attribute-driven `INLINE_STYLE_SELECTOR` path instead of treating generic controls/buttons/dialogs as computed-style work
-  - inline application no longer calls `getComputedStyle()` just to skip hidden elements; computed style sampling is reserved for post-startup SVG/surface fallback refinement
-  - class/ARIA surface mutations no longer enqueue every matching control or button; only actual inline-style candidates and already-owned fallback elements are revisited
-  - startup stylesheet rendering is sliced even when the page has only a handful of style managers, avoiding one synchronous render-all pass for Gmail-sized sheets
-- Reduced the remaining Gmail blue-bar overlap found in `/api/v1/timing`:
-  - root inline jobs now use `querySelectorAll(INLINE_STYLE_SELECTOR)` like Dark Reader's `getInlineStyleElements()` instead of a JavaScript `TreeWalker` over thousands of nodes
-  - dirty container roots are no longer sampled with computed-style fallback unless the root itself has inline-style attributes, avoiding post-startup 70ms surface fallback slices on arbitrary Gmail nodes
-  - stylesheet sync now emits phase-level timing (`collect`, `match-vars`, `root-vars`, `render`) so the next API pass can show exactly which part of the remaining 120-150ms sync cost is hot
-- Reduced the next Gmail startup timing bottleneck:
-  - `variablesStore` type propagation now uses a work-queue over changed variables instead of repeatedly scanning the full reference and reverse-reference maps until stable
-  - full-document inline root scans are deferred until the page load event, with a timeout fallback, so large `querySelectorAll(INLINE_STYLE_SELECTOR)` passes do not compete with WKWebView's visible load progress
-  - `/api/v1/dark-mode` now exposes `pageLoadFired` to correlate pending root work with the page load lifecycle
-- Reduced repeated variable rebuilds and remaining pre-load root scans:
-  - stylesheet variable inputs are now signature-cached per managed stylesheet, so full style syncs queue only new or changed rule lists instead of re-inspecting every Gmail stylesheet on each loading-phase sync
-  - variable cache generation resets only when a stylesheet/adopted manager is removed and a full rebuild is needed
-  - non-inline dirty container root scans now wait until page load; direct inline-attribute elements can still be handled immediately
-- Reverted the overly aggressive page-load deferral after Gmail showed white sections:
-  - Dark Reader runs `createDynamicStyleOverrides()` immediately after fallback setup, so full dynamic stylesheet sync is no longer held until the page load event
-  - the native browser progress bar is now less eager and less visually dominant, hiding once WKWebView reports late-stage progress instead of drawing a long blue bar over already-interactive SPA pages
-- Tightened the no-site-hardcoding path:
-  - removed the legacy built-in Gmail/Reddit fallback table from the injected script; normal and fallback behavior now use the bundled upstream Dark Reader config parser instead of local one-off selectors
-  - post-load mutation handling can queue generic light surface candidates (`form`, dialogs, popovers, labeled regions) while startup remains limited to Dark Reader's inline-style selector path
-  - form-like dynamic surfaces get a bounded child-surface pass for bright title/toolbar rows without matching app-specific classes or app-specific vocabulary
-- Fixed a Dark Reader config parser truncation bug:
-  - URL block detection now only starts a new block when the parser is not inside an existing config section, so selector lines that look URL-like no longer prematurely end `INVERT`, `CSS`, or ignore sections
-  - the Gmail upstream block now exposes its full CSS, invert, `IGNORE INLINE STYLE`, and `IGNORE IMAGE ANALYSIS` sections through the same parser path as Dark Reader's corpus
-  - a post-load generic structural surface sweep now queues `main`/`article`/dialog/form/labeled-region surfaces in small batches, keeping startup narrow while catching large SPA reading panes that are inserted before `load`
-- Fixed generic light-surface descendant clearing:
-  - detected structural surfaces now get the descendant-clearing surface marker even when they are read-only panes, not only when they contain editable fields
-  - action/button fallback uses a separate reason so small control fixes do not turn into broad descendant surface clearing
-- Reduced first-paint white flashes on large read surfaces:
-  - the early fallback stylesheet now covers semantic structural read surfaces (`main`, `article`, `role=main`, `role=article`) before computed surface fallback runs
-  - descendant background clearing for those early structural surfaces mirrors the existing surface-marker behavior while excluding media/SVG/iframe content and explicit dark-mode background overrides
-- Kept a minimal transition fallback alive after stylesheet loading:
-  - the full startup fallback still drops the zero-duration transition override after loading settles
-  - the neutral root/body and semantic surface fallback now remains in place, matching Dark Reader's fallback lifecycle more closely and covering late SPA panes without app-specific selectors
-  - fallback style writes are skipped when the text is already current, avoiding unnecessary stylesheet recalculation during repeated dynamic runs
+- instance locking, startup, deferred visibility handling, and cleanup
+- static style injection order: fallback, user-agent, text, invert, inline, variables, root-vars, proxy, site overrides
+- stylesheet manager creation, loading fallback, `details()` collection, render, targeted updates, and fallback clearing
+- variables-store matching for stylesheet rules, inline styles, and root variable output
+- inline style override watching across the document and shadow roots
+- adopted stylesheet override/fallback handling
+- stylesheet proxy installation for page-owned CSSOM mutation APIs
+- style and inline mutation watchers
+- meta theme-color changes, Chrome PDF inversion, and Document Picture-in-Picture font handling
 
-## Completion Estimates
+Our implementation is not a literal TypeScript port. It is a WKWebView-specific dynamic-theme engine that preserves the same architecture while splitting the code into Swift-hosted JavaScript fragments and using an isolated content world plus a small page-world bridge.
 
-- Full `variablesStore` dependency graph for matching variables and dependents: 95%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 99.3%
-- Mature optimized DOM/style watchers: 99.9%
-- Robust adopted stylesheet management: 94%
-- Full stylesheet proxy behavior and cross-context coordination: 96%
-- Dark Reader's color pipeline and extensive config corpus: 92%
-- Mature fix selection/config parser behavior across many sites: 94%
-- Extension-world isolation: 91%
+## Local Architecture
 
-## Remaining Gaps
+- The engine is assembled in `BrowserDarkModeScripts.swift` from focused script fragments.
+- The main engine runs in the named `wkdomainsDarkMode` `WKContentWorld` by default.
+- `BrowserDarkModePageProxyScript.swift` runs in the page world only to observe APIs that isolated scripts cannot reliably see.
+- `BrowserDarkModeRuntimeLifecycleScript.swift` handles Dark Reader-style startup, instance markers, visibility deferral, cleanup, and reentry.
+- `BrowserDarkModeStaticStyleScript.swift` owns static style creation, ordering, fallback/user-agent/inline/variables/site-fix styles, meta theme-color, and persistent fallback behavior.
+- `BrowserDarkModeStylesheetScript.swift` preserves stylesheet-layer order:
+  - state
+  - variables
+  - transform
+  - managers
+  - proxy
+- `BrowserDarkModeInlineDOMScript.swift` owns inline attributes, root/shadow application queues, computed fallback surfaces, and bounded post-load recovery.
+- `/api/v1/dark-mode` exposes runtime status for the engine, page proxy, variables, managers, queues, theme values, and site-fix matching.
 
-- Variables graph is still not a full Dark Reader port. Current estimate: 95%.
-  - no full scoped variable sheet registration/release lifecycle
-  - limited CSS parser behavior for unusual declarations
-  - scoped handling is stronger, but still not as exact as Dark Reader's full selector/dependency store
-- Per-stylesheet managers still need more mature behavior. Current estimate: 99.3%.
-  - privileged cross-origin/background fetch parity
-  - imported stylesheet retries
-- Watchers now have the main Dark Reader-style batching/dirty-root/attribute-scoped inline observer/self-write suppression pieces, including stranded-queue recovery and selector-engine inline root scanning, but still need more long-run observer pressure testing. Current estimate: 99.9%.
-- Adopted stylesheet handling is better, but not equivalent to Dark Reader's full CSSStyleSheet override/fallback model. Current estimate: 94%.
-- Stylesheet proxy is closer, but cross-context coordination is still partial for some obscure CSSOM mutation APIs. Current estimate: 96%.
-- Color pipeline is much closer, but still not a full port. Current estimate: 92%.
-  - limited image analysis compared with Dark Reader
-  - color math is compatible in shape but still not Dark Reader's exact implementation
-- Config/fix support is much closer. Current estimate: 94%.
-  - full dynamic-theme fix corpus is bundled, but parser behavior may still miss future nonstandard upstream sections
-  - built-in fixes are retained only as no-corpus fallback coverage
-- Extension-world isolation is much closer. Current estimate: 91%.
-  - the engine runs in a named isolated content world, but a small page-world bridge is still required for page-owned stylesheet and shadow-root APIs
-  - the bridge is batched and reversible, but it still executes prototype hooks in the page world while active
-  - a native Safari/WebExtension architecture could remove more page-world residue, but the current WKUserScript path now mirrors the practical split: isolated engine plus minimal page bridge
+## Current Baseline
 
-## Latest Validation
+Startup and lifecycle are close to the upstream shape:
 
-- Combined dark-mode JavaScript passed syntax validation with the current split script fragments.
-- Page-world proxy JavaScript passed syntax validation.
-- Site-fix JavaScript with a non-empty sample config passed `node --check`.
-- Site-fix JavaScript generated with the full upstream Dark Reader `dynamic-theme-fixes.config` passed `node --check`.
-- Site-fix parser runtime check with the full bundled config matched Reddit through the upstream corpus with built-in fixes disabled.
-- Swift sources passed `xcrun swiftc -parse`.
-- Targeted stylesheet/adopted-manager update changes passed `xcrun swiftc -parse` for the touched script fragments.
-- Gmail performance pass for incremental root walking, element fallback caching, narrower surface mutation handling, and lifecycle sync gating passed `xcrun swiftc -parse` for the touched script fragments.
-- Gmail queue-hardening pass passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
-- Gmail timing review found and fixed an undefined `theme` variable in the element fallback cache path; the touched Swift fragment passed `xcrun swiftc -parse` and the embedded JavaScript passed `node --check`.
-- Gmail timing follow-up found broad root/SVG scans overlapping page startup; the touched Swift files passed `xcrun swiftc -parse` and the touched embedded JavaScript fragments passed `node --check`.
-- Gmail/Dark Reader source deep-dive pass narrowed inline queues to attribute-driven candidates, deferred computed fallback during startup, and sliced small style-manager startup render batches; the touched Swift fragments passed `xcrun swiftc -parse` and the touched embedded JavaScript fragments passed `node --check`.
-- Gmail timing follow-up found the narrowed inline root path was still scanning thousands of nodes through a JS `TreeWalker`; the touched Swift fragments passed `xcrun swiftc -parse` and the touched embedded JavaScript fragments passed `node --check`.
-- Gmail timing follow-up found repeated 120-150ms variable matching before load; the variables propagation algorithm and full-document root-scan load gating passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
-- Gmail timing follow-up still showed repeated variable matching and one pre-load container root scan; per-stylesheet variable input caching and broader pre-load container scan gating passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
-- Gmail timing follow-up showed page-load deferral caused white Gmail sections; reverting the deferral and toning down late-stage native progress indication passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
-- Generic dynamic surface pass and site-fix fallback removal passed `xcrun swiftc -parse` plus embedded JavaScript syntax checks for the touched fragments.
-- Config parser truncation fix and generic structural post-load surface pass passed `xcrun swiftc -parse`, embedded JavaScript syntax checks, and a parser smoke test confirming the upstream Gmail block has 9 ignore-inline entries and 4 ignore-image-analysis entries.
-- Read-only light-surface marker fix passed `xcrun swiftc -parse` plus embedded JavaScript syntax checks for the touched inline DOM fragment.
-- Early structural surface fallback passed `xcrun swiftc -parse` plus embedded JavaScript syntax checks for the touched static-style fragment.
-- Persistent transition fallback lifecycle passed `xcrun swiftc -parse` plus embedded JavaScript syntax checks for the touched static-style and stylesheet-state fragments.
-- Current `/api/v1/timing` was reviewed before the latest source changes; the running bundle still showed root/element dark-mode work overlapping Gmail startup, which drove the attribute-scoped inline and startup render slicing pass above.
+- Starts at document start, installs fallback early, waits for `document.head` when needed, and respects visibility before the first dynamic run.
+- Uses Dark Reader-style instance marker and lock handling.
+- Cleans static styles, managers, observers, proxy hooks, meta theme-color changes, queues, and runtime counters on removal.
+- Keeps a small persistent fallback after stylesheet loading to cover late SPA surfaces without app-specific selectors.
+
+Static styles are in good shape:
+
+- Fallback, user-agent, inline override, variable, root-variable, site-fix, and invert styles are generated separately.
+- Style order is watched and restored.
+- Theme knobs are configurable through UserDefaults: mode, brightness, contrast, sepia, grayscale, dark scheme colors, and light scheme colors.
+- `color-scheme`, selection colors, form controls, semantic surfaces, dialogs, popovers, and structural read surfaces have generic dark treatment.
+
+Stylesheet managers are mature:
+
+- Manage document and shadow-root `<style>` / stylesheet `<link>` nodes.
+- Use a Dark Reader-style first-pass details collection and second-pass render flow.
+- Track loading stylesheets, load/error listeners, timeouts, unavailable sheets, stale manager cleanup, and fallback clearing.
+- Use targeted `__darkreader__updateSheet` updates instead of rebuilding everything for common CSSOM mutations.
+- Slice startup rendering and large CSS rule conversion to reduce Gmail/Reddit-style main-thread stalls.
+- Fetch-copy inaccessible stylesheet links when page-world fetch and CORS allow it, including bounded same-CORS `@import` expansion.
+
+Variables support is strong but not complete:
+
+- Collects custom properties from stylesheet rules, inline styles, root-scoped selectors, adopted sheets, and `@property` rules.
+- Tracks variable references and reverse references, then propagates color usage types through alias chains.
+- Emits both wkdomains-prefixed variables and Dark Reader-compatible aliases such as `--darkreader-bg--token`.
+- Handles registered color custom properties from stylesheet `@property` and runtime `CSS.registerProperty()`.
+- Uses cached per-stylesheet variable inputs to avoid repeated full graph rebuilds.
+
+Color conversion has broad modern coverage:
+
+- Supports named colors, hex, RGB/HSL/HWB, Lab/LCH, OKLab/OKLCH, `color()`, `light-dark()`, `color-mix()`, relative color forms, gradients, shadows, and raw RGB variables.
+- Avoids rewriting color-looking tokens inside `url(...)`.
+- Uses a Dark Reader-style palette/cache shape, but the color math is still our approximation rather than an exact upstream port.
+- Image analysis is limited to generic media/backdrop avoidance and site-fix ignore selectors.
+
+Inline DOM handling is intentionally narrower than the earlier broad fallback path:
+
+- Root and priority queues now focus on Dark Reader-like inline style candidates.
+- Computed-style fallback is reserved for real controls, editable fields, dialogs, popovers, form-like surfaces, and structural read surfaces.
+- Root and element application are time-budgeted, watchdog-protected, and visibility-aware.
+- Generated inline properties are ignored in cache keys so our own writes do not repeatedly retrigger conversion.
+
+Adopted stylesheet handling is solid for WebKit:
+
+- Document and shadow-root adopted stylesheets are managed independently.
+- Page-world and isolated-world proxies observe adopted stylesheet assignment, in-place array changes, declaration changes, and sheet mutations.
+- Adopted conversion is sliced for large roots and cached per sheet revision across roots.
+- Disconnected shadow roots prune their observers, managers, dirty-root state, and pending work.
+
+Proxy and bridge coverage is broad:
+
+- Page-world bridge batches global CSSOM/shadow/custom-element events before notifying the isolated engine.
+- Proxy coverage includes `insertRule`, `deleteRule`, `addRule`, `removeRule`, `replace`, `replaceSync`, declaration `setProperty`, declaration `removeProperty`, declaration `cssText`, rule `selectorText`, keyframes append/delete, grouping rule insert/delete, `CSS.registerProperty`, `adoptedStyleSheets`, `attachShadow`, and opt-in custom element registry observation.
+- Hooks are reversible through saved descriptors and cleanup tasks.
+- Site-fix flags can disable stylesheet or shadow-root proxying and can opt into custom element registry proxying.
+
+Config/fix support is much closer to upstream:
+
+- The upstream `dynamic-theme-fixes.config` corpus is bundled as an app resource.
+- Runtime config can be supplied through `wkdomains.darkModeDynamicThemeFixesConfig` or `wkdomains.darkModeDynamicThemeFixesConfigPath`.
+- Parser supports global blocks, multiple URL lines, separators, wildcard hosts, schemes, ports, paths, localhost, CSS templates, invert selectors, ignored inline styles, ignored image analysis, ignored CSS selectors, ignored CSS URLs, and proxy flags.
+- Selection combines generic fixes with the most-specific matching block or blocks.
+
+## Remaining Work
+
+Highest-value gaps:
+
+- Variables-store parity: add a fuller scoped variable sheet lifecycle and improve selector/dependency precision for unusual custom-property scopes.
+- Color parity: decide whether to port Dark Reader color math more directly or keep our compatible approximation and test against real sites.
+- Image handling: upstream image/background analysis is deeper than our generic media/backdrop avoidance.
+- Adopted stylesheet parity: current WebKit path works, but it is not equivalent to Dark Reader's full override/fallback model for every browser path.
+- CSSOM edge APIs: proxy coverage is broad, but obscure mutation APIs still need long-run testing against framework-heavy pages.
+- Config parser resilience: bundled corpus works, but future upstream nonstandard sections may need parser updates.
+- Isolation boundary: the named content world is the right default, but page-world hooks are still required for page-owned CSSOM and shadow APIs.
+- Runtime validation: keep checking Gmail, Reddit, Hacker News, GitHub, docs sites, and at least one Web Component-heavy app after stylesheet or watcher changes.
+
+Watch items:
+
+- Startup budget on large SPAs, especially repeated variable matching and first root/adopted render.
+- Late inserted read panes and form/dialog surfaces that are not styled by converted CSS.
+- Pages with aggressive custom element or adopted stylesheet churn.
+- Cross-origin stylesheet fetch-copy failure and retry behavior.
+- Dark Reader corpus updates that add new sections or unexpected URL block shapes.
+
+## Validation Baseline
+
+This document should track useful runtime evidence, not command history.
+
+Keep future entries focused on:
+
+- page or site tested
+- symptoms before the change
+- runtime counters from `/api/v1/dark-mode` or `/api/v1/timing`
+- visual result after the change
+- any remaining follow-up
+
+Current useful validation state:
+
+- Hacker News no longer needs a site-specific stylesheet bypass.
+- Gmail startup work has been narrowed to Dark Reader-like inline candidates plus sliced stylesheet rendering.
+- Reddit remains the primary stress case for shadow roots, adopted stylesheets, and bursty CSSOM updates.
+- The bundled upstream config corpus is the active source of site-specific behavior when present.
