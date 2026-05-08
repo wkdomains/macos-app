@@ -615,12 +615,72 @@ extension BrowserModel {
         });
       };
 
-      const replaceSiteCSSTemplates = (cssText) => String(cssText || "").replace(/\$\{(.+?)\}/g, (match, token) => {
-        const color = parseColor(token);
+      const parseSiteFixTemplateColor = (token) => {
+        const text = String(token || "").trim();
+        if (/^[0-9a-f]{3,4}$/i.test(text) || /^[0-9a-f]{6,8}$/i.test(text)) {
+          return parseColor(`#${text}`);
+        }
+        return parseColor(text);
+      };
+
+      const siteFixDeclarationNameBefore = (cssText, offset) => {
+        const text = String(cssText || "");
+        const semicolon = text.lastIndexOf(";", offset);
+        const openBrace = text.lastIndexOf("{", offset);
+        const closeBrace = text.lastIndexOf("}", offset);
+        const start = Math.max(semicolon, openBrace, closeBrace);
+        const colon = text.lastIndexOf(":", offset);
+        if (colon <= start) return "";
+        return text.slice(start + 1, colon).trim().toLowerCase();
+      };
+
+      const siteFixTemplateTransformer = (property, color) => {
+        const name = String(property || "").toLowerCase();
+        if (
+          name.includes("background")
+          || name.includes("--darkreader-bg")
+          || name.includes("-bg")
+          || name.includes("surface")
+          || name.includes("canvas")
+          || name.includes("container")
+        ) {
+          return modifyBackgroundColor;
+        }
+        if (
+          name.includes("border")
+          || name.includes("outline")
+          || name.includes("column-rule")
+          || name.includes("decoration")
+          || name.includes("--darkreader-border")
+        ) {
+          return modifyBorderColor;
+        }
+        if (
+          name.includes("shadow")
+          || name.includes("overlay")
+          || name.includes("scrim")
+        ) {
+          return modifyBackgroundColor;
+        }
+        if (
+          name.includes("color")
+          || name.includes("text")
+          || name.includes("foreground")
+          || name.includes("content")
+          || name.includes("fill")
+          || name.includes("stroke")
+          || name.includes("--darkreader-text")
+        ) {
+          return modifyForegroundColor;
+        }
+        return relativeLuminance(color) > 0.5 ? modifyBackgroundColor : modifyForegroundColor;
+      };
+
+      const replaceSiteCSSTemplates = (cssText) => String(cssText || "").replace(/\$\{(.+?)\}/g, (match, token, offset, source) => {
+        const color = parseSiteFixTemplateColor(token);
         if (!color) return match;
-        return relativeLuminance(color) > 0.5
-          ? (modifyBackgroundColor(color) || match)
-          : (modifyForegroundColor(color) || match);
+        const property = siteFixDeclarationNameBefore(source, offset);
+        return siteFixTemplateTransformer(property, color)(color) || match;
       });
 
       const siteFixRootSelector = (selector) => {

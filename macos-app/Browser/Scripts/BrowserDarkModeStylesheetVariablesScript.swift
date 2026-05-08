@@ -10,6 +10,7 @@ extension BrowserModel {
       const variablesStore = (() => {
         const varTypes = new Map();
         const varValues = new Map();
+        const rootVarValues = new Map();
         const varRefs = new Map();
         const reverseVarRefs = new Map();
         const rulesQueue = new Set();
@@ -23,6 +24,7 @@ extension BrowserModel {
         const clear = () => {
           varTypes.clear();
           varValues.clear();
+          rootVarValues.clear();
           varRefs.clear();
           reverseVarRefs.clear();
           stylesheetCustomPropertyTypes.clear();
@@ -51,10 +53,13 @@ extension BrowserModel {
           reverseVarRefs.get(ref).add(owner);
         };
 
-        const inspectVariable = (property, value) => {
+        const inspectVariable = (property, value, options = {}) => {
           if (!property || !property.startsWith("--")) return;
           const text = String(value || "").trim();
           varValues.set(property, text);
+          if (options.rootScope) {
+            rootVarValues.set(property, text);
+          }
           const registeredType = customPropertyTypeFor(property);
           if (registeredType) {
             resolveType(property, registeredType);
@@ -99,13 +104,29 @@ extension BrowserModel {
           });
         };
 
-        const inspectDeclarations = (style) => {
+        const inspectDeclarations = (style, options = {}) => {
           if (!style) return;
           iterateCSSDeclarations(style, (property, value) => {
             if (property.startsWith("--")) {
-              inspectVariable(property, value);
+              inspectVariable(property, value, options);
             }
             inspectVarDependent(property, value);
+          });
+        };
+
+        const selectorHasRootScope = (selectorText) => {
+          const text = String(selectorText || "").toLowerCase();
+          if (!text) return false;
+          return text.split(",").some((selector) => {
+            const trimmed = selector.trim();
+            return trimmed === ":root"
+              || trimmed === "html"
+              || trimmed.startsWith(":root:")
+              || trimmed.startsWith(":root[")
+              || trimmed.startsWith(":root.")
+              || trimmed.startsWith("html:")
+              || trimmed.startsWith("html[")
+              || trimmed.startsWith("html.");
           });
         };
 
@@ -127,7 +148,7 @@ extension BrowserModel {
                 }
               }
               if (rule.style) {
-                inspectDeclarations(rule.style);
+                inspectDeclarations(rule.style, { rootScope: selectorHasRootScope(rule.selectorText) });
               }
               if (rule.cssRules) {
                 inspectRules(rule.cssRules);
@@ -161,7 +182,8 @@ extension BrowserModel {
               const refType = varTypes.get(ref) || 0;
               if (!refType) continue;
               for (const owner of owners) {
-                if (!shouldTreatCustomPropertyAsRawColor(owner)) continue;
+                const ownerValue = String(varValues.get(owner) || "");
+                if (!shouldTreatCustomPropertyAsRawColor(owner) && (!ownerValue.includes("var(") || ownerValue.includes("url("))) continue;
                 const before = varTypes.get(owner) || 0;
                 const next = before | refType;
                 if (next !== before) {
@@ -217,10 +239,7 @@ extension BrowserModel {
 
         const rootDeclarations = () => {
           const declarations = [];
-          const rootStyle = document.documentElement && document.documentElement.style;
-          if (!rootStyle) return declarations;
-
-          iterateCSSDeclarations(rootStyle, (property, value) => {
+          const pushDeclaration = (property, value) => {
             if (!property.startsWith("--")) return;
             const type = typesForVariable(property);
             if (!type) return;
@@ -248,7 +267,16 @@ extension BrowserModel {
                 }
               }
             }
-          });
+          };
+
+          for (const [property, value] of rootVarValues) {
+            pushDeclaration(property, value);
+          }
+
+          const rootStyle = document.documentElement && document.documentElement.style;
+          if (rootStyle) {
+            iterateCSSDeclarations(rootStyle, pushDeclaration);
+          }
 
           return declarations;
         };
@@ -266,6 +294,7 @@ extension BrowserModel {
             version: versionNumber,
             variables: varTypes.size,
             values: varValues.size,
+            rootValues: rootVarValues.size,
             referenceOwners: varRefs.size,
             references: lastVariableReferenceCount,
             reverseReferenceOwners: reverseVarRefs.size,

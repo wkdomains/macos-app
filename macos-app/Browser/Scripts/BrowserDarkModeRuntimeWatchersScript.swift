@@ -194,6 +194,12 @@ extension BrowserModel {
             if (ATTRIBUTES_OWNED_BY_DARK_MODE.includes(mutation.attributeName)) {
               continue;
             }
+            if (
+              mutation.attributeName === "style"
+              && !inlineStyleMutationChangedSource(mutation.target, mutation.oldValue)
+            ) {
+              continue;
+            }
             if (INLINE_STYLE_MUTATION_ATTRIBUTES.has(mutation.attributeName)) {
               clearCachedSourceFor(mutation.target);
               queueElementApply(mutation.target, 0);
@@ -320,6 +326,7 @@ extension BrowserModel {
             "aria-modal"
           ],
           childList: true,
+          attributeOldValue: true,
           subtree: true
         });
         rootObservers.set(root, observer);

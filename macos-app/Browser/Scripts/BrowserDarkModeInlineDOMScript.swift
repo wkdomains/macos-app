@@ -314,7 +314,34 @@ extension BrowserModel {
         return source;
       };
 
-      const inlineCacheKeyFor = (element) => INLINE_STYLE_ATTRS.map((attr) => `${attr}=${element.getAttribute(attr) || ""}`).join("\n");
+      const inlineStyleSourceKeyFromDeclaration = (style) => {
+        if (!style) return "";
+        const parts = [];
+        for (let index = 0; index < style.length; index += 1) {
+          const property = style.item(index);
+          if (!property || isGeneratedDarkModeProperty(property)) continue;
+          parts.push(`${property}:${style.getPropertyValue(property)}!${style.getPropertyPriority(property)}`);
+        }
+        return parts.join(";");
+      };
+
+      const inlineStyleSourceKeyFromText = (styleText) => {
+        if (!styleText) return "";
+        const element = document.createElement("span");
+        element.setAttribute("style", String(styleText || ""));
+        return inlineStyleSourceKeyFromDeclaration(element.style);
+      };
+
+      const inlineStyleSourceKeyForElement = (element) => inlineStyleSourceKeyFromDeclaration(element && element.style);
+
+      const inlineStyleMutationChangedSource = (element, oldValue) => (
+        inlineStyleSourceKeyFromText(oldValue) !== inlineStyleSourceKeyForElement(element)
+      );
+
+      const inlineCacheKeyFor = (element) => INLINE_STYLE_ATTRS.map((attr) => {
+        if (attr === "style") return `style=${inlineStyleSourceKeyForElement(element)}`;
+        return `${attr}=${element.getAttribute(attr) || ""}`;
+      }).join("\n");
 
       const isLightSurfaceCandidate = (element) => {
         if (!element || !element.matches || !element.tagName) return false;
@@ -397,6 +424,27 @@ extension BrowserModel {
         return false;
       };
 
+      const hasBackgroundInlineSource = (element) => {
+        if (!element || !element.hasAttribute || !element.style) return false;
+        if (
+          element.hasAttribute("bgcolor")
+          || element.hasAttribute("background")
+        ) {
+          return true;
+        }
+
+        for (let index = 0; index < element.style.length; index += 1) {
+          const property = element.style.item(index);
+          if (!property || isGeneratedDarkModeProperty(property)) continue;
+          const lower = property.toLowerCase();
+          if (lower === "background" || lower.includes("background")) {
+            return true;
+          }
+        }
+
+        return false;
+      };
+
       const setInlineCustomProp = (element, attribute, property, cssProperty, sourceProperty, sourceValue) => {
         const value = transformCSSValue(sourceProperty || cssProperty, sourceValue, element);
         setOverride(element, attribute, property, value);
@@ -415,7 +463,7 @@ extension BrowserModel {
         }
       };
 
-      const applyComputedStyleFallback = (element, reason = "direct") => {
+      const applyComputedStyleFallback = (element, reason = "direct", options = {}) => {
         const tag = element.tagName.toUpperCase();
         const style = captureSourceStyle(element) || getComputedStyle(element);
 
@@ -438,6 +486,14 @@ extension BrowserModel {
         } else if (transformedBackground && background && (background.a > 0.08 || reason === "surface")) {
           setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", transformedBackground);
           if (reason === "surface") lightSurfaceFallbacksApplied += 1;
+        } else if (
+          options.preserveBackgroundOverride
+          && reason === "direct"
+          && element.hasAttribute(BACKGROUND_ATTRIBUTE)
+          && (!background || background.a <= 0.08)
+        ) {
+          // Keep explicit HTML/style background sources such as legacy bgcolor
+          // when computed style sampling cannot see the original attribute color.
         } else {
           if (element.hasAttribute(BACKGROUND_ATTRIBUTE)) lightSurfaceFallbacksCleared += 1;
           setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", null);
@@ -649,6 +705,7 @@ extension BrowserModel {
 
         const tag = element.tagName.toUpperCase();
         const hasInlineColors = hasColorInlineSource(element);
+        const hasInlineBackground = hasBackgroundInlineSource(element);
         overrideInlineStyle(element);
 
         if (tag === "HTML" || tag === "BODY") {
@@ -674,7 +731,11 @@ extension BrowserModel {
           return;
         }
 
-        applyComputedStyleFallback(element, needsSurfaceFallback || needsActionFallback ? "surface" : "direct");
+        applyComputedStyleFallback(
+          element,
+          needsSurfaceFallback || needsActionFallback ? "surface" : "direct",
+          { preserveBackgroundOverride: hasInlineBackground }
+        );
         if (isEditableControl) {
           applyLightSurfaceAncestors(element);
         }

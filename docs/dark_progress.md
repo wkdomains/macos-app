@@ -234,37 +234,51 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Improved isolation:
   - the main dark-mode engine now runs in a named `wkdomainsDarkMode` content world instead of sharing `WKContentWorld.defaultClient`
   - `/api/v1/dark-mode` now reads page world, default client world, and the named dark-mode world separately
+- Reduced production logging and startup pressure:
+  - performance logging is now opt-in through `wkdomains.performanceDebugLogging` instead of being enabled by default
+  - page console tracking now forwards warnings/errors and wkdomains diagnostics, not every `console.log/debug/info` call from large SPAs
+  - queued fallback/root work samples element-local source styles instead of toggling a document-wide sampling attribute for each slice
+  - stylesheet sync requests now use idle scheduling where available, so large Gmail-style startup work yields to browser UI sooner
+- Improved variables/config parity:
+  - root-scoped custom properties from stylesheet rules are now mirrored into the root variable override style, not only inline `:root` variables
+  - variable type propagation now carries referenced color types back to alias variables when the alias is var-based
+  - site-fix `${...}` color templates are now transformed with declaration context, so background, text, border, and shadow colors use the appropriate color pipeline
+  - bare hex template tokens such as `${fff}` are accepted like upstream config shorthand
+- Improved watcher/self-write parity:
+  - inline cache keys now ignore generated dark-mode custom properties, so our own `--wkdomains-*` and Dark Reader-compatible aliases do not look like page-authored inline style changes
+  - style-attribute mutation handling now compares source declarations with generated declarations stripped out before queueing inline re-application
+  - this reduces self-triggered inline reprocessing and prevents repeated transforms from washing out accent backgrounds such as legacy `bgcolor` bars
 
 ## Completion Estimates
 
-- Full `variablesStore` dependency graph for matching variables and dependents: 91%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 97%
-- Mature optimized DOM/style watchers: 97%
+- Full `variablesStore` dependency graph for matching variables and dependents: 93%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 98%
+- Mature optimized DOM/style watchers: 99%
 - Robust adopted stylesheet management: 93%
 - Full stylesheet proxy behavior and cross-context coordination: 95%
-- Dark Reader's color pipeline and extensive config corpus: 91%
-- Mature fix selection/config parser behavior across many sites: 92%
-- Extension-world isolation: 90%
+- Dark Reader's color pipeline and extensive config corpus: 92%
+- Mature fix selection/config parser behavior across many sites: 94%
+- Extension-world isolation: 91%
 
 ## Remaining Gaps
 
-- Variables graph is still not a full Dark Reader port. Current estimate: 91%.
+- Variables graph is still not a full Dark Reader port. Current estimate: 93%.
   - no full scoped variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - scoped handling is stronger, but still not as exact as Dark Reader's full selector/dependency store
-- Per-stylesheet managers still need more mature behavior. Current estimate: 97%.
+- Per-stylesheet managers still need more mature behavior. Current estimate: 98%.
   - privileged cross-origin/background fetch parity
   - imported stylesheet retries
-- Watchers now have the main Dark Reader-style batching/dirty-root/priority-surface pieces, but still need more long-run observer pressure testing. Current estimate: 97%.
+- Watchers now have the main Dark Reader-style batching/dirty-root/priority-surface/self-write suppression pieces, but still need more long-run observer pressure testing. Current estimate: 99%.
 - Adopted stylesheet handling is better, but not equivalent to Dark Reader's full CSSStyleSheet override/fallback model. Current estimate: 93%.
 - Stylesheet proxy is closer, but cross-context coordination is still partial for some obscure CSSOM mutation APIs. Current estimate: 95%.
-- Color pipeline is much closer, but still not a full port. Current estimate: 91%.
+- Color pipeline is much closer, but still not a full port. Current estimate: 92%.
   - limited image analysis compared with Dark Reader
   - color math is compatible in shape but still not Dark Reader's exact implementation
-- Config/fix support is much closer. Current estimate: 92%.
+- Config/fix support is much closer. Current estimate: 94%.
   - full dynamic-theme fix corpus is bundled, but parser behavior may still miss future nonstandard upstream sections
   - built-in fixes are retained only as no-corpus fallback coverage
-- Extension-world isolation is much closer. Current estimate: 90%.
+- Extension-world isolation is much closer. Current estimate: 91%.
   - the engine runs in a named isolated content world, but a small page-world bridge is still required for page-owned stylesheet and shadow-root APIs
   - the bridge is batched and reversible, but it still executes prototype hooks in the page world while active
   - a native Safari/WebExtension architecture could remove more page-world residue, but the current WKUserScript path now mirrors the practical split: isolated engine plus minimal page bridge
