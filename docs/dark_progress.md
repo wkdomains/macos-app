@@ -50,7 +50,7 @@ Static styles are in good shape:
 - Fallback, user-agent, inline override, variable, root-variable, site-fix, and invert styles are generated separately.
 - Style order is watched and restored.
 - Theme knobs are configurable through UserDefaults: mode, brightness, contrast, sepia, grayscale, dark scheme colors, and light scheme colors.
-- `color-scheme`, selection colors, form controls, semantic surfaces, dialogs, popovers, and structural read surfaces have generic dark treatment.
+- `color-scheme`, selection colors, form controls, semantic surfaces, dialogs, popovers, structural read surfaces, and site-fix inversion filters have generic dark treatment.
 
 Stylesheet managers are mature:
 
@@ -75,6 +75,7 @@ Color conversion has broad modern coverage:
 
 - Supports named colors, hex, RGB/HSL/HWB, Lab/LCH, OKLab/OKLCH, `color()`, `light-dark()`, `color-mix()`, relative color forms, gradients, shadows, and raw RGB variables.
 - Avoids rewriting color-looking tokens inside `url(...)`.
+- Handles `scrollbar-color`, masked background-color icons, gradient `list-style-image`, and theme-aware `color-scheme`.
 - Uses a Dark Reader-style palette/cache shape, but the color math is still our approximation rather than an exact upstream port.
 - Image analysis is limited compared with upstream, but generic media/backdrop avoidance now catches URL-backed, `image-set()`, and `cross-fade()` backgrounds instead of treating mixed gradient/image stacks as plain surfaces. Inline SVG logos now get a bounded Dark Reader-style image analysis path before applying invert filters.
 
@@ -84,6 +85,7 @@ Inline DOM handling is intentionally narrower than the earlier broad fallback pa
 - Computed-style fallback is reserved for real controls, editable fields, dialogs, popovers, form-like surfaces, and structural read surfaces.
 - Root and element application are time-budgeted, watchdog-protected, and visibility-aware.
 - Generated inline properties are ignored in cache keys so our own writes do not repeatedly retrigger conversion.
+- Inline style handling includes Dark Reader-style loop protection, the ProseMirror node-view-content guard, four-digit legacy `color` normalization, and small-SVG fill classification.
 
 Adopted stylesheet handling is solid for WebKit:
 
@@ -99,6 +101,7 @@ Proxy and bridge coverage is broad:
 - Proxy coverage includes `insertRule`, `deleteRule`, `addRule`, `removeRule`, `replace`, `replaceSync`, declaration `setProperty`, declaration `removeProperty`, declaration `cssText`, rule `selectorText`, keyframes append/delete, keyframes/keyframe name changes, media-list changes, grouping rule insert/delete across `CSSGroupingRule` and WebKit's concrete grouping-rule constructors, `CSS.registerProperty`, `adoptedStyleSheets`, `attachShadow`, and opt-in custom element registry observation. Stylesheet media matching now keeps mixed screen/print sheets in scope instead of treating any print token as an exclusion.
 - Hooks are reversible through saved descriptors and cleanup tasks.
 - Site-fix flags can disable stylesheet or shadow-root proxying and can opt into custom element registry proxying.
+- SVG stylesheet handling carries Dark Reader's small host denylist for pages known to break on SVG style overrides.
 
 Config/fix support is much closer to upstream:
 
@@ -110,7 +113,7 @@ Config/fix support is much closer to upstream:
 
 ## Parity Estimate
 
-Overall dynamic-theme parity against Dark Reader's current `index.ts` orchestration is about 95%.
+Overall dynamic-theme parity against Dark Reader's current `index.ts` orchestration is about 96%.
 
 - Startup, static styles, lifecycle, cleanup: 97%
 - Per-stylesheet managers and loading lifecycle: 99%
@@ -118,9 +121,9 @@ Overall dynamic-theme parity against Dark Reader's current `index.ts` orchestrat
 - Variables/dependency handling: 96%
 - Adopted stylesheet handling: 95%
 - Stylesheet proxy and page/isolated-world bridge: 98%
-- Dynamic-theme fix config parsing and selection: 95%
-- Color parsing/conversion coverage: 92%
-- Image/background analysis: 82%
+- Dynamic-theme fix config parsing and selection: 96%
+- Color parsing/conversion coverage: 94%
+- Image/background analysis: 84%
 - Extension-world isolation for this WKWebView architecture: 92%
 
 The remaining delta is not one big missing subsystem. It is mostly exact upstream color math, broader bitmap/background image analysis, Dark Reader's fuller variables sheet lifecycle, and adopted stylesheet fallback behavior for browser paths that do not map perfectly to WKWebView.

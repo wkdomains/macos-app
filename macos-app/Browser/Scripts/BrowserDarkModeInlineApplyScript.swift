@@ -206,6 +206,19 @@ extension BrowserModel {
 
       const overrideInlineStyle = (element) => {
         if (!element || !element.getAttribute || !element.style) return;
+        if (element.parentElement && element.parentElement.dataset && element.parentElement.dataset.nodeViewContent) {
+          return;
+        }
+        if (inlineElementsLastChanges.has(element)) {
+          if (Date.now() - inlineElementsLastChanges.get(element) < INLINE_LOOP_DETECTION_THRESHOLD_MS) {
+            inlineElementsLoopCycles.set(element, (inlineElementsLoopCycles.get(element) || 0) + 1);
+          } else {
+            inlineElementsLoopCycles.delete(element);
+          }
+          if ((inlineElementsLoopCycles.get(element) || 0) >= INLINE_LOOP_MAX_CYCLES) {
+            return;
+          }
+        }
         const key = inlineCacheKeyFor(element);
         if (inlineStyleCache.get(element) === key) return;
 
@@ -228,6 +241,10 @@ extension BrowserModel {
         if (element.hasAttribute("color") && element.rel !== "mask-icon") {
           let value = element.getAttribute("color") || "";
           if (/^[0-9a-f]{3}$/i.test(value) || /^[0-9a-f]{6}$/i.test(value)) value = `#${value}`;
+          else if (/^#?[0-9a-f]{4}$/i.test(value)) {
+            const hex = value.startsWith("#") ? value.slice(1) : value;
+            value = `#${hex}00`;
+          }
           setInlineCustomProp(element, COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", "color", "color", value);
         }
 
@@ -235,7 +252,7 @@ extension BrowserModel {
           if (element.hasAttribute("fill")) {
             const value = element.getAttribute("fill");
             if (value && value !== "none" && value !== "currentColor") {
-              setInlineCustomProp(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", "fill", isSVGTextElementNode(element) ? "color" : "fill", value);
+              setInlineCustomProp(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", "fill", svgFillModifierProperty(element), value);
             }
           }
           if (element.hasAttribute("stop-color")) {
@@ -278,7 +295,7 @@ extension BrowserModel {
             const transformed = transformCSSValue(property, value, element);
             setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", transformed);
           } else if (lower === "fill") {
-            setInlineCustomProp(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", "fill", property, value);
+            setInlineCustomProp(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", "fill", isSVGElementNode(element) ? svgFillModifierProperty(element) : property, value);
           } else if (lower === "stroke") {
             setInlineCustomProp(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", "stroke", property, value);
           } else if (lower === "box-shadow") {
@@ -302,6 +319,7 @@ extension BrowserModel {
         }
 
         inlineStyleCache.set(element, key);
+        inlineElementsLastChanges.set(element, Date.now());
       };
 
       const applyElement = (element) => {

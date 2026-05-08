@@ -114,6 +114,7 @@ extension BrowserModel {
           [BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", "background-color"],
           [BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", "background-image"],
           [IMAGE_FILTER_ATTRIBUTE, "--wkdomains-forced-dark-image-filter", "filter"],
+          [IMAGE_FILTER_ATTRIBUTE, "--wkdomains-forced-dark-image-filter", "-webkit-filter"],
           [FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", "fill"],
           [STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", "stroke"],
           [BOX_SHADOW_ATTRIBUTE, "--wkdomains-forced-dark-box-shadow", "box-shadow"],
@@ -469,6 +470,7 @@ extension BrowserModel {
           :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) embed[type="application/pdf"],
           :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) object[type="application/pdf"],
           :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) iframe[src$=".pdf"] {
+            -webkit-filter: invert(1) contrast(0.9) hue-rotate(180deg) !important;
             filter: invert(1) contrast(0.9) hue-rotate(180deg) !important;
           }
         `;

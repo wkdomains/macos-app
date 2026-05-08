@@ -31,8 +31,11 @@ extension BrowserModel {
       const svgImageAnalysisSignatures = new WeakMap();
       const svgImageAnalysisPending = new WeakSet();
       const svgNodesRoots = new WeakMap();
+      const svgRootSizeTestResults = new WeakMap();
       let imageAnalysisCanvas = null;
       let imageAnalysisContext = null;
+      const inlineElementsLastChanges = new WeakMap();
+      const inlineElementsLoopCycles = new WeakMap();
       const ROOT_APPLY_BUDGET_MS = 8;
       const ROOT_APPLY_STARTUP_BUDGET_MS = 4;
       const ROOT_APPLY_STARTUP_DELAY_MS = 32;
@@ -47,6 +50,9 @@ extension BrowserModel {
       const LIGHT_SURFACE_ANCESTOR_LIMIT = 6;
       const MEDIA_BACKDROP_SCAN_LIMIT = 48;
       const MEDIA_BACKDROP_SCAN_BUDGET_MS = 2.5;
+      const INLINE_LOOP_DETECTION_THRESHOLD_MS = 1000;
+      const INLINE_LOOP_MAX_CYCLES = 10;
+      const SMALL_SVG_THRESHOLD = 32;
 
       const rootApplyInStartupWindow = () => {
         try {

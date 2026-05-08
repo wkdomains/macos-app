@@ -409,6 +409,8 @@ extension BrowserModel {
         pendingElementApplyQueue.splice(0);
         rootApplyScheduled = false;
         elementApplyScheduled = false;
+        imageAnalysisCanvas = null;
+        imageAnalysisContext = null;
       };
     """#
 }

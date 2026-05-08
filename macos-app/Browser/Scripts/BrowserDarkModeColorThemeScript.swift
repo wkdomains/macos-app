@@ -45,6 +45,22 @@ extension BrowserModel {
         themeNumber("grayscale", 0, 0, 100)
       ].join(":");
 
+      const themeInversionFilterValue = (contrastOffset = 0, maxContrast = 200) => {
+        const filters = [];
+        if (Number(THEME.mode) === 1) {
+          filters.push("invert(100%) hue-rotate(180deg)");
+        }
+        const brightness = themeNumber("brightness", 100, 50, 150);
+        const contrast = clamp(themeNumber("contrast", 100, 50, 150) + contrastOffset, 0, maxContrast);
+        const grayscale = themeNumber("grayscale", 0, 0, 100);
+        const sepia = themeNumber("sepia", 0, 0, 100);
+        if (brightness !== 100) filters.push(`brightness(${brightness}%)`);
+        if (contrast !== 100) filters.push(`contrast(${contrast}%)`);
+        if (grayscale !== 0) filters.push(`grayscale(${grayscale}%)`);
+        if (sepia !== 0) filters.push(`sepia(${sepia}%)`);
+        return filters.length > 0 ? filters.join(" ") : null;
+      };
+
       const applyThemeColorAdjustments = (color) => {
         if (!color) return null;
         const brightness = themeNumber("brightness", 100, 50, 150) / 100;

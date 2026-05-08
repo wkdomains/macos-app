@@ -101,14 +101,79 @@ extension BrowserModel {
         return declarations.length > 0 ? declarations : null;
       };
 
-      const transformCSSValue = (property, value, ownerElement = null) => {
+      const sourceStyleValue = (sourceStyle, property) => {
+        try {
+          return sourceStyle && sourceStyle.getPropertyValue ? sourceStyle.getPropertyValue(property) : "";
+        } catch (_) {
+          return "";
+        }
+      };
+
+      const ownerStyleValue = (ownerElement, property) => {
+        try {
+          return ownerElement && ownerElement.style && ownerElement.style.getPropertyValue
+            ? ownerElement.style.getPropertyValue(property)
+            : "";
+        } catch (_) {
+          return "";
+        }
+      };
+
+      const maskedBackgroundShouldUseForeground = (ownerElement, sourceStyle = null) => {
+        const mask = [
+          sourceStyleValue(sourceStyle, "-webkit-mask-image"),
+          sourceStyleValue(sourceStyle, "mask-image"),
+          sourceStyleValue(sourceStyle, "-webkit-mask"),
+          sourceStyleValue(sourceStyle, "mask"),
+          ownerStyleValue(ownerElement, "-webkit-mask-image"),
+          ownerStyleValue(ownerElement, "mask-image"),
+          ownerStyleValue(ownerElement, "-webkit-mask"),
+          ownerStyleValue(ownerElement, "mask")
+        ].find((value) => value && value !== "none");
+        return !!(mask && !/^linear-gradient\(/i.test(String(mask).trim()));
+      };
+
+      const splitScrollbarColors = (value) => {
+        const text = String(value || "").trim();
+        let depth = 0;
+        for (let index = 0; index < text.length; index += 1) {
+          const char = text[index];
+          if (char === "(") depth += 1;
+          else if (char === ")") depth = Math.max(0, depth - 1);
+          else if (depth === 0 && /\s/.test(char)) {
+            const first = text.slice(0, index).trim();
+            const second = text.slice(index).trim();
+            if (first && second && parseColor(first) && parseColor(second)) {
+              return [first, second];
+            }
+          }
+        }
+        return null;
+      };
+
+      const transformScrollbarColor = (value) => {
+        const colors = splitScrollbarColors(value);
+        if (!colors) return null;
+        const thumb = parseColor(colors[0]);
+        const track = parseColor(colors[1]);
+        if (!thumb || !track) return null;
+        const transformedThumb = modifyForegroundColor(thumb);
+        const transformedTrack = modifyBackgroundColor(track);
+        return transformedThumb && transformedTrack ? `${transformedThumb} ${transformedTrack}` : null;
+      };
+
+      const transformCSSValue = (property, value, ownerElement = null, sourceStyle = null) => {
         if (!property || !value) return null;
         const prop = property.toLowerCase();
         const text = String(value).trim();
         if (!text || text === "inherit" || text === "initial" || text === "unset") return null;
 
         if (prop === "color-scheme") {
-          return "dark";
+          return Number(THEME.mode) === 0 ? "dark light" : "dark";
+        }
+
+        if (prop === "scrollbar-color") {
+          return transformScrollbarColor(text);
         }
 
         if (prop.startsWith("--")) {
@@ -133,7 +198,10 @@ extension BrowserModel {
 
         if (prop === "background-color") {
           const color = parseColor(text);
-          return color ? transformBackground(color, ownerElement) : null;
+          if (!color) return null;
+          return maskedBackgroundShouldUseForeground(ownerElement, sourceStyle)
+            ? transformForeground(color, ownerElement)
+            : transformBackground(color, ownerElement);
         }
 
         if (prop === "border-color" || (prop.startsWith("border") && prop.endsWith("color")) || prop === "outline-color" || prop === "column-rule-color" || prop === "text-decoration-color") {
@@ -163,6 +231,13 @@ extension BrowserModel {
           return null;
         }
 
+        if (prop === "list-style-image") {
+          if (text.includes("gradient")) {
+            return replaceCSSColors(text, modifyBackgroundColor);
+          }
+          return null;
+        }
+
         if (prop === "background" || prop.startsWith("border") || prop === "outline" || prop === "column-rule") {
           if (!hasCSSColor(text)) {
             return null;
@@ -178,7 +253,7 @@ extension BrowserModel {
         const declarations = [];
 
         iterateCSSDeclarations(style, (property, value) => {
-          const modified = transformCSSValue(property, value, ownerElement);
+          const modified = transformCSSValue(property, value, ownerElement, style);
           if (!modified || modified === value) return;
           const priority = style.getPropertyPriority(property) ? " !important" : "";
           if (Array.isArray(modified)) {

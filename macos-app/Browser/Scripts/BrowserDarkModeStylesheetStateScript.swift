@@ -128,6 +128,12 @@ extension BrowserModel {
 
       const shouldIgnoreCSSURL = (url) => ignoredCSSURLPatterns.some((pattern) => cssURLMatchesPattern(url, pattern));
 
+      const hostsBreakingOnSVGStyleOverride = new Set([
+        "account.containerstore.com",
+        "containerstore.com",
+        "www.onet.pl"
+      ]);
+
       const ignoredCSSMediaKinds = ["aural", "braille", "embossed", "handheld", "print", "projection", "speech", "tty", "tv"];
 
       const cssMediaTextApplies = (mediaText) => {
@@ -152,6 +158,7 @@ extension BrowserModel {
       const shouldManageStyle = (element) => {
         if (!element || !element.matches || !element.matches(STYLE_SELECTOR)) return false;
         if (element.classList.contains(INLINE_CLASS) || element.classList.contains("darkreader") || element.classList.contains("stylus")) return false;
+        if (isSVGStyleElementNode(element) && hostsBreakingOnSVGStyleOverride.has(location.hostname)) return false;
         if (!cssMediaTextApplies(element.media)) return false;
         if (element instanceof HTMLLinkElement && (!element.href || element.disabled || shouldIgnoreCSSURL(element.href))) return false;
         return true;

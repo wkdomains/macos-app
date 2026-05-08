@@ -253,6 +253,34 @@ extension BrowserModel {
       const isSVGTextElementNode = (element) => isInstanceOfConstructor(element, "SVGTextElement");
       const isSVGLineElementNode = (element) => isInstanceOfConstructor(element, "SVGLineElement");
 
+      const svgFillModifierProperty = (element) => {
+        if (!isSVGElementNode(element) || isSVGTextElementNode(element)) return "color";
+        if (document.readyState !== "complete") return "color";
+        const root = svgRootFor(element);
+        if (!root) return "color";
+        let rootIsSmall = false;
+        if (svgRootSizeTestResults.has(root)) {
+          rootIsSmall = svgRootSizeTestResults.get(root);
+        } else {
+          try {
+            const rootBounds = root.getBoundingClientRect();
+            rootIsSmall = rootBounds.width * rootBounds.height <= SMALL_SVG_THRESHOLD * SMALL_SVG_THRESHOLD;
+          } catch (_) {
+            rootIsSmall = true;
+          }
+          svgRootSizeTestResults.set(root, rootIsSmall);
+        }
+        if (rootIsSmall) return "color";
+        try {
+          const bounds = element.getBoundingClientRect();
+          return bounds.width > SMALL_SVG_THRESHOLD || bounds.height > SMALL_SVG_THRESHOLD
+            ? "background-color"
+            : "color";
+        } catch (_) {
+          return "color";
+        }
+      };
+
       const describeElementForTiming = (element, reason = "") => {
         try {
           const tag = (element && element.tagName ? element.tagName.toLowerCase() : "node");

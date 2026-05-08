@@ -414,8 +414,9 @@ extension BrowserModel {
 
       const getSiteFixInvertStyle = () => {
         const selectors = activeSiteFixList("invert").map(siteFixRootSelector).filter(Boolean);
+        const filterValue = themeInversionFilterValue(-10, 100) || "invert(100%) hue-rotate(180deg)";
         return selectors.length > 0
-          ? `${selectors.join(",\n")} {\n  filter: invert(100%) hue-rotate(180deg) !important;\n}`
+          ? `${selectors.join(",\n")} {\n  -webkit-filter: ${filterValue} !important;\n  filter: ${filterValue} !important;\n}`
           : "";
       };
 
