@@ -240,6 +240,27 @@ enum BrowserDebugLogging {
         )
     }
 
+    static func recordTimingEvent(
+        category: String,
+        label: String,
+        message: String,
+        detail: String? = nil,
+        pageURL: String? = nil,
+        pageHost: String? = nil,
+        elapsedMilliseconds: Double? = nil
+    ) {
+        recordTiming(
+            source: "native",
+            category: category,
+            label: label,
+            message: message,
+            detail: detail,
+            pageURL: pageURL,
+            pageHost: pageHost?.lowercased(),
+            elapsedMilliseconds: elapsedMilliseconds
+        )
+    }
+
     static func timingResponse(activePageURL: String?, activePageHost: String?) -> BrowserTimingResponse {
         timingLock.lock()
         let sessionID = timingSessionID

@@ -190,7 +190,7 @@ final class LocalAPIServer {
                 activePageURL: page.url,
                 activePageHost: page.host
             )
-            sendJSON(response, status: .ok, on: connection)
+            sendJSON(response, status: .ok, sortedKeys: false, on: connection)
             return
         }
 
@@ -205,7 +205,7 @@ final class LocalAPIServer {
                 activePageURL: page.url,
                 activePageHost: page.host
             )
-            sendJSON(response, status: .ok, on: connection)
+            sendJSON(response, status: .ok, sortedKeys: false, on: connection)
             return
         }
 
@@ -551,9 +551,14 @@ final class LocalAPIServer {
         )
     }
 
-    private func sendJSON<T: Encodable>(_ value: T, status: HTTPStatus, on connection: NWConnection) {
+    private func sendJSON<T: Encodable>(
+        _ value: T,
+        status: HTTPStatus,
+        sortedKeys: Bool = true,
+        on connection: NWConnection
+    ) {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = sortedKeys ? [.prettyPrinted, .sortedKeys] : [.prettyPrinted]
         encoder.dateEncodingStrategy = .iso8601
 
         let body = (try? encoder.encode(value)) ?? Data(#"{"error":"Could not encode response."}"#.utf8)

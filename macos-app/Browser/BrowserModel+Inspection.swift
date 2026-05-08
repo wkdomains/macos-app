@@ -269,7 +269,8 @@ extension BrowserModel {
             return
         }
 
-        xhrRecords[index].completedAt = Date()
+        let completedAt = Date()
+        xhrRecords[index].completedAt = completedAt
         xhrRecords[index].status = Self.intValue(from: message["status"])
         xhrRecords[index].responseURL = message["responseURL"] as? String
         xhrRecords[index].responseBytes = Self.intValue(from: message["responseBytes"])
@@ -284,8 +285,28 @@ extension BrowserModel {
                 "[wkdomains-debug] xhr done id=\(id) status=\(record.status.map(String.init) ?? "nil") bytes=\(record.responseBytes.map(String.init) ?? "nil") error=\(record.error ?? "nil") url=\(record.url)"
             )
         }
+        BrowserDebugLogging.recordTimingEvent(
+            category: "network",
+            label: Self.xhrTimingLabel(for: record),
+            message: "[wkdomains-timing] xhr \(record.method) \(record.url)",
+            detail: "status=\(record.status.map(String.init) ?? "nil") bytes=\(record.responseBytes.map(String.init) ?? "nil") error=\(record.error ?? "nil")",
+            pageURL: record.pageURL,
+            pageHost: record.pageHost,
+            elapsedMilliseconds: completedAt.timeIntervalSince(record.startedAt) * 1000
+        )
 
         markScreenshotDirty(scheduleAfter: 0.45)
+    }
+
+    private static func xhrTimingLabel(for record: XHRRequestRecord) -> String {
+        guard let url = URL(string: record.url),
+              let host = url.host?.lowercased()
+        else {
+            return "xhr.\(record.method)"
+        }
+
+        let path = url.path.isEmpty ? "/" : url.path
+        return "xhr.\(record.method) \(host)\(path)"
     }
 
     func recordVisitedURL(_ url: URL, identityID: UUID?) {
