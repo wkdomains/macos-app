@@ -203,7 +203,7 @@ extension BrowserModel {
                 mutation.target.nodeType === Node.ELEMENT_NODE
                 && (
                   mutation.target.matches(STYLE_OVERRIDE_SELECTOR)
-                  || mutation.target.querySelector?.(CONTROL_SELECTOR)
+                  || mutation.target.querySelector?.(EDITABLE_CONTROL_SELECTOR)
                 )
               ) {
                 queueElementApply(mutation.target, 0);
@@ -226,7 +226,7 @@ extension BrowserModel {
             if (shouldManageStyle(node)) stylesChanged = true;
             if (node.querySelector && node.querySelector(STYLE_SELECTOR)) stylesChanged = true;
             const queuedPriorityElements = queueElementSubtreeApply(node, 32);
-            if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE || queuedPriorityElements > 0) {
+            if (queuedPriorityElements > 0) {
               markDirty(node);
               inlineChanged = true;
             }

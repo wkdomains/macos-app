@@ -403,6 +403,9 @@ extension BrowserModel {
       const collectInlineVariableStyles = (root) => {
         if (!root || !root.querySelectorAll) return;
         let collected = 0;
+        const startupCollection = stylesheetSyncElapsedSinceInstall() < STARTUP_STYLE_SYNC_WINDOW_MS;
+        const collectLimit = startupCollection ? 360 : 2000;
+        const visitLimit = startupCollection ? 1800 : Number.POSITIVE_INFINITY;
         const collect = (element) => {
           if (!element || !element.style || !styleHasVariableData(element.style)) return;
           variablesStore.addInlineStyleForMatching(element.style);
@@ -416,6 +419,21 @@ extension BrowserModel {
           collect(root);
         }
 
+        if (startupCollection && document.createTreeWalker) {
+          const walkerRoot = root.nodeType === Node.DOCUMENT_NODE ? root.documentElement : root;
+          if (!walkerRoot) return;
+          const showElement = window.NodeFilter ? NodeFilter.SHOW_ELEMENT : 1;
+          const walker = document.createTreeWalker(walkerRoot, showElement);
+          let visited = 0;
+          let element = walker.nextNode();
+          while (element && collected < collectLimit && visited < visitLimit) {
+            visited += 1;
+            collect(element);
+            element = walker.nextNode();
+          }
+          return;
+        }
+
         let elements = [];
         try {
           elements = root.querySelectorAll("[style*='--'], [style*='var(']");
@@ -424,7 +442,7 @@ extension BrowserModel {
         }
         for (const element of elements) {
           collect(element);
-          if (collected >= 2000) break;
+          if (collected >= collectLimit) break;
         }
       };
 

@@ -209,6 +209,13 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - medium-size stylesheets switch to sliced async conversion during startup, not only very large stylesheets
   - per-stylesheet rendering can drain through time-budgeted startup jobs so many medium stylesheets do not block the UI in one burst
   - runtime status now reports deferred startup syncs, deferred synchronous flushes, priority element applies, and pending style-render jobs
+- Reduced Gmail-style ARIA/control startup pressure:
+  - computed-style fallback no longer treats every `[role="button"]` as an editable control
+  - priority DOM passes focus on inline styles, editable controls, and real modal/popover/surface containers
+  - broad `role=group/region/form` and generic `container/content` light-surface matching were removed from the computed fallback path
+  - media-backdrop descendant scans are skipped for direct editable/control fallback and kept for real surface fallback
+  - startup root application now uses smaller slices and longer reschedule delays so large mail-style DOMs yield to browser UI sooner
+  - startup inline variable collection uses a bounded walker before the later full sync catches the remaining long tail
 - Improved stylesheet/adopted stylesheet behavior:
   - fetched stylesheet copies now expand same-CORS `@import` rules recursively before parsing
   - failed fetch-copy attempts now get a guarded retry instead of permanently marking a stylesheet unavailable
@@ -227,7 +234,7 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 
 - Full `variablesStore` dependency graph for matching variables and dependents: 91%
 - Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 97%
-- Mature optimized DOM/style watchers: 96%
+- Mature optimized DOM/style watchers: 97%
 - Robust adopted stylesheet management: 93%
 - Full stylesheet proxy behavior and cross-context coordination: 95%
 - Dark Reader's color pipeline and extensive config corpus: 91%
@@ -243,7 +250,7 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Per-stylesheet managers still need more mature behavior. Current estimate: 97%.
   - privileged cross-origin/background fetch parity
   - imported stylesheet retries
-- Watchers now have the main Dark Reader-style batching/dirty-root/priority-surface pieces, but still need more long-run observer pressure testing. Current estimate: 96%.
+- Watchers now have the main Dark Reader-style batching/dirty-root/priority-surface pieces, but still need more long-run observer pressure testing. Current estimate: 97%.
 - Adopted stylesheet handling is better, but not equivalent to Dark Reader's full CSSStyleSheet override/fallback model. Current estimate: 93%.
 - Stylesheet proxy is closer, but cross-context coordination is still partial for some obscure CSSOM mutation APIs. Current estimate: 95%.
 - Color pipeline is much closer, but still not a full port. Current estimate: 91%.

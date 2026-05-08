@@ -22,13 +22,30 @@ extension BrowserModel {
       let priorityElementApplyBatches = 0;
       let priorityElementApplies = 0;
       const ROOT_APPLY_BUDGET_MS = 8;
+      const ROOT_APPLY_STARTUP_BUDGET_MS = 4;
+      const ROOT_APPLY_STARTUP_DELAY_MS = 32;
       const ROOT_APPLY_MAX_PER_SLICE = 8;
       const ROOT_APPLY_MAX_ELEMENTS_PER_SLICE = 96;
+      const ROOT_APPLY_STARTUP_MAX_ELEMENTS_PER_SLICE = 48;
       const ELEMENT_APPLY_BUDGET_MS = 6;
       const ELEMENT_APPLY_MAX_PER_SLICE = 80;
       const ELEMENT_SUBTREE_QUEUE_LIMIT = 32;
       const ELEMENT_SUBTREE_VISIT_LIMIT = 384;
       const LIGHT_SURFACE_ANCESTOR_LIMIT = 6;
+
+      const rootApplyInStartupWindow = () => {
+        try {
+          return stylesheetSyncElapsedSinceInstall() < STARTUP_STYLE_SYNC_WINDOW_MS;
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const rootApplyBudgetMS = () => rootApplyInStartupWindow() ? ROOT_APPLY_STARTUP_BUDGET_MS : ROOT_APPLY_BUDGET_MS;
+      const rootApplyElementLimit = () => rootApplyInStartupWindow()
+        ? ROOT_APPLY_STARTUP_MAX_ELEMENTS_PER_SLICE
+        : ROOT_APPLY_MAX_ELEMENTS_PER_SLICE;
+      const rootApplyRescheduleDelay = () => rootApplyInStartupWindow() ? ROOT_APPLY_STARTUP_DELAY_MS : 16;
 
       const setOverride = (element, attribute, property, value) => {
         if (!value) {
@@ -130,13 +147,17 @@ extension BrowserModel {
         return rect.width >= 24 && rect.height >= 24 && rect.area > 0;
       };
 
-      const hasMediaBackdrop = (element, style) => {
+      const hasMediaBackdrop = (element, style, scanDescendants = true) => {
         if (!element || !style) return false;
         if (shouldIgnoreImageAnalysis(element)) return false;
 
         const backgroundImage = style.backgroundImage || "";
         if (backgroundImage && backgroundImage !== "none" && !backgroundImage.includes("gradient")) {
           return true;
+        }
+
+        if (!scanDescendants) {
+          return false;
         }
 
         if (element.tagName && ["A", "BUTTON", "INPUT", "TEXTAREA", "SELECT", "OPTION"].includes(element.tagName.toUpperCase())) {
@@ -174,14 +195,22 @@ extension BrowserModel {
         "[role='switch']",
         "[role='textbox']"
       ].join(", ");
+      const EDITABLE_CONTROL_SELECTOR = [
+        "input",
+        "textarea",
+        "select",
+        "[contenteditable='true']",
+        "[role='combobox']",
+        "[role='searchbox']",
+        "[role='spinbutton']",
+        "[role='textbox']"
+      ].join(", ");
       const LIGHT_SURFACE_SELECTOR = [
         "dialog",
         "[popover]",
         "[aria-modal='true']",
         "[role='dialog']",
-        "[role='region']",
-        "[role='group']",
-        "[role='form']",
+        "[role='alertdialog']",
         "[class*='modal' i]",
         "[class*='dialog' i]",
         "[class*='popover' i]",
@@ -192,8 +221,8 @@ extension BrowserModel {
         "[class*='sheet' i]"
       ].join(", ");
       const SVG_SELECTOR = Array.from(SVG_TAGS).map((tag) => tag.toLowerCase()).join(", ");
-      const STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, CONTROL_SELECTOR, SVG_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
-      const PRIORITY_STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, CONTROL_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
+      const STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, EDITABLE_CONTROL_SELECTOR, SVG_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
+      const PRIORITY_STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, EDITABLE_CONTROL_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
 
       const shouldSkipElement = (element) => {
         if (!element || !element.tagName || SKIP_TAGS.has(element.tagName.toUpperCase())) return true;
@@ -240,12 +269,12 @@ extension BrowserModel {
         if (rect.width < 24 || rect.height < 18 || rect.area < 900) return false;
 
         const role = String(element.getAttribute("role") || "").toLowerCase();
-        if (["dialog", "region", "group", "form", "textbox"].includes(role)) return true;
+        if (["dialog", "alertdialog"].includes(role)) return true;
         if (element.hasAttribute("popover") || element.getAttribute("aria-modal") === "true") return true;
         if (element.matches("dialog")) return true;
 
         const className = String(element.className || "");
-        if (/\b(modal|dialog|popover|popup|drawer|panel|surface|sheet|compose|editor|toolbar|container|content)\b/i.test(className)) {
+        if (/\b(modal|dialog|popover|popup|drawer|panel|surface|sheet|compose|editor|toolbar)\b/i.test(className)) {
           return true;
         }
 
@@ -320,7 +349,7 @@ extension BrowserModel {
           : null;
         const background = surfaceBackground || sourceBackground;
         const backgroundLuminance = background ? relativeLuminance(background) : 0;
-        const mediaBackdrop = hasMediaBackdrop(element, style);
+        const mediaBackdrop = hasMediaBackdrop(element, style, reason === "surface");
         const transformedBackground = mediaBackdrop ? null : transformBackground(background, element);
 
         if (mediaBackdrop) {
@@ -369,6 +398,7 @@ extension BrowserModel {
         if (forceCandidate) {
           const rect = visibleRectFor(element);
           if (rect.width < 24 || rect.height < 18 || rect.area < 900) return false;
+          if (rect.area > Math.max(1, innerWidth * innerHeight) * 0.55 && !isLightSurfaceCandidate(element)) return false;
         }
         const style = captureSourceStyle(element) || getComputedStyle(element);
         if (!style || style.display === "none" || style.visibility === "hidden" || Number.parseFloat(style.opacity || "1") <= 0.02) return false;
@@ -539,16 +569,21 @@ extension BrowserModel {
           return;
         }
 
+        const isSVGElement = SVG_TAGS.has(tag);
+        const isEditableControl = element.matches(EDITABLE_CONTROL_SELECTOR);
+        const needsSurfaceFallback = !hasInlineColors && !isSVGElement && !isEditableControl
+          ? shouldApplyLightSurfaceFallback(element)
+          : false;
         const shouldFallbackToComputedStyle = hasInlineColors
-          || SVG_TAGS.has(tag)
-          || element.matches(CONTROL_SELECTOR)
-          || shouldApplyLightSurfaceFallback(element);
+          || isSVGElement
+          || isEditableControl
+          || needsSurfaceFallback;
         if (!shouldFallbackToComputedStyle) {
           return;
         }
 
-        applyComputedStyleFallback(element, shouldApplyLightSurfaceFallback(element) ? "surface" : "direct");
-        if (element.matches(CONTROL_SELECTOR)) {
+        applyComputedStyleFallback(element, needsSurfaceFallback ? "surface" : "direct");
+        if (isEditableControl) {
           applyLightSurfaceAncestors(element);
         }
       };
@@ -717,8 +752,8 @@ extension BrowserModel {
           }
           count += 1;
           if (
-            count >= ROOT_APPLY_MAX_ELEMENTS_PER_SLICE
-            || performance.now() - started > ROOT_APPLY_BUDGET_MS
+            count >= rootApplyElementLimit()
+            || performance.now() - started > rootApplyBudgetMS()
           ) {
             return false;
           }
@@ -757,7 +792,7 @@ extension BrowserModel {
                 pendingRootApplyQueue.unshift(root);
                 break;
               }
-              if (count >= ROOT_APPLY_MAX_PER_SLICE || performance.now() - started > ROOT_APPLY_BUDGET_MS) {
+              if (count >= ROOT_APPLY_MAX_PER_SLICE || performance.now() - started > rootApplyBudgetMS()) {
                 break;
               }
             }
@@ -767,7 +802,7 @@ extension BrowserModel {
         }
 
         if (pendingRootApplyQueue.length > 0) {
-          scheduleQueuedRootApplies(16);
+          scheduleQueuedRootApplies(rootApplyRescheduleDelay());
         }
       };
 
