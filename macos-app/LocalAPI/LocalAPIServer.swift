@@ -184,6 +184,31 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/timing" {
+            let page = dataReader.readPage()
+            let response = BrowserDebugLogging.timingResponse(
+                activePageURL: page.url,
+                activePageHost: page.host
+            )
+            sendJSON(response, status: .ok, on: connection)
+            return
+        }
+
+        if request.path == "/api/v1/timing/reset" {
+            let page = dataReader.readPage()
+            BrowserDebugLogging.startTimingSession(
+                pageURL: page.url,
+                pageHost: page.host,
+                reason: "api-reset"
+            )
+            let response = BrowserDebugLogging.timingResponse(
+                activePageURL: page.url,
+                activePageHost: page.host
+            )
+            sendJSON(response, status: .ok, on: connection)
+            return
+        }
+
         if request.path == "/api/v1/dom" {
             BrowserDebugLogging.log("[wkdomains-debug] local-api dom start id=\(debugID)")
             dataReader.readDOM { [weak self] result in

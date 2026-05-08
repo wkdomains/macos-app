@@ -43,6 +43,13 @@ extension BrowserModel: WKScriptMessageHandler {
 extension BrowserModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         guard let tab = tab(for: webView) else { return }
+        if activeTabID == tab.id {
+            BrowserDebugLogging.startTimingSession(
+                pageURL: webView.url?.absoluteString,
+                pageHost: webView.url?.host,
+                reason: "navigation-start"
+            )
+        }
         logNavigationEvent("didStartProvisionalNavigation", webView: webView, tab: tab)
 
         tab.errorMessage = nil

@@ -206,7 +206,14 @@ extension BrowserModel {
         if level == "error" || level == "warn" || record.message.contains("wkdomains") {
             let line = "[wkdomains-debug] console level=\(record.level) host=\(record.pageHost ?? "nil") url=\(record.pageURL ?? "nil") message=\(record.message)"
             if record.message.contains("wkdomains-dark-perf") || record.message.contains("wkdomains-dark-proxy-perf") {
-                BrowserDebugLogging.performance(line)
+                BrowserDebugLogging.recordPagePerformance(
+                    level: record.level,
+                    message: record.message,
+                    arguments: record.arguments,
+                    pageURL: record.pageURL,
+                    pageHost: record.pageHost
+                )
+                BrowserDebugLogging.xcodePerformance(line)
             } else {
                 BrowserDebugLogging.log(line)
             }

@@ -227,6 +227,7 @@ final class BotTerminalModel: ObservableObject {
             \(context.localAPIBaseURL)/api/v1/dom
             \(context.localAPIBaseURL)/api/v1/links
             \(context.localAPIBaseURL)/api/v1/console
+            \(context.localAPIBaseURL)/api/v1/timing
             \(context.localAPIBaseURL)/api/v1/resources
             \(context.localAPIBaseURL)/api/v1/screenshot
             \(context.localAPIBaseURL)/api/v1/xhr
