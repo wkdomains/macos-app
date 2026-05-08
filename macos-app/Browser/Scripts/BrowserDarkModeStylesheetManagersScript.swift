@@ -317,6 +317,51 @@ extension BrowserModel {
         renderAdoptedStyleSheets(root);
       };
 
+      const scheduleFinalStartupStyleSync = () => {
+        if (finalStartupStyleSyncScheduled) return;
+        finalStartupStyleSyncScheduled = true;
+        const delay = Math.max(0, 4300 - elapsedSinceInstall());
+        window.setTimeout(() => {
+          finalStartupStyleSyncScheduled = false;
+          scheduleStyleSync(0);
+        }, delay);
+      };
+
+      const getStylesheetSyncWorkRoots = (roots) => {
+        if (!roots || roots.length <= 1) {
+          lastStylesheetSyncRootCount = roots ? roots.length : 0;
+          lastStylesheetSyncTotalRootCount = roots ? roots.length : 0;
+          return { roots, hasMore: false };
+        }
+
+        lastStylesheetSyncTotalRootCount = roots.length;
+        const startupWindow = elapsedSinceInstall() < 4200;
+        const startupRootLimit = 28;
+        if (!startupWindow || roots.length <= startupRootLimit + 1) {
+          stylesheetSyncRootCursor = 0;
+          lastStylesheetSyncRootCount = roots.length;
+          return { roots, hasMore: false };
+        }
+
+        const shadowRoots = roots.slice(1);
+        const start = stylesheetSyncRootCursor % shadowRoots.length;
+        const selected = [];
+        for (let offset = 0; offset < Math.min(startupRootLimit, shadowRoots.length); offset += 1) {
+          selected.push(shadowRoots[(start + offset) % shadowRoots.length]);
+        }
+        const nextCursor = (start + selected.length) % shadowRoots.length;
+        const hasMore = start + selected.length < shadowRoots.length;
+        stylesheetSyncRootCursor = nextCursor;
+        scheduleFinalStartupStyleSync();
+
+        const workRoots = [roots[0], ...selected];
+        lastStylesheetSyncRootCount = workRoots.length;
+        return {
+          roots: workRoots,
+          hasMore
+        };
+      };
+
       const syncAllStyles = () => {
         __wkdomainsDarkModeDebug("sync-styles-start");
         stylesheetSyncNeeded = false;
@@ -324,8 +369,10 @@ extension BrowserModel {
         pruneAdoptedStyleManagers();
         variablesStore.clear();
 
-        const roots = getStylesheetSyncRoots();
-        __wkdomainsDarkModeDebug(`sync-styles-roots:${roots.length}`);
+        const allRoots = getStylesheetSyncRoots();
+        const work = getStylesheetSyncWorkRoots(allRoots);
+        const roots = work.roots;
+        __wkdomainsDarkModeDebug(`sync-styles-roots:${roots.length}/${allRoots.length}`);
         const stylesByRoot = new Map();
         for (const root of roots) {
           stylesByRoot.set(root, collectVariableInputs(root));
@@ -343,6 +390,9 @@ extension BrowserModel {
 
         if (loadingStyles.size === 0 && document.readyState !== "loading") {
           cleanFallbackStyle();
+        }
+        if (work.hasMore) {
+          scheduleStyleSync(120);
         }
         __wkdomainsDarkModeDebug("sync-styles-end");
       };
@@ -385,6 +435,7 @@ extension BrowserModel {
         }
         stylesheetSyncScheduled = false;
         stylesheetSyncNeeded = false;
+        finalStartupStyleSyncScheduled = false;
       };
     """#
 }

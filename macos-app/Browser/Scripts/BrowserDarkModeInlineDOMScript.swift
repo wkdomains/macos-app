@@ -10,6 +10,11 @@ extension BrowserModel {
       const discoveredShadowRoots = new Set();
       const sourceStyleCache = new WeakMap();
       const inlineStyleCache = new WeakMap();
+      const pendingRootApplySet = new Set();
+      const pendingRootApplyQueue = [];
+      let rootApplyScheduled = false;
+      const ROOT_APPLY_BUDGET_MS = 8;
+      const ROOT_APPLY_MAX_PER_SLICE = 8;
 
       const setOverride = (element, attribute, property, value) => {
         if (!value) {
@@ -454,6 +459,50 @@ extension BrowserModel {
         }
       };
 
+      const flushQueuedRootApplies = () => {
+        rootApplyScheduled = false;
+        if (pendingRootApplyQueue.length === 0) return;
+
+        const started = performance.now();
+        let count = 0;
+        const wasApplying = applying;
+        applying = true;
+
+        try {
+          withFallbackDisabled(() => {
+            while (pendingRootApplyQueue.length > 0) {
+              const root = pendingRootApplyQueue.shift();
+              pendingRootApplySet.delete(root);
+              if (!root || (root.host && !root.host.isConnected)) continue;
+              applyRoot(root);
+              count += 1;
+              if (count >= ROOT_APPLY_MAX_PER_SLICE || performance.now() - started > ROOT_APPLY_BUDGET_MS) {
+                break;
+              }
+            }
+          });
+        } finally {
+          applying = wasApplying;
+        }
+
+        if (pendingRootApplyQueue.length > 0) {
+          scheduleQueuedRootApplies(16);
+        }
+      };
+
+      const scheduleQueuedRootApplies = (delay = 0) => {
+        if (rootApplyScheduled) return;
+        rootApplyScheduled = true;
+        window.setTimeout(flushQueuedRootApplies, delay);
+      };
+
+      const queueRootApply = (root, delay = 16) => {
+        if (!root || pendingRootApplySet.has(root)) return;
+        pendingRootApplySet.add(root);
+        pendingRootApplyQueue.push(root);
+        scheduleQueuedRootApplies(delay);
+      };
+
       const clearCachedSourceFor = (node) => {
         if (node && node.nodeType === Node.ELEMENT_NODE) {
           sourceStyleCache.delete(node);
@@ -465,9 +514,9 @@ extension BrowserModel {
         if (!root || discoveredShadowRoots.has(root)) return;
         discoveredShadowRoots.add(root);
         createShadowStaticStyleOverrides(root);
-        applyRoot(root);
-        scheduleStyleSync(0);
         watchRoot(root);
+        queueRootApply(root);
+        scheduleStyleSync(60);
       };
 
       const destroyInlineDOMState = () => {
@@ -476,6 +525,9 @@ extension BrowserModel {
           clearAllInlineOverrides(root);
         }
         discoveredShadowRoots.clear();
+        pendingRootApplySet.clear();
+        pendingRootApplyQueue.splice(0);
+        rootApplyScheduled = false;
       };
     """#
 }

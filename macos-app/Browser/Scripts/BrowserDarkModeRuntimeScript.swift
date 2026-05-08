@@ -13,6 +13,8 @@ extension BrowserModel {
       let applying = false;
       let readyFinalized = false;
       let readyFallbackTimer = null;
+      let shadowDiscoveryScheduled = false;
+      const shadowDiscoveryRoots = new Set();
       const rootObservers = new Map();
       const dirtyRoots = new Set();
       let shadowProxyActive = false;
@@ -59,10 +61,18 @@ extension BrowserModel {
                 bridgeConfig: bridgeStatus.config ? { ...bridgeStatus.config } : null,
                 stylesheetSyncScheduled,
                 stylesheetSyncNeeded,
+                stylesheetSyncRootCursor,
+                lastStylesheetSyncRootCount,
+                lastStylesheetSyncTotalRootCount,
+                finalStartupStyleSyncScheduled,
                 loadingStyles: loadingStyles.size,
                 managedStyleElements: managedStyleElements.size,
                 managedAdoptedRoots: managedAdoptedRoots.size,
                 discoveredShadowRoots: discoveredShadowRoots.size,
+                pendingRootApplies: pendingRootApplyQueue.length,
+                rootApplyScheduled,
+                shadowDiscoveryScheduled,
+                pendingShadowDiscoveryRoots: shadowDiscoveryRoots.size,
                 rootObservers: rootObservers.size,
                 ready: document.documentElement?.getAttribute(READY_ATTRIBUTE) === "true"
               };
@@ -475,14 +485,30 @@ extension BrowserModel {
         }, limit);
       };
 
+      const scheduleShadowRootDiscovery = (root = document, delay = 40) => {
+        if (root) shadowDiscoveryRoots.add(root);
+        if (shadowDiscoveryScheduled) return;
+        shadowDiscoveryScheduled = true;
+        window.setTimeout(() => {
+          shadowDiscoveryScheduled = false;
+          const roots = Array.from(shadowDiscoveryRoots);
+          shadowDiscoveryRoots.clear();
+          for (const discoveryRoot of roots) {
+            discoverExistingShadowRoots(discoveryRoot);
+          }
+        }, delay);
+      };
+
       const discoverShadowRootsForAddedNode = (node) => {
         if (!node) return;
         if (node.nodeType === Node.ELEMENT_NODE && node.shadowRoot) {
           discoverShadowRoot(node.shadowRoot);
         }
-        const deferred = discoverExistingShadowRoots(node, 512);
-        if (deferred) {
-          window.setTimeout(() => discoverExistingShadowRoots(node), 0);
+        if (
+          node.nodeType === Node.DOCUMENT_FRAGMENT_NODE
+          || (node.querySelector && node.querySelector("*"))
+        ) {
+          scheduleShadowRootDiscovery(node, 40);
         }
       };
 
@@ -634,7 +660,9 @@ extension BrowserModel {
         applying = true;
         __wkdomainsDarkModeDebug("run-base-style");
         ensureBaseStyle();
-        discoverExistingShadowRoots(document);
+        if (discoveredShadowRoots.size === 0) {
+          scheduleShadowRootDiscovery(document, 0);
+        }
         __wkdomainsDarkModeDebug("run-sync-styles");
         flushStyleSyncNow();
         ensureSiteFixStyle();
@@ -711,14 +739,11 @@ extension BrowserModel {
           }
 
           if (kind === "shadow-root" || kind === "custom-element") {
-            window.setTimeout(() => {
-              discoverExistingShadowRoots(document);
-              dirtyRoots.add(document);
-              schedule(0);
-            }, 0);
+            scheduleShadowRootDiscovery(document, 60);
+            schedule(40);
           }
 
-          scheduleStyleSync(0);
+          scheduleStyleSync(elapsedSinceInstall() < 2500 ? 80 : 0);
         };
 
         document.addEventListener(PAGE_PROXY_EVENT, onPageProxyChange);
@@ -805,6 +830,8 @@ extension BrowserModel {
         dynamicStyleStarted = false;
         bridgeStatus.configured = false;
         bridgeStatus.config = null;
+        shadowDiscoveryScheduled = false;
+        shadowDiscoveryRoots.clear();
         fallbackWasCleared = false;
         shadowProxyActive = false;
         customElementRegistryProxyActive = false;

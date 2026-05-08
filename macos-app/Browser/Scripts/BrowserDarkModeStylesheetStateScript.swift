@@ -15,6 +15,10 @@ extension BrowserModel {
       let stylesheetSyncScheduled = false;
       let stylesheetSyncTimer = null;
       let stylesheetSyncNeeded = true;
+      let stylesheetSyncRootCursor = 0;
+      let lastStylesheetSyncRootCount = 0;
+      let lastStylesheetSyncTotalRootCount = 0;
+      let finalStartupStyleSyncScheduled = false;
       let stylesheetProxyActive = false;
       let loadingStylesCounter = 0;
       const loadingStyles = new Set();
