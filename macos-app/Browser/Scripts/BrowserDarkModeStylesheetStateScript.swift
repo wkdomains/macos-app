@@ -383,8 +383,11 @@ extension BrowserModel {
       const ensureFallbackStyleText = () => {
         const fallbackStyle = fallbackStyleElement();
         fallbackStyle.id = STYLE_ID;
-        if (!fallbackStyle.textContent) {
-          fallbackStyle.textContent = getFallbackStyle();
+        if (!fallbackStyle.textContent || fallbackWasCleared) {
+          const fallbackStyleText = getFallbackStyle();
+          if (fallbackStyle.textContent !== fallbackStyleText) {
+            fallbackStyle.textContent = fallbackStyleText;
+          }
         }
         injectStaticStyle(fallbackStyle, null, "fallback");
         fallbackWasCleared = false;
@@ -393,7 +396,10 @@ extension BrowserModel {
       const cleanFallbackStyle = () => {
         if (loadingStyles.size > 0) return;
         const fallbackStyle = fallbackStyleElement();
-        fallbackStyle.textContent = "";
+        const fallbackStyleText = getPersistentFallbackStyle();
+        if (fallbackStyle.textContent !== fallbackStyleText) {
+          fallbackStyle.textContent = fallbackStyleText;
+        }
         fallbackWasCleared = true;
       };
 

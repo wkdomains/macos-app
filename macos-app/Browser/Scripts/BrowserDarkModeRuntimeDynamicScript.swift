@@ -114,6 +114,7 @@ extension BrowserModel {
       const handleWindowLoad = () => {
         __wkdomainsDarkModeDebug("window-load");
         pageLoadFired = true;
+        queuePostLoadSurfaceApplies(document, 64);
         dirtyRoots.add(document);
         scheduleLifecycleStyleRefresh(120);
         schedule(40);
@@ -122,6 +123,7 @@ extension BrowserModel {
       const handlePageShow = () => {
         __wkdomainsDarkModeDebug("page-show");
         if (document.readyState === "complete") pageLoadFired = true;
+        queuePostLoadSurfaceApplies(document, 64);
         dirtyRoots.add(document);
         scheduleLifecycleStyleRefresh(120);
         schedule(40);

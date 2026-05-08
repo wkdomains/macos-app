@@ -138,7 +138,7 @@ extension BrowserModel {
         }
       `;
 
-      const getFallbackStyle = () => `
+      const getPersistentFallbackStyle = () => `
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) {
           color-scheme: dark !important;
           --darkreader-neutral-background: ${toThemeRGBA(themeBackgroundColor())};
@@ -152,13 +152,32 @@ extension BrowserModel {
           background: var(--darkreader-neutral-background) !important;
           color: var(--darkreader-neutral-text) !important;
         }
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body * {
-          transition-property: color, background-color, border-color, outline-color, box-shadow, fill, stroke !important;
-          transition-duration: 0s !important;
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) main,
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) article,
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="main"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="article"] {
+          color-scheme: dark !important;
+          background-color: var(--darkreader-neutral-background) !important;
+          color: var(--darkreader-neutral-text) !important;
+        }
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) main :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe):not([${BACKGROUND_ATTRIBUTE}]),
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) article :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe):not([${BACKGROUND_ATTRIBUTE}]),
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="main"] :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe):not([${BACKGROUND_ATTRIBUTE}]),
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="article"] :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe):not([${BACKGROUND_ATTRIBUTE}]) {
+          background-color: transparent !important;
+          border-color: var(--darkreader-border) !important;
         }
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) ::selection {
           background: var(--darkreader-selection-background) !important;
           color: var(--darkreader-selection-text) !important;
+        }
+      `;
+
+      const getFallbackStyle = () => `
+        ${getPersistentFallbackStyle()}
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body * {
+          transition-property: color, background-color, border-color, outline-color, box-shadow, fill, stroke !important;
+          transition-duration: 0s !important;
         }
       `;
 
@@ -299,8 +318,11 @@ extension BrowserModel {
 
         const fallbackStyle = createOrUpdateStyle("wkdomains-darkreader--fallback", document);
         fallbackStyle.id = STYLE_ID;
-        if (!fallbackWasCleared || loadingStyles.size > 0) {
-          fallbackStyle.textContent = getFallbackStyle();
+        const fallbackStyleText = !fallbackWasCleared || loadingStyles.size > 0
+          ? getFallbackStyle()
+          : getPersistentFallbackStyle();
+        if (fallbackStyle.textContent !== fallbackStyleText) {
+          fallbackStyle.textContent = fallbackStyleText;
         }
         injectStaticStyle(fallbackStyle, null, "fallback");
 

@@ -187,7 +187,7 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - the full upstream Dark Reader `dynamic-theme-fixes.config` is now checked in as an app resource
   - parser handling now treats `================================` as a block separator instead of leaking it into CSS sections
   - consecutive URL lines in a block are now collected, matching the upstream config format
-  - old built-in Gmail/Reddit fixes are now fallback-only when no config corpus is available, avoiding one-site hardcoded overlap in normal builds
+  - old built-in site-specific fallback fixes were removed; site-specific behavior now comes from the upstream Dark Reader config corpus
 - Added Dark Reader-style theme knobs:
   - UserDefaults can now provide brightness, contrast, sepia, grayscale, and dark/light scheme colors
   - generated palette variables, fallback styles, controls, selection colors, meta theme-color, and inline root colors now use the configured theme
@@ -209,18 +209,18 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - medium-size stylesheets switch to sliced async conversion during startup, not only very large stylesheets
   - per-stylesheet rendering can drain through time-budgeted startup jobs so many medium stylesheets do not block the UI in one burst
   - runtime status now reports deferred startup syncs, deferred synchronous flushes, priority element applies, and pending style-render jobs
-- Reduced Gmail-style ARIA/control startup pressure:
+- Reduced large mail-app ARIA/control startup pressure:
   - computed-style fallback no longer treats every `[role="button"]` as an editable control
   - priority DOM passes focus on inline styles, editable controls, and real modal/popover/surface containers
   - broad `role=group/region/form` and generic `container/content` light-surface matching were removed from the computed fallback path
   - media-backdrop descendant scans are skipped for direct editable/control fallback and kept for real surface fallback
   - startup root application now uses smaller slices and longer reschedule delays so large mail-style DOMs yield to browser UI sooner
   - startup inline variable collection uses a bounded walker before the later full sync catches the remaining long tail
-- Improved generic compose/form surface recovery:
+- Improved generic dynamic form-surface recovery:
   - labeled regions and form-like containers with editable fields now get Dark Reader-style dark form-surface treatment through generic `:has()` selectors
   - action controls are back in the inline fallback path, but only when their original computed background is visibly light and their geometry looks like a real control surface
   - direct action/control fallback avoids descendant media scans so large ARIA button trees do not create a new startup stall
-  - this replaces the previous need for Gmail-specific compose selectors with a broader modal/form surface rule
+  - no app-specific selectors are used in this path; dynamic form/dialog/region handling is generic
 - Improved stylesheet/adopted stylesheet behavior:
   - fetched stylesheet copies now expand same-CORS `@import` rules recursively before parsing
   - failed fetch-copy attempts now get a guarded retry instead of permanently marking a stylesheet unavailable
@@ -298,11 +298,29 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Reverted the overly aggressive page-load deferral after Gmail showed white sections:
   - Dark Reader runs `createDynamicStyleOverrides()` immediately after fallback setup, so full dynamic stylesheet sync is no longer held until the page load event
   - the native browser progress bar is now less eager and less visually dominant, hiding once WKWebView reports late-stage progress instead of drawing a long blue bar over already-interactive SPA pages
+- Tightened the no-site-hardcoding path:
+  - removed the legacy built-in Gmail/Reddit fallback table from the injected script; normal and fallback behavior now use the bundled upstream Dark Reader config parser instead of local one-off selectors
+  - post-load mutation handling can queue generic light surface candidates (`form`, dialogs, popovers, labeled regions) while startup remains limited to Dark Reader's inline-style selector path
+  - form-like dynamic surfaces get a bounded child-surface pass for bright title/toolbar rows without matching app-specific classes or app-specific vocabulary
+- Fixed a Dark Reader config parser truncation bug:
+  - URL block detection now only starts a new block when the parser is not inside an existing config section, so selector lines that look URL-like no longer prematurely end `INVERT`, `CSS`, or ignore sections
+  - the Gmail upstream block now exposes its full CSS, invert, `IGNORE INLINE STYLE`, and `IGNORE IMAGE ANALYSIS` sections through the same parser path as Dark Reader's corpus
+  - a post-load generic structural surface sweep now queues `main`/`article`/dialog/form/labeled-region surfaces in small batches, keeping startup narrow while catching large SPA reading panes that are inserted before `load`
+- Fixed generic light-surface descendant clearing:
+  - detected structural surfaces now get the descendant-clearing surface marker even when they are read-only panes, not only when they contain editable fields
+  - action/button fallback uses a separate reason so small control fixes do not turn into broad descendant surface clearing
+- Reduced first-paint white flashes on large read surfaces:
+  - the early fallback stylesheet now covers semantic structural read surfaces (`main`, `article`, `role=main`, `role=article`) before computed surface fallback runs
+  - descendant background clearing for those early structural surfaces mirrors the existing surface-marker behavior while excluding media/SVG/iframe content and explicit dark-mode background overrides
+- Kept a minimal transition fallback alive after stylesheet loading:
+  - the full startup fallback still drops the zero-duration transition override after loading settles
+  - the neutral root/body and semantic surface fallback now remains in place, matching Dark Reader's fallback lifecycle more closely and covering late SPA panes without app-specific selectors
+  - fallback style writes are skipped when the text is already current, avoiding unnecessary stylesheet recalculation during repeated dynamic runs
 
 ## Completion Estimates
 
 - Full `variablesStore` dependency graph for matching variables and dependents: 95%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 99.1%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 99.3%
 - Mature optimized DOM/style watchers: 99.9%
 - Robust adopted stylesheet management: 94%
 - Full stylesheet proxy behavior and cross-context coordination: 96%
@@ -316,7 +334,7 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - no full scoped variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - scoped handling is stronger, but still not as exact as Dark Reader's full selector/dependency store
-- Per-stylesheet managers still need more mature behavior. Current estimate: 99.1%.
+- Per-stylesheet managers still need more mature behavior. Current estimate: 99.3%.
   - privileged cross-origin/background fetch parity
   - imported stylesheet retries
 - Watchers now have the main Dark Reader-style batching/dirty-root/attribute-scoped inline observer/self-write suppression pieces, including stranded-queue recovery and selector-engine inline root scanning, but still need more long-run observer pressure testing. Current estimate: 99.9%.
@@ -351,4 +369,9 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Gmail timing follow-up found repeated 120-150ms variable matching before load; the variables propagation algorithm and full-document root-scan load gating passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
 - Gmail timing follow-up still showed repeated variable matching and one pre-load container root scan; per-stylesheet variable input caching and broader pre-load container scan gating passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
 - Gmail timing follow-up showed page-load deferral caused white Gmail sections; reverting the deferral and toning down late-stage native progress indication passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
+- Generic dynamic surface pass and site-fix fallback removal passed `xcrun swiftc -parse` plus embedded JavaScript syntax checks for the touched fragments.
+- Config parser truncation fix and generic structural post-load surface pass passed `xcrun swiftc -parse`, embedded JavaScript syntax checks, and a parser smoke test confirming the upstream Gmail block has 9 ignore-inline entries and 4 ignore-image-analysis entries.
+- Read-only light-surface marker fix passed `xcrun swiftc -parse` plus embedded JavaScript syntax checks for the touched inline DOM fragment.
+- Early structural surface fallback passed `xcrun swiftc -parse` plus embedded JavaScript syntax checks for the touched static-style fragment.
+- Persistent transition fallback lifecycle passed `xcrun swiftc -parse` plus embedded JavaScript syntax checks for the touched static-style and stylesheet-state fragments.
 - Current `/api/v1/timing` was reviewed before the latest source changes; the running bundle still showed root/element dark-mode work overlapping Gmail startup, which drove the attribute-scoped inline and startup render slicing pass above.

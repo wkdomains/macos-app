@@ -291,9 +291,14 @@ extension BrowserModel {
         "[role='button']"
       ].join(", ");
       const LIGHT_SURFACE_SELECTOR = [
+        "main",
+        "article",
+        "form",
         "dialog",
         "[popover]",
         "[aria-modal='true']",
+        "[role='main']",
+        "[role='article']",
         "[role='dialog']",
         "[role='alertdialog']",
         "[role='region'][aria-label]",
@@ -309,15 +314,10 @@ extension BrowserModel {
       ].join(", ");
       const ROOT_STYLE_OVERRIDE_SELECTOR = INLINE_STYLE_SELECTOR;
       const PRIORITY_STYLE_OVERRIDE_SELECTOR = INLINE_STYLE_SELECTOR;
-      const FORM_SURFACE_DESCENDANT_SELECTOR = [
-        "input",
-        "textarea",
-        "[contenteditable='true']",
-        "[role='combobox']",
-        "[role='searchbox']",
-        "[role='textbox']"
+      const POST_LOAD_PRIORITY_STYLE_OVERRIDE_SELECTOR = [
+        INLINE_STYLE_SELECTOR,
+        LIGHT_SURFACE_SELECTOR
       ].join(", ");
-
       const shouldSkipElement = (element) => {
         if (!element || !element.tagName || SKIP_TAGS.has(element.tagName.toUpperCase())) return true;
         if (element.classList && element.classList.contains(INLINE_CLASS)) return true;
@@ -397,18 +397,20 @@ extension BrowserModel {
         if (rect.width < 24 || rect.height < 18 || rect.area < 900) return false;
 
         const role = String(element.getAttribute("role") || "").toLowerCase();
-        if (["dialog", "alertdialog", "form"].includes(role)) return true;
+        if (["main", "article", "dialog", "alertdialog", "form"].includes(role)) return true;
         if (role === "region" && element.hasAttribute("aria-label")) return true;
         if (element.hasAttribute("popover") || element.getAttribute("aria-modal") === "true") return true;
-        if (element.matches("dialog")) return true;
+        if (element.matches("main, article, dialog, form")) return true;
 
         const className = String(element.className || "");
-        if (/\b(modal|dialog|popover|popup|drawer|panel|surface|sheet|compose|editor|toolbar)\b/i.test(className)) {
+        if (/\b(modal|dialog|popover|popup|drawer|panel|surface|sheet|editor|toolbar)\b/i.test(className)) {
           return true;
         }
 
         return false;
       };
+
+      const isSurfaceFallbackReason = (reason) => reason === "surface" || reason === "surface-child";
 
       const shouldApplyActionSurfaceFallback = (element) => {
         if (!element || !element.matches || !element.matches(ACTION_SURFACE_SELECTOR)) return false;
@@ -423,15 +425,6 @@ extension BrowserModel {
         if (!sourceBackground || sourceBackground.a <= 0.08) return false;
         if (relativeLuminance(sourceBackground) <= 0.68) return false;
         return !hasMediaBackdrop(element, style, false);
-      };
-
-      const hasEditableDescendant = (element) => {
-        if (!element || !element.querySelector) return false;
-        try {
-          return Boolean(element.querySelector(FORM_SURFACE_DESCENDANT_SELECTOR));
-        } catch (_) {
-          return false;
-        }
       };
 
       const hasColorInlineSource = (element) => {
@@ -532,6 +525,7 @@ extension BrowserModel {
       const applyComputedStyleFallback = (element, reason = "direct", options = {}) => {
         const tag = element.tagName.toUpperCase();
         const style = captureSourceStyle(element) || getComputedStyle(element);
+        const isSurfaceReason = isSurfaceFallbackReason(reason);
 
         if (!SVG_TAGS.has(tag)) {
           const color = transformForeground(parseColor(style.color), element);
@@ -539,19 +533,19 @@ extension BrowserModel {
         }
 
         const sourceBackground = parseColor(style.backgroundColor);
-        const surfaceBackground = reason === "surface" && (!sourceBackground || sourceBackground.a <= 0.08)
+        const surfaceBackground = isSurfaceReason && (!sourceBackground || sourceBackground.a <= 0.08)
           ? surfaceColorFor(element)
           : null;
         const background = surfaceBackground || sourceBackground;
         const backgroundLuminance = background ? relativeLuminance(background) : 0;
-        const mediaBackdrop = hasMediaBackdrop(element, style, reason === "surface");
+        const mediaBackdrop = hasMediaBackdrop(element, style, isSurfaceReason);
         const transformedBackground = mediaBackdrop ? null : transformBackground(background, element);
 
         if (mediaBackdrop) {
           setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", "transparent");
-        } else if (transformedBackground && background && (background.a > 0.08 || reason === "surface")) {
+        } else if (transformedBackground && background && (background.a > 0.08 || isSurfaceReason)) {
           setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", transformedBackground);
-          if (reason === "surface") lightSurfaceFallbacksApplied += 1;
+          if (isSurfaceReason) lightSurfaceFallbacksApplied += 1;
         } else if (
           options.preserveBackgroundOverride
           && reason === "direct"
@@ -574,7 +568,7 @@ extension BrowserModel {
         const boxShadow = transformBoxShadow(style.boxShadow);
         setOverride(element, BOX_SHADOW_ATTRIBUTE, "--wkdomains-forced-dark-box-shadow", boxShadow && boxShadow !== style.boxShadow ? boxShadow : null);
 
-        if (reason === "surface" && hasEditableDescendant(element)) {
+        if (isSurfaceReason) {
           element.setAttribute(FORM_SURFACE_ATTRIBUTE, "");
         } else {
           element.removeAttribute(FORM_SURFACE_ATTRIBUTE);
@@ -598,6 +592,55 @@ extension BrowserModel {
           } else {
             setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", null);
           }
+        }
+
+        if (reason === "surface" && options.applyDescendantFallbacks !== false) {
+          applyLightSurfaceDescendants(element);
+        }
+      };
+
+      const applyLightSurfaceDescendants = (element) => {
+        if (!element || !element.children || element.children.length === 0) return;
+        const hadSurfaceMarker = element.hasAttribute(FORM_SURFACE_ATTRIBUTE);
+        if (hadSurfaceMarker) element.removeAttribute(FORM_SURFACE_ATTRIBUTE);
+        try {
+          const surfaceRect = visibleRectFor(element);
+          if (surfaceRect.area <= 0) return;
+
+          const candidates = [];
+          const seen = new Set();
+          const addCandidate = (candidate) => {
+            if (!candidate || seen.has(candidate) || candidate === element) return;
+            seen.add(candidate);
+            candidates.push(candidate);
+          };
+
+          const directChildren = element.children;
+          for (let index = 0; index < directChildren.length && candidates.length < 16; index += 1) {
+            addCandidate(directChildren[index]);
+          }
+
+          if (element.querySelectorAll) {
+            try {
+              for (const candidate of element.querySelectorAll("header,[role='banner'],[role='toolbar'],[role='heading']")) {
+                addCandidate(candidate);
+                if (candidates.length >= 24) break;
+              }
+            } catch (_) {}
+          }
+
+          const started = performance.now();
+          for (const candidate of candidates) {
+            if (performance.now() - started > 2.5) break;
+            if (!candidate.matches || shouldSkipElement(candidate)) continue;
+            const rect = visibleRectFor(candidate);
+            if (rect.width < 24 || rect.height < 14 || rect.area < 300) continue;
+            if (rect.area > surfaceRect.area * 0.75) continue;
+            if (!shouldApplyLightSurfaceFallback(candidate, true)) continue;
+            applyComputedStyleFallback(candidate, "surface-child", { applyDescendantFallbacks: false });
+          }
+        } finally {
+          if (hadSurfaceMarker) element.setAttribute(FORM_SURFACE_ATTRIBUTE, "");
         }
       };
 
@@ -820,10 +863,10 @@ extension BrowserModel {
           return;
         }
 
-        timingReason = needsSurfaceFallback || needsActionFallback ? "surface" : "direct";
+        timingReason = needsSurfaceFallback ? "surface" : (needsActionFallback ? "action" : "direct");
         applyComputedStyleFallback(
           element,
-          needsSurfaceFallback || needsActionFallback ? "surface" : "direct",
+          needsSurfaceFallback ? "surface" : (needsActionFallback ? "action" : "direct"),
           { preserveBackgroundOverride: hasInlineBackground }
         );
         if (isEditableControl && hasInlineColors && allowComputedFallback) {
@@ -857,6 +900,25 @@ extension BrowserModel {
         return element.isConnected !== false;
       };
 
+      const priorityElementApplySelector = () => (
+        pageLoadFired || document.readyState === "complete"
+          ? POST_LOAD_PRIORITY_STYLE_OVERRIDE_SELECTOR
+          : PRIORITY_STYLE_OVERRIDE_SELECTOR
+      );
+
+      const queuePostLoadSurfaceApplies = (root = document, limit = 64) => {
+        if (!root || !root.querySelectorAll || !(pageLoadFired || document.readyState === "complete")) return 0;
+        let queued = 0;
+        try {
+          for (const element of root.querySelectorAll(LIGHT_SURFACE_SELECTOR)) {
+            if (queued >= limit) break;
+            if (!element || element.nodeType !== Node.ELEMENT_NODE) continue;
+            if (queueElementApply(element, 24)) queued += 1;
+          }
+        } catch (_) {}
+        return queued;
+      };
+
       const scheduleQueuedElementApplies = (delay = 0) => {
         if (elementApplyScheduled) return;
         elementApplyScheduled = true;
@@ -875,9 +937,10 @@ extension BrowserModel {
       const queueElementSubtreeApply = (node, limit = ELEMENT_SUBTREE_QUEUE_LIMIT) => {
         if (!node) return 0;
         let queued = 0;
+        const selector = priorityElementApplySelector();
         const queueCandidate = (element) => {
           if (!element || queued >= limit || element.nodeType !== Node.ELEMENT_NODE) return;
-          if (!element.matches || !element.matches(PRIORITY_STYLE_OVERRIDE_SELECTOR)) return;
+          if (!element.matches || !element.matches(selector)) return;
           if (queueElementApply(element, 0)) queued += 1;
         };
 
@@ -887,7 +950,7 @@ extension BrowserModel {
 
         if (!node.querySelectorAll) return queued;
         try {
-          for (const element of node.querySelectorAll(PRIORITY_STYLE_OVERRIDE_SELECTOR)) {
+          for (const element of node.querySelectorAll(selector)) {
             queueCandidate(element);
             if (queued >= limit) break;
           }

@@ -211,7 +211,7 @@ extension BrowserModel {
               const target = mutation.target;
               if (target.nodeType === Node.ELEMENT_NODE && target.matches) {
                 const isKnownFallbackElement = ATTRIBUTES_OWNED_BY_DARK_MODE.some((attribute) => target.hasAttribute(attribute));
-                const isDirectSurfaceCandidate = target.matches(INLINE_STYLE_SELECTOR) || isKnownFallbackElement;
+                const isDirectSurfaceCandidate = target.matches(priorityElementApplySelector()) || isKnownFallbackElement;
                 if (isDirectSurfaceCandidate) {
                   clearCachedSourceFor(target);
                   if (!queueElementApply(target, 0)) {
