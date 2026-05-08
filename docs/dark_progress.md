@@ -76,7 +76,7 @@ Color conversion has broad modern coverage:
 - Supports named colors, hex, RGB/HSL/HWB, Lab/LCH, OKLab/OKLCH, `color()`, `light-dark()`, `color-mix()`, relative color forms, gradients, shadows, and raw RGB variables.
 - Avoids rewriting color-looking tokens inside `url(...)`.
 - Uses a Dark Reader-style palette/cache shape, but the color math is still our approximation rather than an exact upstream port.
-- Image analysis is limited to generic media/backdrop avoidance and site-fix ignore selectors.
+- Image analysis is limited compared with upstream, but generic media/backdrop avoidance now catches URL-backed, `image-set()`, and `cross-fade()` backgrounds instead of treating mixed gradient/image stacks as plain surfaces.
 
 Inline DOM handling is intentionally narrower than the earlier broad fallback path:
 
@@ -96,7 +96,7 @@ Adopted stylesheet handling is solid for WebKit:
 Proxy and bridge coverage is broad:
 
 - Page-world bridge batches global CSSOM/shadow/custom-element events before notifying the isolated engine.
-- Proxy coverage includes `insertRule`, `deleteRule`, `addRule`, `removeRule`, `replace`, `replaceSync`, declaration `setProperty`, declaration `removeProperty`, declaration `cssText`, rule `selectorText`, keyframes append/delete, grouping rule insert/delete across `CSSGroupingRule` and WebKit's concrete grouping-rule constructors, `CSS.registerProperty`, `adoptedStyleSheets`, `attachShadow`, and opt-in custom element registry observation.
+- Proxy coverage includes `insertRule`, `deleteRule`, `addRule`, `removeRule`, `replace`, `replaceSync`, declaration `setProperty`, declaration `removeProperty`, declaration `cssText`, rule `selectorText`, keyframes append/delete, keyframes/keyframe name changes, media-list changes, grouping rule insert/delete across `CSSGroupingRule` and WebKit's concrete grouping-rule constructors, `CSS.registerProperty`, `adoptedStyleSheets`, `attachShadow`, and opt-in custom element registry observation.
 - Hooks are reversible through saved descriptors and cleanup tasks.
 - Site-fix flags can disable stylesheet or shadow-root proxying and can opt into custom element registry proxying.
 
@@ -108,13 +108,30 @@ Config/fix support is much closer to upstream:
 - Unknown future section headers are skipped and reported instead of being leaked into the previous `CSS` section.
 - Selection combines generic fixes with the most-specific matching block or blocks.
 
+## Parity Estimate
+
+Overall dynamic-theme parity against Dark Reader's current `index.ts` orchestration is about 94%.
+
+- Startup, static styles, lifecycle, cleanup: 97%
+- Per-stylesheet managers and loading lifecycle: 99%
+- DOM/style watchers and scheduling: 99%
+- Variables/dependency handling: 96%
+- Adopted stylesheet handling: 95%
+- Stylesheet proxy and page/isolated-world bridge: 97%
+- Dynamic-theme fix config parsing and selection: 95%
+- Color parsing/conversion coverage: 92%
+- Image/background analysis: 76%
+- Extension-world isolation for this WKWebView architecture: 92%
+
+The remaining delta is not one big missing subsystem. It is mostly exact upstream color math, deeper image analysis, Dark Reader's fuller variables sheet lifecycle, and adopted stylesheet fallback behavior for browser paths that do not map perfectly to WKWebView.
+
 ## Remaining Work
 
 Highest-value gaps:
 
 - Variables-store parity: scoped matching and stale-input cleanup are better, but this is still not a full upstream variables sheet registration/release lifecycle.
 - Color parity: decide whether to port Dark Reader color math more directly or keep our compatible approximation and test against real sites.
-- Image handling: upstream image/background analysis is deeper than our generic media/backdrop avoidance.
+- Image handling: upstream image/background analysis is still deeper than our generic media/backdrop avoidance.
 - Adopted stylesheet parity: current WebKit path works, but it is still not equivalent to Dark Reader's full override/fallback model for every browser path.
 - CSSOM edge APIs: proxy coverage is broader now, but obscure mutation APIs still need long-run testing against framework-heavy pages.
 - Config parser resilience: unknown sections are guarded, but future upstream data shapes may still need parser updates.

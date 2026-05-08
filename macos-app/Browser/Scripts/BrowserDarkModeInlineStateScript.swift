@@ -223,7 +223,10 @@ extension BrowserModel {
         if (shouldIgnoreImageAnalysis(element)) return false;
 
         const backgroundImage = style.backgroundImage || "";
-        if (backgroundImage && backgroundImage !== "none" && !backgroundImage.includes("gradient")) {
+        if (backgroundImage && backgroundImage !== "none" && /(?:^|,)\s*(?:-webkit-)?(?:cross-fade|image-set)\(/i.test(backgroundImage)) {
+          return true;
+        }
+        if (backgroundImage && backgroundImage !== "none" && backgroundImage.includes("url(")) {
           return true;
         }
 

@@ -519,6 +519,7 @@ extension BrowserModel {
           const keyframesProto = CSSKeyframesRule.prototype;
           const nativeAppendRule = keyframesProto.appendRule;
           const nativeDeleteKeyframeRule = keyframesProto.deleteRule;
+          const nameDescriptor = Object.getOwnPropertyDescriptor(keyframesProto, "name");
           defineHiddenProperty(keyframesProto, "__wkdomainsDarkModePageProxyKeyframes", true);
           if (nativeAppendRule) {
             rememberPropertyDescriptor(keyframesProto, "appendRule");
@@ -535,6 +536,78 @@ extension BrowserModel {
               if (active) reportSheetChange(this.parentStyleSheet);
               return result;
             };
+          }
+          if (nameDescriptor && nameDescriptor.set) {
+            rememberPropertyDescriptor(keyframesProto, "name");
+            Object.defineProperty(keyframesProto, "name", {
+              configurable: true,
+              enumerable: nameDescriptor.enumerable,
+              get: nameDescriptor.get ? function() { return nameDescriptor.get.call(this); } : undefined,
+              set(value) {
+                const result = nameDescriptor.set.call(this, value);
+                if (active) reportSheetChange(this.parentStyleSheet);
+                return result;
+              }
+            });
+          }
+        }
+
+        if (window.CSSKeyframeRule && !CSSKeyframeRule.prototype.__wkdomainsDarkModePageProxyKeyframe) {
+          const keyframeProto = CSSKeyframeRule.prototype;
+          const keyTextDescriptor = Object.getOwnPropertyDescriptor(keyframeProto, "keyText");
+          if (keyTextDescriptor && keyTextDescriptor.set) {
+            defineHiddenProperty(keyframeProto, "__wkdomainsDarkModePageProxyKeyframe", true);
+            rememberPropertyDescriptor(keyframeProto, "keyText");
+            Object.defineProperty(keyframeProto, "keyText", {
+              configurable: true,
+              enumerable: keyTextDescriptor.enumerable,
+              get: keyTextDescriptor.get ? function() { return keyTextDescriptor.get.call(this); } : undefined,
+              set(value) {
+                const result = keyTextDescriptor.set.call(this, value);
+                if (active) reportSheetChange(this.parentRule && this.parentRule.parentStyleSheet);
+                return result;
+              }
+            });
+          }
+        }
+
+        if (window.MediaList && !MediaList.prototype.__wkdomainsDarkModePageProxy) {
+          const mediaListProto = MediaList.prototype;
+          const nativeAppendMedium = mediaListProto.appendMedium;
+          const nativeDeleteMedium = mediaListProto.deleteMedium;
+          const mediaTextDescriptor = Object.getOwnPropertyDescriptor(mediaListProto, "mediaText");
+          defineHiddenProperty(mediaListProto, "__wkdomainsDarkModePageProxy", true);
+          const reportMediaListChange = () => {
+            if (active) reportGlobalChange("media-list");
+          };
+          if (nativeAppendMedium) {
+            rememberPropertyDescriptor(mediaListProto, "appendMedium");
+            mediaListProto.appendMedium = function(medium) {
+              const result = nativeAppendMedium.call(this, medium);
+              reportMediaListChange();
+              return result;
+            };
+          }
+          if (nativeDeleteMedium) {
+            rememberPropertyDescriptor(mediaListProto, "deleteMedium");
+            mediaListProto.deleteMedium = function(medium) {
+              const result = nativeDeleteMedium.call(this, medium);
+              reportMediaListChange();
+              return result;
+            };
+          }
+          if (mediaTextDescriptor && mediaTextDescriptor.set) {
+            rememberPropertyDescriptor(mediaListProto, "mediaText");
+            Object.defineProperty(mediaListProto, "mediaText", {
+              configurable: true,
+              enumerable: mediaTextDescriptor.enumerable,
+              get: mediaTextDescriptor.get ? function() { return mediaTextDescriptor.get.call(this); } : undefined,
+              set(value) {
+                const result = mediaTextDescriptor.set.call(this, value);
+                reportMediaListChange();
+                return result;
+              }
+            });
           }
         }
 

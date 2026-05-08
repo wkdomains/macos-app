@@ -187,7 +187,7 @@ extension BrowserModel {
             || hasBridgeKind("adopted-sheets")
             || hasBridgeKind("adopted-declaration");
           const hasDeclarationChange = hasBridgeKind("declaration");
-          const hasSheetChange = hasBridgeKind("sheet");
+          const hasSheetChange = hasBridgeKind("sheet") || hasBridgeKind("media-list");
 
           if (hasRegistrationChange || hasAdoptedChange) {
             scheduleStartupAwareStyleSync(120);
