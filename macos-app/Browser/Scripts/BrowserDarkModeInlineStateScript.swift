@@ -27,6 +27,12 @@ extension BrowserModel {
       let lastElementApplyError = "";
       let applyQueueWatchdogTimer = null;
       let applyQueueWatchdogTicks = 0;
+      const svgImageAnalysisCache = new WeakMap();
+      const svgImageAnalysisSignatures = new WeakMap();
+      const svgImageAnalysisPending = new WeakSet();
+      const svgNodesRoots = new WeakMap();
+      let imageAnalysisCanvas = null;
+      let imageAnalysisContext = null;
       const ROOT_APPLY_BUDGET_MS = 8;
       const ROOT_APPLY_STARTUP_BUDGET_MS = 4;
       const ROOT_APPLY_STARTUP_DELAY_MS = 32;
@@ -264,6 +270,172 @@ extension BrowserModel {
         }
 
         return false;
+      };
+
+      const svgRootFor = (element) => {
+        if (!element) return null;
+        if (svgNodesRoots.has(element)) return svgNodesRoots.get(element);
+        let root = null;
+        try {
+          root = typeof window.SVGSVGElement === "function" && element instanceof SVGSVGElement
+            ? element
+            : (element.ownerSVGElement || null);
+        } catch (_) {
+          root = null;
+        }
+        svgNodesRoots.set(element, root);
+        return root;
+      };
+
+      const shouldAnalyzeSVGAsImage = (svg) => {
+        if (!svg || shouldIgnoreImageAnalysis(svg)) return false;
+        const classText = `${svg.getAttribute("class") || ""} ${svg.parentElement ? svg.parentElement.getAttribute("class") || "" : ""}`;
+        const ariaText = `${svg.getAttribute("aria-label") || ""} ${svg.getAttribute("title") || ""}`;
+        return /\blogo\b/i.test(classText) || /\blogo\b/i.test(ariaText);
+      };
+
+      const svgAnalysisSource = (svg) => {
+        try {
+          const clone = svg.cloneNode(true);
+          clone.removeAttribute(IMAGE_FILTER_ATTRIBUTE);
+          clone.style.removeProperty("--wkdomains-forced-dark-image-filter");
+          for (const attribute of ATTRIBUTES_OWNED_BY_DARK_MODE) {
+            clone.removeAttribute(attribute);
+          }
+          clone.querySelectorAll(`style.${INLINE_CLASS}, style.darkreader`).forEach((style) => style.remove());
+          clone.querySelectorAll(ATTRIBUTES_OWNED_BY_DARK_MODE.map((attribute) => `[${attribute}]`).join(",")).forEach((node) => {
+            for (const attribute of ATTRIBUTES_OWNED_BY_DARK_MODE) {
+              node.removeAttribute(attribute);
+            }
+          });
+          return new XMLSerializer().serializeToString(clone);
+        } catch (_) {
+          return "";
+        }
+      };
+
+      const svgAnalysisDataURLFromSource = (source) => (
+        `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(source)))}`
+      );
+
+      const ensureImageAnalysisCanvas = () => {
+        if (imageAnalysisCanvas && imageAnalysisContext) return true;
+        try {
+          imageAnalysisCanvas = document.createElement("canvas");
+          imageAnalysisCanvas.width = 32;
+          imageAnalysisCanvas.height = 32;
+          imageAnalysisContext = imageAnalysisCanvas.getContext("2d", { willReadFrequently: true });
+          if (imageAnalysisContext) imageAnalysisContext.imageSmoothingEnabled = false;
+          return !!imageAnalysisContext;
+        } catch (_) {
+          imageAnalysisCanvas = null;
+          imageAnalysisContext = null;
+          return false;
+        }
+      };
+
+      const loadImageForAnalysis = (url) => new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("image-analysis-load-failed"));
+        image.src = url;
+      });
+
+      const analyzeLoadedImage = (image) => {
+        if (!ensureImageAnalysisCanvas()) return null;
+        const sourceWidth = image.naturalWidth || image.width || 0;
+        const sourceHeight = image.naturalHeight || image.height || 0;
+        if (sourceWidth <= 0 || sourceHeight <= 0) return null;
+
+        const isLarge = sourceWidth * sourceHeight > 512 * 512;
+        const scale = Math.min(1, Math.sqrt((32 * 32) / Math.max(1, sourceWidth * sourceHeight)));
+        const width = Math.max(1, Math.ceil(sourceWidth * scale));
+        const height = Math.max(1, Math.ceil(sourceHeight * scale));
+
+        imageAnalysisContext.clearRect(0, 0, 32, 32);
+        imageAnalysisContext.drawImage(image, 0, 0, sourceWidth, sourceHeight, 0, 0, width, height);
+        const data = imageAnalysisContext.getImageData(0, 0, width, height).data;
+        let transparentPixels = 0;
+        let darkPixels = 0;
+        let lightPixels = 0;
+        for (let index = 0; index < data.length; index += 4) {
+          const alpha = data[index + 3] / 255;
+          if (alpha < 0.05) {
+            transparentPixels += 1;
+            continue;
+          }
+          const lightness = relativeLuminance({
+            r: data[index],
+            g: data[index + 1],
+            b: data[index + 2],
+            a: alpha
+          });
+          if (lightness < 0.4) darkPixels += 1;
+          if (lightness > 0.7) lightPixels += 1;
+        }
+        const totalPixels = Math.max(1, width * height);
+        const opaquePixels = Math.max(1, totalPixels - transparentPixels);
+        return {
+          isDark: darkPixels / opaquePixels >= 0.7,
+          isLight: lightPixels / opaquePixels >= 0.7,
+          isTransparent: transparentPixels / totalPixels >= 0.1,
+          isLarge,
+          width: sourceWidth
+        };
+      };
+
+      const applySVGImageAnalysisResult = (svg, result) => {
+        if (!svg || !result) return;
+        const shouldInvert = THEME.mode === 1
+          && result.width > 2
+          && ((result.isDark && result.isTransparent) || (result.isLarge && result.isLight && !result.isTransparent));
+        setOverride(
+          svg,
+          IMAGE_FILTER_ATTRIBUTE,
+          "--wkdomains-forced-dark-image-filter",
+          shouldInvert ? "invert(100%) hue-rotate(180deg)" : null
+        );
+      };
+
+      const scheduleSVGImageAnalysisIfNeeded = (element) => {
+        const svg = svgRootFor(element);
+        if (!svg) return false;
+        if (!shouldAnalyzeSVGAsImage(svg)) {
+          setOverride(svg, IMAGE_FILTER_ATTRIBUTE, "--wkdomains-forced-dark-image-filter", null);
+          return false;
+        }
+
+        const source = svgAnalysisSource(svg);
+        if (!source) return false;
+        const signature = hashString(source);
+        const cached = svgImageAnalysisCache.get(svg);
+        if (cached && svgImageAnalysisSignatures.get(svg) === signature) {
+          if (cached.analysisFailed) return false;
+          applySVGImageAnalysisResult(svg, cached);
+          return true;
+        }
+        if (svgImageAnalysisPending.has(svg)) return true;
+
+        svgImageAnalysisPending.add(svg);
+        svgImageAnalysisSignatures.set(svg, signature);
+        Promise.resolve()
+          .then(() => loadImageForAnalysis(svgAnalysisDataURLFromSource(source)))
+          .then((image) => {
+            const result = analyzeLoadedImage(image);
+            if (result) {
+              svgImageAnalysisCache.set(svg, result);
+              applySVGImageAnalysisResult(svg, result);
+            }
+          })
+          .catch(() => {
+            const result = { analysisFailed: true, isDark: false, isLight: false, isTransparent: false, isLarge: false, width: 0 };
+            svgImageAnalysisCache.set(svg, result);
+            applySVGImageAnalysisResult(svg, result);
+          })
+          .finally(() => {
+            svgImageAnalysisPending.delete(svg);
+          });
+        return true;
       };
     """#
 }

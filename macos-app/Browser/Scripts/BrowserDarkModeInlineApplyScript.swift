@@ -65,6 +65,11 @@ extension BrowserModel {
         }
 
         if (SVG_TAGS.has(tag)) {
+          if (scheduleSVGImageAnalysisIfNeeded(element)) {
+            setOverride(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", null);
+            setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", null);
+            return;
+          }
           const fill = parseColor(style.fill);
           const stroke = parseColor(style.stroke);
           if (fill && relativeLuminance(fill) < 0.52) {
@@ -168,6 +173,7 @@ extension BrowserModel {
         setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", null);
         element.removeAttribute(FORM_SURFACE_ATTRIBUTE);
         setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", null);
+        setOverride(element, IMAGE_FILTER_ATTRIBUTE, "--wkdomains-forced-dark-image-filter", null);
         setOverride(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", null);
         setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", null);
         setOverride(element, BOX_SHADOW_ATTRIBUTE, "--wkdomains-forced-dark-box-shadow", null);

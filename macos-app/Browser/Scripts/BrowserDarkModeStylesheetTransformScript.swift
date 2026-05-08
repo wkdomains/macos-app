@@ -197,7 +197,9 @@ extension BrowserModel {
         const name = String(rule.name || "");
         const syntax = String(rule.syntax || "");
         const sourceValue = String(rule.initialValue || "").trim();
-        if (!name.startsWith("--") || !syntax.includes("<color>") || !sourceValue) return "";
+        const colorCompatibleSyntax = syntax.includes("<color>")
+          || ((syntax === "*" || !syntax) && shouldTreatCustomPropertyAsRawColor(name));
+        if (!name.startsWith("--") || !colorCompatibleSyntax || !sourceValue) return "";
 
         const inferredTypes = variablesStore.typesForVariable(name) || variableTypeNumberForProperty(name, sourceValue);
         const inherited = rule.inherits === false ? "false" : "true";

@@ -17,6 +17,7 @@ extension BrowserModel {
       const BACKGROUND_ATTRIBUTE = "data-wkdomains-forced-dark-bg";
       const FORM_SURFACE_ATTRIBUTE = "data-wkdomains-forced-dark-form-surface";
       const BACKGROUND_IMAGE_ATTRIBUTE = "data-wkdomains-forced-dark-bg-image";
+      const IMAGE_FILTER_ATTRIBUTE = "data-wkdomains-forced-dark-image-filter";
       const FILL_ATTRIBUTE = "data-wkdomains-forced-dark-fill";
       const STROKE_ATTRIBUTE = "data-wkdomains-forced-dark-stroke";
       const BOX_SHADOW_ATTRIBUTE = "data-wkdomains-forced-dark-box-shadow";
@@ -71,6 +72,7 @@ extension BrowserModel {
         BACKGROUND_ATTRIBUTE,
         FORM_SURFACE_ATTRIBUTE,
         BACKGROUND_IMAGE_ATTRIBUTE,
+        IMAGE_FILTER_ATTRIBUTE,
         FILL_ATTRIBUTE,
         STROKE_ATTRIBUTE,
         BOX_SHADOW_ATTRIBUTE,

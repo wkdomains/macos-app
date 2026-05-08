@@ -32,6 +32,28 @@ extension BrowserModel {
         scheduleStyleSync(startupStyleSyncDelay(delay));
       };
 
+      const styleElementTitle = (element) => {
+        try {
+          return typeof element.title === "string"
+            ? element.title
+            : String(element.getAttribute && element.getAttribute("title") || "");
+        } catch (_) {
+          return "";
+        }
+      };
+
+      const syncStyleMetadataFromElement = (element, syncStyle) => {
+        if (!element || !syncStyle) return;
+        try {
+          const title = styleElementTitle(element);
+          if (title) {
+            syncStyle.title = title;
+          } else {
+            syncStyle.removeAttribute("title");
+          }
+        } catch (_) {}
+      };
+
       const flushStyleSyncNowOrSchedule = () => {
         if (
           stylesheetSyncElapsedSinceInstall() < STARTUP_STYLE_SYNC_WINDOW_MS
@@ -54,6 +76,7 @@ extension BrowserModel {
             : document.createElement("style");
           syncStyle.classList.add(INLINE_CLASS, "darkreader", STYLE_SYNC_CLASS);
           syncStyle.media = "screen";
+          syncStyleMetadataFromElement(element, syncStyle);
           manager = {
             syncStyle,
             signature: "",
@@ -76,7 +99,7 @@ extension BrowserModel {
             const isLink = element instanceof HTMLLinkElement;
             manager.observer.observe(element, {
               attributes: true,
-              attributeFilter: isLink ? ["href", "media", "disabled"] : ["media", "disabled"],
+              attributeFilter: isLink ? ["href", "media", "disabled", "title"] : ["media", "disabled", "title"],
               childList: !isLink,
               subtree: !isLink,
               characterData: !isLink
@@ -184,6 +207,7 @@ extension BrowserModel {
         manager.revision,
         element.href || "",
         element.media || "",
+        styleElementTitle(element),
         element.disabled ? "disabled" : "",
         element instanceof HTMLStyleElement || isSVGStyleElementNode(element)
           ? hashString(element.textContent || "")
@@ -196,6 +220,7 @@ extension BrowserModel {
         manager ? manager.revision : 0,
         element.href || "",
         element.media || "",
+        styleElementTitle(element),
         element.disabled ? "disabled" : "",
         element instanceof HTMLStyleElement || isSVGStyleElementNode(element)
           ? hashString(element.textContent || "")
@@ -271,6 +296,7 @@ extension BrowserModel {
         if (!details) return;
 
         const { manager, rules } = details;
+        syncStyleMetadataFromElement(element, manager.syncStyle);
         __wkdomainsDarkModeDebug(`render-style-start:${rules.length}`);
         const signature = signatureForStyleManager(element, manager, rules);
         if (manager.signature === signature && manager.syncStyle.textContent) {

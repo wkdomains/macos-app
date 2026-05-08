@@ -128,6 +128,19 @@ extension BrowserModel {
 
       const shouldIgnoreCSSURL = (url) => ignoredCSSURLPatterns.some((pattern) => cssURLMatchesPattern(url, pattern));
 
+      const ignoredCSSMediaKinds = ["aural", "braille", "embossed", "handheld", "print", "projection", "speech", "tty", "tv"];
+
+      const cssMediaTextApplies = (mediaText) => {
+        const text = String(mediaText || "").trim().toLowerCase();
+        if (!text) return true;
+        const parts = text.split(",").map((part) => part.trim()).filter(Boolean);
+        if (parts.length === 0) return true;
+        const hasScreenOrAllOrQuery = parts.some((part) => part.startsWith("screen") || part.startsWith("all") || part.startsWith("("));
+        const isOnlyIgnoredMedia = !hasScreenOrAllOrQuery
+          && parts.every((part) => ignoredCSSMediaKinds.some((kind) => part.startsWith(kind)));
+        return hasScreenOrAllOrQuery || !isOnlyIgnoredMedia;
+      };
+
       const adoptedSheetRevisionFor = (sheet) => adoptedSheetRevisions.get(sheet) || 0;
 
       const markAdoptedSheetChanged = (sheet) => {
@@ -139,8 +152,7 @@ extension BrowserModel {
       const shouldManageStyle = (element) => {
         if (!element || !element.matches || !element.matches(STYLE_SELECTOR)) return false;
         if (element.classList.contains(INLINE_CLASS) || element.classList.contains("darkreader") || element.classList.contains("stylus")) return false;
-        const media = String(element.media || "").toLowerCase();
-        if (media.includes("print") || media.includes("speech")) return false;
+        if (!cssMediaTextApplies(element.media)) return false;
         if (element instanceof HTMLLinkElement && (!element.href || element.disabled || shouldIgnoreCSSURL(element.href))) return false;
         return true;
       };
@@ -192,13 +204,7 @@ extension BrowserModel {
       );
 
       const cssImportMediaApplies = (mediaText) => {
-        const text = String(mediaText || "").trim().toLowerCase();
-        if (!text) return true;
-        const parts = text.split(",").map((part) => part.trim()).filter(Boolean);
-        if (parts.length === 0) return true;
-        const ignored = ["aural", "braille", "embossed", "handheld", "print", "projection", "speech", "tty", "tv"];
-        return parts.some((part) => part.startsWith("screen") || part.startsWith("all") || part.startsWith("("))
-          || !parts.every((part) => ignored.some((kind) => part.startsWith(kind)));
+        return cssMediaTextApplies(mediaText);
       };
 
       const readCSSImportRules = (cssText) => {

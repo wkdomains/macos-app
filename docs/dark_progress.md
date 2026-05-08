@@ -66,7 +66,7 @@ Variables support is strong but not complete:
 - Collects custom properties from stylesheet rules, inline styles, root-scoped selectors, adopted sheets, and `@property` rules.
 - Tracks variable references and reverse references, then propagates color usage types through alias chains.
 - Emits both wkdomains-prefixed variables and Dark Reader-compatible aliases such as `--darkreader-bg--token`.
-- Handles registered color custom properties from stylesheet `@property` and runtime `CSS.registerProperty()`.
+- Handles registered color custom properties from stylesheet `@property`, including wildcard syntax for color-like tokens, and runtime `CSS.registerProperty()`.
 - Carries stylesheet root context into variable matching so document-root variables are separated from shadow/adopted rule inputs.
 - Uses cached per-stylesheet variable inputs to avoid repeated full graph rebuilds.
 - Falls back to a full variable graph rebuild when a changed stylesheet or adopted-sheet root previously contributed variable data, avoiding stale custom-property types after removals.
@@ -76,7 +76,7 @@ Color conversion has broad modern coverage:
 - Supports named colors, hex, RGB/HSL/HWB, Lab/LCH, OKLab/OKLCH, `color()`, `light-dark()`, `color-mix()`, relative color forms, gradients, shadows, and raw RGB variables.
 - Avoids rewriting color-looking tokens inside `url(...)`.
 - Uses a Dark Reader-style palette/cache shape, but the color math is still our approximation rather than an exact upstream port.
-- Image analysis is limited compared with upstream, but generic media/backdrop avoidance now catches URL-backed, `image-set()`, and `cross-fade()` backgrounds instead of treating mixed gradient/image stacks as plain surfaces.
+- Image analysis is limited compared with upstream, but generic media/backdrop avoidance now catches URL-backed, `image-set()`, and `cross-fade()` backgrounds instead of treating mixed gradient/image stacks as plain surfaces. Inline SVG logos now get a bounded Dark Reader-style image analysis path before applying invert filters.
 
 Inline DOM handling is intentionally narrower than the earlier broad fallback path:
 
@@ -96,7 +96,7 @@ Adopted stylesheet handling is solid for WebKit:
 Proxy and bridge coverage is broad:
 
 - Page-world bridge batches global CSSOM/shadow/custom-element events before notifying the isolated engine.
-- Proxy coverage includes `insertRule`, `deleteRule`, `addRule`, `removeRule`, `replace`, `replaceSync`, declaration `setProperty`, declaration `removeProperty`, declaration `cssText`, rule `selectorText`, keyframes append/delete, keyframes/keyframe name changes, media-list changes, grouping rule insert/delete across `CSSGroupingRule` and WebKit's concrete grouping-rule constructors, `CSS.registerProperty`, `adoptedStyleSheets`, `attachShadow`, and opt-in custom element registry observation.
+- Proxy coverage includes `insertRule`, `deleteRule`, `addRule`, `removeRule`, `replace`, `replaceSync`, declaration `setProperty`, declaration `removeProperty`, declaration `cssText`, rule `selectorText`, keyframes append/delete, keyframes/keyframe name changes, media-list changes, grouping rule insert/delete across `CSSGroupingRule` and WebKit's concrete grouping-rule constructors, `CSS.registerProperty`, `adoptedStyleSheets`, `attachShadow`, and opt-in custom element registry observation. Stylesheet media matching now keeps mixed screen/print sheets in scope instead of treating any print token as an exclusion.
 - Hooks are reversible through saved descriptors and cleanup tasks.
 - Site-fix flags can disable stylesheet or shadow-root proxying and can opt into custom element registry proxying.
 
@@ -110,20 +110,20 @@ Config/fix support is much closer to upstream:
 
 ## Parity Estimate
 
-Overall dynamic-theme parity against Dark Reader's current `index.ts` orchestration is about 94%.
+Overall dynamic-theme parity against Dark Reader's current `index.ts` orchestration is about 95%.
 
 - Startup, static styles, lifecycle, cleanup: 97%
 - Per-stylesheet managers and loading lifecycle: 99%
 - DOM/style watchers and scheduling: 99%
 - Variables/dependency handling: 96%
 - Adopted stylesheet handling: 95%
-- Stylesheet proxy and page/isolated-world bridge: 97%
+- Stylesheet proxy and page/isolated-world bridge: 98%
 - Dynamic-theme fix config parsing and selection: 95%
 - Color parsing/conversion coverage: 92%
-- Image/background analysis: 76%
+- Image/background analysis: 82%
 - Extension-world isolation for this WKWebView architecture: 92%
 
-The remaining delta is not one big missing subsystem. It is mostly exact upstream color math, deeper image analysis, Dark Reader's fuller variables sheet lifecycle, and adopted stylesheet fallback behavior for browser paths that do not map perfectly to WKWebView.
+The remaining delta is not one big missing subsystem. It is mostly exact upstream color math, broader bitmap/background image analysis, Dark Reader's fuller variables sheet lifecycle, and adopted stylesheet fallback behavior for browser paths that do not map perfectly to WKWebView.
 
 ## Remaining Work
 
@@ -131,7 +131,7 @@ Highest-value gaps:
 
 - Variables-store parity: scoped matching and stale-input cleanup are better, but this is still not a full upstream variables sheet registration/release lifecycle.
 - Color parity: decide whether to port Dark Reader color math more directly or keep our compatible approximation and test against real sites.
-- Image handling: upstream image/background analysis is still deeper than our generic media/backdrop avoidance.
+- Image handling: upstream image/background analysis is still deeper than our generic media/backdrop avoidance and SVG-logo analysis.
 - Adopted stylesheet parity: current WebKit path works, but it is still not equivalent to Dark Reader's full override/fallback model for every browser path.
 - CSSOM edge APIs: proxy coverage is broader now, but obscure mutation APIs still need long-run testing against framework-heavy pages.
 - Config parser resilience: unknown sections are guarded, but future upstream data shapes may still need parser updates.
