@@ -726,19 +726,38 @@ extension BrowserModel {
         const onPageProxyChange = (event) => {
           let kind = "";
           let definition = null;
+          let definitions = [];
+          let kinds = null;
           try {
             kind = String(event && event.detail && event.detail.kind || "");
             definition = event && event.detail && event.detail.definition || null;
+            definitions = Array.isArray(event && event.detail && event.detail.definitions)
+              ? event.detail.definitions
+              : [];
+            kinds = event && event.detail && event.detail.kinds || null;
           } catch (_) {}
           bridgeStatus.lastEvent = kind;
           try { bridgeStatus.lastEventAt = Math.round(performance.now()); } catch (_) {}
           bridgeStatus.events[kind] = (bridgeStatus.events[kind] || 0) + 1;
 
-          if (kind === "register-property") {
-            try { registerColorCustomPropertyDefinition(definition); } catch (_) {}
+          if (kind === "batch" && kinds) {
+            for (const [batchKind, count] of Object.entries(kinds)) {
+              const normalizedCount = Number(count) || 0;
+              bridgeStatus.events[batchKind] = (bridgeStatus.events[batchKind] || 0) + normalizedCount;
+            }
           }
 
-          if (kind === "shadow-root" || kind === "custom-element") {
+          if (kind === "register-property" && definition) {
+            try { registerColorCustomPropertyDefinition(definition); } catch (_) {}
+          }
+          for (const registeredDefinition of definitions) {
+            try { registerColorCustomPropertyDefinition(registeredDefinition); } catch (_) {}
+          }
+
+          const hasShadowChange = kind === "shadow-root"
+            || kind === "custom-element"
+            || !!(kinds && (kinds["shadow-root"] || kinds["custom-element"]));
+          if (hasShadowChange) {
             scheduleShadowRootDiscovery(document, 60);
             schedule(40);
           }

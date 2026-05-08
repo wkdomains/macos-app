@@ -47,9 +47,14 @@ extension BrowserModel {
       const cleanupTasks = [];
       const prototypeRestoreTasks = [];
       const savedPropertyDescriptors = new WeakMap();
+      const pendingBridgeKinds = Object.create(null);
+      const pendingRegisterPropertyDefinitions = [];
+      const pendingRootEvents = new Map();
       let active = true;
       let configured = false;
       let lastConfig = {};
+      let bridgeDispatchScheduled = false;
+      let rootEventDispatchScheduled = false;
       const proxyStatus = {
         installed: true,
         active: true,
@@ -57,6 +62,8 @@ extension BrowserModel {
         stylesheetProxy: false,
         shadowRootProxy: false,
         customElementRegistryProxy: false,
+        dispatchedBatches: 0,
+        dispatchedRootEventBatches: 0,
         changes: Object.create(null),
         lastChange: "",
         lastChangeAt: 0
@@ -110,11 +117,73 @@ extension BrowserModel {
         } catch (_) {}
       };
 
+      const flushRootEvents = () => {
+        rootEventDispatchScheduled = false;
+        if (!active) return;
+        const entries = Array.from(pendingRootEvents.entries());
+        pendingRootEvents.clear();
+        if (entries.length === 0) return;
+        proxyStatus.dispatchedRootEventBatches += 1;
+        for (const [root, eventNames] of entries) {
+          if (root !== document && root.host && !root.host.isConnected) continue;
+          for (const eventName of eventNames) {
+            dispatch(root, eventName);
+          }
+        }
+      };
+
+      const queueRootEvent = (root, eventName) => {
+        if (!root || !eventName || !active) return;
+        let events = pendingRootEvents.get(root);
+        if (!events) {
+          events = new Set();
+          pendingRootEvents.set(root, events);
+        }
+        events.add(eventName);
+        if (rootEventDispatchScheduled) return;
+        rootEventDispatchScheduled = true;
+        window.setTimeout(flushRootEvents, 50);
+      };
+
       const reportGlobalChange = (kind, detail = {}) => {
-        proxyStatus.lastChange = String(kind || "");
+        const changeKind = String(kind || "");
+        proxyStatus.lastChange = changeKind;
         try { proxyStatus.lastChangeAt = Math.round(performance.now()); } catch (_) {}
-        proxyStatus.changes[proxyStatus.lastChange] = (proxyStatus.changes[proxyStatus.lastChange] || 0) + 1;
-        dispatch(document, PAGE_PROXY_EVENT, { kind, ...detail });
+        proxyStatus.changes[changeKind] = (proxyStatus.changes[changeKind] || 0) + 1;
+
+        if (changeKind === "configured") {
+          dispatch(document, PAGE_PROXY_EVENT, { kind: changeKind, ...detail });
+          return;
+        }
+
+        pendingBridgeKinds[changeKind] = (pendingBridgeKinds[changeKind] || 0) + 1;
+        if (changeKind === "register-property" && detail.definition) {
+          pendingRegisterPropertyDefinitions.push(detail.definition);
+        }
+        scheduleBridgeDispatch();
+      };
+
+      const flushBridgeDispatch = () => {
+        bridgeDispatchScheduled = false;
+        if (!active) return;
+        const kinds = { ...pendingBridgeKinds };
+        for (const key of Object.keys(pendingBridgeKinds)) {
+          delete pendingBridgeKinds[key];
+        }
+        const definitions = pendingRegisterPropertyDefinitions.splice(0);
+        if (Object.keys(kinds).length === 0 && definitions.length === 0) return;
+        proxyStatus.dispatchedBatches += 1;
+        dispatch(document, PAGE_PROXY_EVENT, {
+          kind: "batch",
+          kinds,
+          definitions
+        });
+      };
+
+      const scheduleBridgeDispatch = () => {
+        if (bridgeDispatchScheduled) return;
+        bridgeDispatchScheduled = true;
+        window.setTimeout(flushBridgeDispatch, 50);
       };
 
       const exposeStatus = () => {
@@ -130,6 +199,11 @@ extension BrowserModel {
                 stylesheetProxy: proxyStatus.stylesheetProxy,
                 shadowRootProxy: proxyStatus.shadowRootProxy,
                 customElementRegistryProxy: proxyStatus.customElementRegistryProxy,
+                dispatchedBatches: proxyStatus.dispatchedBatches,
+                dispatchedRootEventBatches: proxyStatus.dispatchedRootEventBatches,
+                pendingBridgeKinds: { ...pendingBridgeKinds },
+                pendingRegisterPropertyDefinitions: pendingRegisterPropertyDefinitions.length,
+                pendingRootEvents: pendingRootEvents.size,
                 lastChange: proxyStatus.lastChange,
                 lastChangeAt: proxyStatus.lastChangeAt,
                 changes: { ...proxyStatus.changes },
@@ -223,7 +297,7 @@ extension BrowserModel {
                 owners.delete(root);
                 continue;
               }
-              dispatch(root, ADOPTED_STYLE_CHANGE_EVENT);
+              queueRootEvent(root, ADOPTED_STYLE_CHANGE_EVENT);
             }
           }
           reportGlobalChange("adopted-sheet");
@@ -251,7 +325,7 @@ extension BrowserModel {
 
         const reportAdoptedSheetsChange = (root, sheets) => {
           rememberAdoptedSheetOwners(root, sheets);
-          dispatch(root, ADOPTED_STYLES_CHANGE_EVENT);
+          queueRootEvent(root, ADOPTED_STYLES_CHANGE_EVENT);
           reportGlobalChange("adopted-sheets");
         };
 
@@ -518,6 +592,13 @@ extension BrowserModel {
         if (!active) return;
         active = false;
         proxyStatus.active = false;
+        pendingRootEvents.clear();
+        for (const key of Object.keys(pendingBridgeKinds)) {
+          delete pendingBridgeKinds[key];
+        }
+        pendingRegisterPropertyDefinitions.splice(0);
+        bridgeDispatchScheduled = false;
+        rootEventDispatchScheduled = false;
         restorePrototypePatches();
         const tasks = cleanupTasks.splice(0);
         for (const task of tasks) {

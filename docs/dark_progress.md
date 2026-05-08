@@ -130,17 +130,21 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - queued root application runs in small time-budgeted slices
   - early stylesheet sync limits shadow/adopted-root rendering to startup slices, then schedules follow-up passes
   - bridge-driven stylesheet sync is slightly delayed during the first 2.5s so bursty page-proxy events collapse
+- Added page-proxy event batching:
+  - page-world global proxy changes are now grouped into 50ms bridge batches before notifying the isolated engine
+  - per-root adopted stylesheet notifications are coalesced before dispatch
+  - page-proxy status now reports dispatched bridge batches, dispatched root-event batches, and pending batch queues
 
 ## Completion Estimates
 
 - Full `variablesStore` dependency graph for matching variables and dependents: 77%
 - Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 89%
-- Mature optimized DOM/style watchers: 78%
-- Robust adopted stylesheet management: 79%
-- Full stylesheet proxy behavior and cross-context coordination: 83%
+- Mature optimized DOM/style watchers: 80%
+- Robust adopted stylesheet management: 80%
+- Full stylesheet proxy behavior and cross-context coordination: 84%
 - Dark Reader's color pipeline and extensive config corpus: 64%
 - Mature fix selection/config parser behavior across many sites: 65%
-- Extension-world isolation: 55%
+- Extension-world isolation: 57%
 
 ## Remaining Gaps
 
@@ -152,9 +156,9 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - inaccessible/CORS sheets
   - imported stylesheet retries
   - incremental large-sheet rendering
-- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 78%.
-- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 79%.
-- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 83%.
+- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 80%.
+- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 80%.
+- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 84%.
 - Color pipeline is still a major gap. Current estimate: 64%.
   - no full Dark Reader palette/cache system
   - limited image analysis
@@ -164,10 +168,10 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - parser exists, but no bundled Dark Reader config corpus yet
   - no broad site corpus
   - only a small set of targeted fixes
-- Extension-world isolation is not solved. Current estimate: 55%.
+- Extension-world isolation is not solved. Current estimate: 57%.
   - the main engine is now isolated, but a page-world proxy is still required for page-owned stylesheet and shadow-root APIs
   - complex SPAs can still be perturbed more than they would be by Dark Reader's extension-world architecture
-  - bridge behavior now has direct API visibility and startup work is chunked, but it still needs runtime proving on Reddit, HN, and other noisy SPAs
+  - bridge behavior now has direct API visibility, startup work is chunked, and page-proxy events are batched, but it still needs runtime proving on Reddit, HN, and other noisy SPAs
   - prototype hooks now restore on cleanup, but the small proxy still executes in the page world while active
 
 ## Latest Validation
