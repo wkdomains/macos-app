@@ -536,11 +536,19 @@ extension BrowserModel {
       const CSS_ADOPTED_RULE_CONVERSION_ASYNC_THRESHOLD = 80;
       const CSS_RULE_CONVERSION_BUDGET_MS = 7;
       const CSS_RULE_CONVERSION_MAX_PER_SLICE = 24;
+      const CSS_STARTUP_RULE_CONVERSION_ASYNC_THRESHOLD = 48;
 
       const cssRuleListLength = (rules) => Number(rules && rules.length) || 0;
 
+      const effectiveCSSRuleConversionAsyncThreshold = (threshold = CSS_RULE_CONVERSION_ASYNC_THRESHOLD) => {
+        if (stylesheetSyncElapsedSinceInstall() < STARTUP_STYLE_SYNC_WINDOW_MS) {
+          return Math.min(threshold, CSS_STARTUP_RULE_CONVERSION_ASYNC_THRESHOLD);
+        }
+        return threshold;
+      };
+
       const shouldConvertCSSRulesAsync = (rules) => {
-        return cssRuleListLength(rules) >= CSS_RULE_CONVERSION_ASYNC_THRESHOLD;
+        return cssRuleListLength(rules) >= effectiveCSSRuleConversionAsyncThreshold();
       };
 
       const cssRuleListsLength = (ruleLists) => {
@@ -552,7 +560,7 @@ extension BrowserModel {
       };
 
       const shouldConvertCSSRuleListsAsync = (ruleLists, threshold = CSS_RULE_CONVERSION_ASYNC_THRESHOLD) => {
-        return cssRuleListsLength(ruleLists) >= threshold;
+        return cssRuleListsLength(ruleLists) >= effectiveCSSRuleConversionAsyncThreshold(threshold);
       };
 
       const convertCSSRuleListsAsync = (ruleLists, callback) => {

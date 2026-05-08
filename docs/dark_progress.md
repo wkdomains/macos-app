@@ -200,6 +200,15 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - large root application now walks elements in time-budgeted slices instead of processing an entire document root synchronously
   - hidden-tab mutation storms are deferred until the document becomes visible
   - runtime status now reports mutation overflow/hidden deferral counters
+- Improved early dynamic UI recovery and startup scheduling:
+  - newly inserted inline/color/control/surface elements get a bounded priority pass before the full dirty-root pass catches up
+  - priority subtree discovery uses a bounded tree walk instead of unbounded selector scans on large SPA insertions
+  - class/ARIA/open/style mutations enqueue the affected element immediately so transient dialogs/toolbars do not stay light until the next full root slice
+  - startup stylesheet sync requests from the engine, stylesheet managers, page proxy, fetched stylesheets, and adopted stylesheet events now share one startup-aware scheduler
+  - the first dynamic run no longer forces a synchronous stylesheet flush during the startup window
+  - medium-size stylesheets switch to sliced async conversion during startup, not only very large stylesheets
+  - per-stylesheet rendering can drain through time-budgeted startup jobs so many medium stylesheets do not block the UI in one burst
+  - runtime status now reports deferred startup syncs, deferred synchronous flushes, priority element applies, and pending style-render jobs
 - Improved stylesheet/adopted stylesheet behavior:
   - fetched stylesheet copies now expand same-CORS `@import` rules recursively before parsing
   - failed fetch-copy attempts now get a guarded retry instead of permanently marking a stylesheet unavailable
@@ -217,10 +226,10 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 ## Completion Estimates
 
 - Full `variablesStore` dependency graph for matching variables and dependents: 91%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 96%
-- Mature optimized DOM/style watchers: 91%
-- Robust adopted stylesheet management: 91%
-- Full stylesheet proxy behavior and cross-context coordination: 93%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 97%
+- Mature optimized DOM/style watchers: 96%
+- Robust adopted stylesheet management: 93%
+- Full stylesheet proxy behavior and cross-context coordination: 95%
 - Dark Reader's color pipeline and extensive config corpus: 91%
 - Mature fix selection/config parser behavior across many sites: 92%
 - Extension-world isolation: 90%
@@ -231,12 +240,12 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - no full scoped variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - scoped handling is stronger, but still not as exact as Dark Reader's full selector/dependency store
-- Per-stylesheet managers still need more mature behavior. Current estimate: 96%.
+- Per-stylesheet managers still need more mature behavior. Current estimate: 97%.
   - privileged cross-origin/background fetch parity
   - imported stylesheet retries
-- Watchers are improved but still less mature than Dark Reader's separated watch modules and long-run throttling strategy. Current estimate: 91%.
-- Adopted stylesheet handling is better, but not equivalent to Dark Reader's full CSSStyleSheet override/fallback model. Current estimate: 91%.
-- Stylesheet proxy is closer, but cross-context coordination is still partial for some obscure CSSOM mutation APIs. Current estimate: 93%.
+- Watchers now have the main Dark Reader-style batching/dirty-root/priority-surface pieces, but still need more long-run observer pressure testing. Current estimate: 96%.
+- Adopted stylesheet handling is better, but not equivalent to Dark Reader's full CSSStyleSheet override/fallback model. Current estimate: 93%.
+- Stylesheet proxy is closer, but cross-context coordination is still partial for some obscure CSSOM mutation APIs. Current estimate: 95%.
 - Color pipeline is much closer, but still not a full port. Current estimate: 91%.
   - limited image analysis compared with Dark Reader
   - color math is compatible in shape but still not Dark Reader's exact implementation
@@ -250,8 +259,8 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 
 ## Latest Validation
 
-- Combined dark-mode JavaScript passed `node --check`.
-- Page-world proxy JavaScript passed `node --check`.
+- Combined dark-mode JavaScript passed syntax validation with the current split script fragments.
+- Page-world proxy JavaScript passed syntax validation.
 - Site-fix JavaScript with a non-empty sample config passed `node --check`.
 - Site-fix JavaScript generated with the full upstream Dark Reader `dynamic-theme-fixes.config` passed `node --check`.
 - Site-fix parser runtime check with the full bundled config matched Reddit through the upstream corpus with built-in fixes disabled.

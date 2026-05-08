@@ -21,6 +21,12 @@ extension BrowserModel {
       let lastStylesheetSyncRootCount = 0;
       let lastStylesheetSyncTotalRootCount = 0;
       let finalStartupStyleSyncScheduled = false;
+      let deferredStartupStyleSyncs = 0;
+      let deferredSynchronousStyleFlushes = 0;
+      const pendingStyleRenderJobs = [];
+      let styleRenderScheduled = false;
+      let styleRenderBatches = 0;
+      let styleRenderJobsCompleted = 0;
       let asyncStyleConversionsStarted = 0;
       let asyncStyleConversionsCompleted = 0;
       let asyncStyleConversionsCancelled = 0;
@@ -48,6 +54,16 @@ extension BrowserModel {
       const registeredCustomPropertyTypes = new Map();
       const stylesheetCustomPropertyTypes = new Map();
       let fallbackWasCleared = false;
+      const stylesheetSyncInstalledAt = (() => {
+        try { return performance.now(); } catch (_) { return Date.now(); }
+      })();
+      const stylesheetSyncElapsedSinceInstall = () => {
+        try { return performance.now() - stylesheetSyncInstalledAt; } catch (_) { return Date.now() - stylesheetSyncInstalledAt; }
+      };
+      const STARTUP_STYLE_SYNC_WINDOW_MS = 3000;
+      const STARTUP_STYLE_SYNC_MIN_DELAY_MS = 160;
+      const STARTUP_STYLE_RENDER_BUDGET_MS = 7;
+      const STARTUP_STYLE_RENDER_MAX_PER_SLICE = 12;
       const LOADING_STYLE_TIMEOUT = 3500;
       const STYLE_UPDATE_EVENT = "__darkreader__updateSheet";
       const ADOPTED_STYLE_CHANGE_EVENT = "__darkreader__adoptedStyleSheetChange";
@@ -277,7 +293,7 @@ extension BrowserModel {
             stylesheetFetchCopyCompleted += 1;
             failedStyleSheetFetchURLsByElement.delete(element);
             markStyleLoaded(element);
-            scheduleStyleSync(0);
+            scheduleStartupAwareStyleSync(0);
           })
           .catch(() => {
             if (element.href === href) {
@@ -288,7 +304,7 @@ extension BrowserModel {
                   if (!element.isConnected || element.href !== href) return;
                   failedStyleSheetFetchURLsByElement.delete(element);
                   stylesheetFetchCopyRetried += 1;
-                  scheduleStyleSync(0);
+                  scheduleStartupAwareStyleSync(0);
                 }, 5000);
                 styleSheetFetchRetryTimersByElement.set(element, retryTimer);
               }
@@ -385,7 +401,7 @@ extension BrowserModel {
             element.removeEventListener("error", done);
             loadingStyleListenersByElement.delete(element);
             markStyleLoaded(element);
-            scheduleStyleSync(0);
+            scheduleStartupAwareStyleSync(0);
           };
           element.addEventListener("load", done, { once: true });
           element.addEventListener("error", done, { once: true });
@@ -396,7 +412,7 @@ extension BrowserModel {
           const timeout = window.setTimeout(() => {
             loadingStyleTimeoutsByElement.delete(element);
             markStyleUnavailable(element);
-            scheduleStyleSync(0);
+            scheduleStartupAwareStyleSync(0);
           }, LOADING_STYLE_TIMEOUT);
           loadingStyleTimeoutsByElement.set(element, timeout);
         }

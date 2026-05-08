@@ -193,6 +193,7 @@ extension BrowserModel {
             }
             if (INLINE_STYLE_MUTATION_ATTRIBUTES.has(mutation.attributeName)) {
               clearCachedSourceFor(mutation.target);
+              queueElementApply(mutation.target, 0);
               markDirty(mutation.target);
               inlineChanged = true;
             }
@@ -205,6 +206,8 @@ extension BrowserModel {
                   || mutation.target.querySelector?.(CONTROL_SELECTOR)
                 )
               ) {
+                queueElementApply(mutation.target, 0);
+                queueElementSubtreeApply(mutation.target, 12);
                 markDirty(mutation.target);
                 inlineChanged = true;
               }
@@ -222,11 +225,8 @@ extension BrowserModel {
             if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) continue;
             if (shouldManageStyle(node)) stylesChanged = true;
             if (node.querySelector && node.querySelector(STYLE_SELECTOR)) stylesChanged = true;
-            if (
-              node.nodeType === Node.DOCUMENT_FRAGMENT_NODE
-              || (node.matches && node.matches(STYLE_OVERRIDE_SELECTOR))
-              || (node.querySelector && node.querySelector(STYLE_OVERRIDE_SELECTOR))
-            ) {
+            const queuedPriorityElements = queueElementSubtreeApply(node, 32);
+            if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE || queuedPriorityElements > 0) {
               markDirty(node);
               inlineChanged = true;
             }
@@ -238,7 +238,7 @@ extension BrowserModel {
           }
         }
 
-        if (stylesChanged) scheduleStyleSync(0);
+        if (stylesChanged) scheduleStartupAwareStyleSync(0);
         if (inlineChanged) schedule(0);
       };
 
@@ -268,7 +268,7 @@ extension BrowserModel {
             mutationQueueOverflow = false;
             queuedMutations = [];
             dirtyRoots.add(document);
-            scheduleStyleSync(0);
+            scheduleStartupAwareStyleSync(0);
             schedule(0);
             return;
           }

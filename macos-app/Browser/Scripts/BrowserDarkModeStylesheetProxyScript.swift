@@ -51,7 +51,7 @@ extension BrowserModel {
         if (!name.startsWith("--") || !isColorRegistration) return;
         registeredCustomPropertyTypes.set(name, variableTypeNumberForProperty(name, definition.initialValue || ""));
         registerWrappedCustomProperties(definition);
-        scheduleStyleSync(0);
+        scheduleStartupAwareStyleSync(0);
       };
 
       const installStylesheetProxy = () => {
@@ -147,7 +147,7 @@ extension BrowserModel {
               dispatchSheetEvent(root, ADOPTED_STYLE_CHANGE_EVENT);
             }
           }
-          scheduleStyleSync(0);
+          scheduleStartupAwareStyleSync(0);
         };
         const reportSheetChange = (sheet) => {
           if (!sheet || isOwnGeneratedSheet(sheet)) return;
@@ -158,7 +158,7 @@ extension BrowserModel {
             reportAdoptedSheetChange(sheet);
             return;
           }
-          scheduleStyleSync(0);
+          scheduleStartupAwareStyleSync(0);
         };
         const reportSheetChangeAsync = (sheet, promise) => {
           if (promise && promise instanceof Promise) {
@@ -170,7 +170,7 @@ extension BrowserModel {
         const reportAdoptedSheetsChange = (root, sheets) => {
           rememberAdoptedSheetOwners(root, sheets);
           dispatchSheetEvent(root, ADOPTED_STYLES_CHANGE_EVENT);
-          scheduleStyleSync(0);
+          scheduleStartupAwareStyleSync(0);
         };
         const proxyAdoptedSheetsArray = (root, source) => {
           if (!Array.isArray(source)) return source;
@@ -265,7 +265,7 @@ extension BrowserModel {
               return;
             }
             if (declaration.parentRule || propertyName.startsWith("--") || propertyName === "cssText") {
-              scheduleStyleSync(0);
+              scheduleStartupAwareStyleSync(0);
             }
           };
 

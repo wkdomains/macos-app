@@ -13,12 +13,21 @@ extension BrowserModel {
       const pendingRootApplySet = new Set();
       const pendingRootApplyQueue = [];
       const pendingRootApplyJobs = new Map();
+      const pendingElementApplySet = new Set();
+      const pendingElementApplyQueue = [];
       let rootApplyScheduled = false;
+      let elementApplyScheduled = false;
       let lightSurfaceFallbacksApplied = 0;
       let lightSurfaceFallbacksCleared = 0;
+      let priorityElementApplyBatches = 0;
+      let priorityElementApplies = 0;
       const ROOT_APPLY_BUDGET_MS = 8;
       const ROOT_APPLY_MAX_PER_SLICE = 8;
       const ROOT_APPLY_MAX_ELEMENTS_PER_SLICE = 96;
+      const ELEMENT_APPLY_BUDGET_MS = 6;
+      const ELEMENT_APPLY_MAX_PER_SLICE = 80;
+      const ELEMENT_SUBTREE_QUEUE_LIMIT = 32;
+      const ELEMENT_SUBTREE_VISIT_LIMIT = 384;
       const LIGHT_SURFACE_ANCESTOR_LIMIT = 6;
 
       const setOverride = (element, attribute, property, value) => {
@@ -184,6 +193,7 @@ extension BrowserModel {
       ].join(", ");
       const SVG_SELECTOR = Array.from(SVG_TAGS).map((tag) => tag.toLowerCase()).join(", ");
       const STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, CONTROL_SELECTOR, SVG_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
+      const PRIORITY_STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, CONTROL_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
 
       const shouldSkipElement = (element) => {
         if (!element || !element.tagName || SKIP_TAGS.has(element.tagName.toUpperCase())) return true;
@@ -543,6 +553,101 @@ extension BrowserModel {
         }
       };
 
+      const elementApplyIsConnected = (element) => {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+        if (element === document.documentElement || element === document.body) return true;
+        return element.isConnected !== false;
+      };
+
+      const scheduleQueuedElementApplies = (delay = 0) => {
+        if (elementApplyScheduled) return;
+        elementApplyScheduled = true;
+        window.setTimeout(flushQueuedElementApplies, delay);
+      };
+
+      const queueElementApply = (element, delay = 0) => {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || pendingElementApplySet.has(element)) return false;
+        pendingElementApplySet.add(element);
+        pendingElementApplyQueue.push(element);
+        scheduleQueuedElementApplies(delay);
+        return true;
+      };
+
+      const queueElementSubtreeApply = (node, limit = ELEMENT_SUBTREE_QUEUE_LIMIT) => {
+        if (!node) return 0;
+        let queued = 0;
+        const queueCandidate = (element) => {
+          if (!element || queued >= limit || element.nodeType !== Node.ELEMENT_NODE) return;
+          if (!element.matches || !element.matches(PRIORITY_STYLE_OVERRIDE_SELECTOR)) return;
+          if (queueElementApply(element, 0)) queued += 1;
+        };
+
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          queueCandidate(node);
+        }
+
+        if (queued >= limit) return queued;
+        if (document.createTreeWalker) {
+          try {
+            const showElement = window.NodeFilter ? NodeFilter.SHOW_ELEMENT : 1;
+            const walker = document.createTreeWalker(node, showElement);
+            let visited = 0;
+            let element = walker.nextNode();
+            while (element && queued < limit && visited < ELEMENT_SUBTREE_VISIT_LIMIT) {
+              visited += 1;
+              queueCandidate(element);
+              element = walker.nextNode();
+            }
+          } catch (_) {}
+          return queued;
+        }
+
+        if (!node.querySelectorAll) return queued;
+        try {
+          for (const element of node.querySelectorAll(PRIORITY_STYLE_OVERRIDE_SELECTOR)) {
+            queueCandidate(element);
+            if (queued >= limit) break;
+          }
+        } catch (_) {}
+        return queued;
+      };
+
+      const flushQueuedElementApplies = () => {
+        elementApplyScheduled = false;
+        if (pendingElementApplyQueue.length === 0) return;
+
+        const started = performance.now();
+        const wasApplying = applying;
+        let applied = 0;
+        applying = true;
+        priorityElementApplyBatches += 1;
+
+        try {
+          withFallbackDisabled(() => {
+            while (pendingElementApplyQueue.length > 0) {
+              const element = pendingElementApplyQueue.shift();
+              pendingElementApplySet.delete(element);
+              if (!elementApplyIsConnected(element)) continue;
+              applyElement(element);
+              applied += 1;
+              priorityElementApplies += 1;
+              if (
+                applied >= ELEMENT_APPLY_MAX_PER_SLICE
+                || performance.now() - started > ELEMENT_APPLY_BUDGET_MS
+              ) {
+                break;
+              }
+            }
+          });
+        } finally {
+          applying = wasApplying;
+        }
+
+        if (pendingElementApplyQueue.length > 0) {
+          scheduleQueuedElementApplies(16);
+        }
+      };
+
       const applyRoot = (root) => {
         if (!root || !root.querySelectorAll) return;
 
@@ -704,7 +809,10 @@ extension BrowserModel {
         pendingRootApplySet.clear();
         pendingRootApplyQueue.splice(0);
         pendingRootApplyJobs.clear();
+        pendingElementApplySet.clear();
+        pendingElementApplyQueue.splice(0);
         rootApplyScheduled = false;
+        elementApplyScheduled = false;
       };
     """#
 }

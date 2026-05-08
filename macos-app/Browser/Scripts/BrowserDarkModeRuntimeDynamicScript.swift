@@ -58,7 +58,7 @@ extension BrowserModel {
           scheduleShadowRootDiscovery(document, 0);
         }
         __wkdomainsDarkModeDebug("run-sync-styles");
-        flushStyleSyncNow();
+        flushStyleSyncNowOrSchedule();
         ensureSiteFixStyle();
         tryInvertPDF();
 
@@ -93,21 +93,21 @@ extension BrowserModel {
         __wkdomainsDarkModeDebug("dom-ready");
         watchRoot(document);
         dirtyRoots.add(document);
-        scheduleStyleSync(0);
+        scheduleStartupAwareStyleSync(0);
         schedule(0);
       };
 
       const handleWindowLoad = () => {
         __wkdomainsDarkModeDebug("window-load");
         dirtyRoots.add(document);
-        scheduleStyleSync(0);
+        scheduleStartupAwareStyleSync(0);
         schedule(40);
       };
 
       const handlePageShow = () => {
         __wkdomainsDarkModeDebug("page-show");
         dirtyRoots.add(document);
-        scheduleStyleSync(0);
+        scheduleStartupAwareStyleSync(0);
         schedule(40);
       };
 
@@ -163,7 +163,7 @@ extension BrowserModel {
             schedule(40);
           }
 
-          scheduleStyleSync(elapsedSinceInstall() < 2500 ? 80 : 0);
+        scheduleStartupAwareStyleSync(0);
         };
 
         document.addEventListener(PAGE_PROXY_EVENT, onPageProxyChange);
@@ -220,7 +220,7 @@ extension BrowserModel {
         __wkdomainsDarkModeDebug("dynamic-after-watch-root");
         dirtyRoots.add(document);
         __wkdomainsDarkModeDebug("dynamic-before-schedule-style-sync");
-        scheduleStyleSync(0);
+        scheduleStartupAwareStyleSync(0);
         __wkdomainsDarkModeDebug("dynamic-before-schedule-run");
         schedule(0);
         __wkdomainsDarkModeDebug("dynamic-end");

@@ -15,6 +15,33 @@ extension BrowserModel {
         asyncStyleConversionsCancelled += 1;
       };
 
+      const startupStyleSyncDelay = (delay = 30) => {
+        const requestedDelay = Math.max(0, Number(delay) || 0);
+        if (stylesheetSyncElapsedSinceInstall() >= STARTUP_STYLE_SYNC_WINDOW_MS) {
+          return requestedDelay;
+        }
+        deferredStartupStyleSyncs += 1;
+        return Math.max(requestedDelay, STARTUP_STYLE_SYNC_MIN_DELAY_MS);
+      };
+
+      const scheduleStartupAwareStyleSync = (delay = 30) => {
+        scheduleStyleSync(startupStyleSyncDelay(delay));
+      };
+
+      const flushStyleSyncNowOrSchedule = () => {
+        if (
+          stylesheetSyncElapsedSinceInstall() < STARTUP_STYLE_SYNC_WINDOW_MS
+          && (stylesheetSyncNeeded || stylesheetSyncScheduled)
+        ) {
+          deferredSynchronousStyleFlushes += 1;
+          scheduleStartupAwareStyleSync(STARTUP_STYLE_SYNC_MIN_DELAY_MS);
+          return false;
+        }
+
+        flushStyleSyncNow();
+        return true;
+      };
+
       const ensureStyleManager = (element) => {
         let manager = styleManagers.get(element);
         if (!manager) {
@@ -34,7 +61,7 @@ extension BrowserModel {
           };
           const onSheetChange = () => {
             manager.revision += 1;
-            scheduleStyleSync(0);
+            scheduleStartupAwareStyleSync(0);
           };
           manager.onSheetChange = onSheetChange;
           styleManagers.set(element, manager);
@@ -42,7 +69,7 @@ extension BrowserModel {
           element.addEventListener(STYLE_UPDATE_EVENT, onSheetChange);
 
           if (window.MutationObserver) {
-            manager.observer = new MutationObserver(() => scheduleStyleSync(0));
+            manager.observer = new MutationObserver(() => scheduleStartupAwareStyleSync(0));
             const isLink = element instanceof HTMLLinkElement;
             manager.observer.observe(element, {
               attributes: true,
@@ -211,7 +238,7 @@ extension BrowserModel {
           if (manager) {
             manager.revision += 1;
           }
-          scheduleStyleSync(0);
+          scheduleStartupAwareStyleSync(0);
         };
         root.addEventListener(ADOPTED_STYLE_CHANGE_EVENT, onChange);
         root.addEventListener(ADOPTED_STYLES_CHANGE_EVENT, onChange);
@@ -503,7 +530,76 @@ extension BrowserModel {
         return styles;
       };
 
+      const cancelPendingStyleRenderJobs = () => {
+        pendingStyleRenderJobs.splice(0);
+        styleRenderScheduled = false;
+      };
+
+      const schedulePendingStyleRenderJobs = (delay = 0) => {
+        if (styleRenderScheduled) return;
+        styleRenderScheduled = true;
+        window.setTimeout(flushPendingStyleRenderJobs, delay);
+      };
+
+      const shouldSliceStyleRendering = (styles) => {
+        return stylesheetSyncElapsedSinceInstall() < STARTUP_STYLE_SYNC_WINDOW_MS
+          && ((styles && styles.length > STARTUP_STYLE_RENDER_MAX_PER_SLICE) || pendingStyleRenderJobs.length > 0);
+      };
+
+      const queueStyleRenderJob = (root, styles) => {
+        pendingStyleRenderJobs.push({
+          root,
+          styles: Array.from(styles || []),
+          index: 0
+        });
+        schedulePendingStyleRenderJobs(0);
+      };
+
+      const flushPendingStyleRenderJobs = () => {
+        styleRenderScheduled = false;
+        if (pendingStyleRenderJobs.length === 0) return;
+
+        const started = performance.now();
+        let rendered = 0;
+        styleRenderBatches += 1;
+
+        while (pendingStyleRenderJobs.length > 0) {
+          const job = pendingStyleRenderJobs[0];
+          if (!job.root || (job.root !== document && job.root.host && !job.root.host.isConnected)) {
+            pendingStyleRenderJobs.shift();
+            continue;
+          }
+
+          while (job.index < job.styles.length) {
+            renderStyleManager(job.styles[job.index]);
+            job.index += 1;
+            rendered += 1;
+            if (
+              rendered >= STARTUP_STYLE_RENDER_MAX_PER_SLICE
+              || performance.now() - started >= STARTUP_STYLE_RENDER_BUDGET_MS
+            ) {
+              schedulePendingStyleRenderJobs(16);
+              return;
+            }
+          }
+
+          renderAdoptedStyleSheets(job.root);
+          pendingStyleRenderJobs.shift();
+          styleRenderJobsCompleted += 1;
+        }
+
+        if (loadingStyles.size === 0 && document.readyState !== "loading") {
+          cleanFallbackStyle();
+        }
+        ensureSiteFixStyle();
+      };
+
       const renderManageableStyles = (root, styles) => {
+        if (shouldSliceStyleRendering(styles)) {
+          queueStyleRenderJob(root, styles);
+          return;
+        }
+
         for (const style of styles) {
           renderStyleManager(style);
         }
@@ -558,6 +654,7 @@ extension BrowserModel {
       const syncAllStyles = () => {
         __wkdomainsDarkModeDebug("sync-styles-start");
         stylesheetSyncNeeded = false;
+        cancelPendingStyleRenderJobs();
         pruneStyleManagers();
         pruneAdoptedStyleManagers();
         variablesStore.clear();
@@ -581,7 +678,10 @@ extension BrowserModel {
           renderManageableStyles(root, stylesByRoot.get(root) || []);
         }
 
-        if (loadingStyles.size === 0 && document.readyState !== "loading") {
+        if (pendingStyleRenderJobs.length > 0) {
+          schedulePendingStyleRenderJobs(0);
+        }
+        if (pendingStyleRenderJobs.length === 0 && loadingStyles.size === 0 && document.readyState !== "loading") {
           cleanFallbackStyle();
         }
         if (work.hasMore) {
@@ -592,7 +692,7 @@ extension BrowserModel {
 
       const updateManageableStyles = () => {
         stylesheetSyncNeeded = true;
-        flushStyleSyncNow();
+        flushStyleSyncNowOrSchedule();
       };
 
       const scheduleStyleSync = (delay = 30) => {
