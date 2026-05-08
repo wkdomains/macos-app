@@ -103,6 +103,10 @@ extension BrowserModel {
         const text = String(value).trim();
         if (!text || text === "inherit" || text === "initial" || text === "unset") return null;
 
+        if (prop === "color-scheme") {
+          return "dark";
+        }
+
         if (prop.startsWith("--")) {
           return transformCustomPropertyDeclarations(prop, text);
         }
@@ -244,6 +248,31 @@ extension BrowserModel {
         }
       };
 
+      const safeRuleText = (rule) => {
+        try {
+          return rule && rule.cssText ? String(rule.cssText || "") : "";
+        } catch (_) {
+          return "";
+        }
+      };
+
+      const ruleConstructorName = (rule) => {
+        try {
+          return rule && rule.constructor ? String(rule.constructor.name || "") : "";
+        } catch (_) {
+          return "";
+        }
+      };
+
+      const groupRulePrefix = (rule, fallback = "") => {
+        const cssText = safeRuleText(rule);
+        const brace = cssText.indexOf("{");
+        if (brace > 0) {
+          return cssText.slice(0, brace).trim();
+        }
+        return fallback;
+      };
+
       const mediaRuleApplies = (rule) => {
         const mediaText = safeMediaText(rule).toLowerCase();
         if (!mediaText) return true;
@@ -280,7 +309,10 @@ extension BrowserModel {
 
       const isSupportsRule = (rule) => {
         try {
-          return !!(rule && typeof rule.conditionText === "string" && safeCSSRuleList(rule) && !rule.media);
+          if (!rule || !safeCSSRuleList(rule) || rule.media) return false;
+          const name = ruleConstructorName(rule);
+          if (name === "CSSSupportsRule") return true;
+          return groupRulePrefix(rule).toLowerCase().startsWith("@supports");
         } catch (_) {
           return false;
         }
@@ -296,7 +328,32 @@ extension BrowserModel {
 
       const isLayerRule = (rule) => {
         try {
-          return !!(rule && rule.name && safeCSSRuleList(rule) && !rule.syntax);
+          if (!rule || !safeCSSRuleList(rule) || rule.syntax) return false;
+          const name = ruleConstructorName(rule);
+          if (name === "CSSLayerBlockRule") return true;
+          return groupRulePrefix(rule).toLowerCase().startsWith("@layer");
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const isContainerRule = (rule) => {
+        try {
+          if (!rule || !safeCSSRuleList(rule)) return false;
+          const name = ruleConstructorName(rule);
+          if (name === "CSSContainerRule") return true;
+          return groupRulePrefix(rule).toLowerCase().startsWith("@container");
+        } catch (_) {
+          return false;
+        }
+      };
+
+      const isScopeRule = (rule) => {
+        try {
+          if (!rule || !safeCSSRuleList(rule)) return false;
+          const name = ruleConstructorName(rule);
+          if (name === "CSSScopeRule") return true;
+          return groupRulePrefix(rule).toLowerCase().startsWith("@scope");
         } catch (_) {
           return false;
         }
@@ -332,7 +389,7 @@ extension BrowserModel {
             if (window.CSS && CSS.supports && conditionText && !CSS.supports(conditionText)) return "";
             const childRules = convertCSSRules(rule.cssRules, depth + 1, seenRuleLists);
             if (!childRules) return "";
-            const prefix = conditionText ? `@supports ${conditionText}` : "";
+            const prefix = conditionText ? `@supports ${conditionText}` : groupRulePrefix(rule);
             return prefix ? `${prefix} {\n${childRules}\n}` : childRules;
           }
 
@@ -341,6 +398,13 @@ extension BrowserModel {
             if (!childRules) return "";
             const name = String(rule.name || "").trim();
             const prefix = name ? `@layer ${name}` : "@layer";
+            return prefix ? `${prefix} {\n${childRules}\n}` : "";
+          }
+
+          if (isContainerRule(rule) || isScopeRule(rule)) {
+            const childRules = convertCSSRules(rule.cssRules, depth + 1, seenRuleLists);
+            if (!childRules) return "";
+            const prefix = groupRulePrefix(rule);
             return prefix ? `${prefix} {\n${childRules}\n}` : "";
           }
         } catch (_) {}
@@ -390,29 +454,41 @@ extension BrowserModel {
           if (isMediaRule(rule)) {
             if (!mediaRuleApplies(rule)) return null;
             const mediaText = safeMediaText(rule);
+            const prefix = mediaText ? `@media ${mediaText}` : "";
             return {
               rules: safeCSSRuleList(rule),
-              prefix: mediaText ? `@media ${mediaText} {\n` : "",
-              suffix: mediaText ? "\n}" : ""
+              prefix: prefix ? `${prefix} {\n` : "",
+              suffix: prefix ? "\n}" : ""
             };
           }
 
           if (isSupportsRule(rule)) {
             const conditionText = String(rule.conditionText || "");
             if (window.CSS && CSS.supports && conditionText && !CSS.supports(conditionText)) return null;
+            const prefix = conditionText ? `@supports ${conditionText}` : groupRulePrefix(rule);
             return {
               rules: safeCSSRuleList(rule),
-              prefix: conditionText ? `@supports ${conditionText} {\n` : "",
-              suffix: conditionText ? "\n}" : ""
+              prefix: prefix ? `${prefix} {\n` : "",
+              suffix: prefix ? "\n}" : ""
             };
           }
 
           if (isLayerRule(rule)) {
             const name = String(rule.name || "").trim();
+            const prefix = name ? `@layer ${name}` : "@layer";
             return {
               rules: safeCSSRuleList(rule),
-              prefix: name ? `@layer ${name} {\n` : "@layer {\n",
-              suffix: "\n}"
+              prefix: prefix ? `${prefix} {\n` : "",
+              suffix: prefix ? "\n}" : ""
+            };
+          }
+
+          if (isContainerRule(rule) || isScopeRule(rule)) {
+            const prefix = groupRulePrefix(rule);
+            return {
+              rules: safeCSSRuleList(rule),
+              prefix: prefix ? `${prefix} {\n` : "",
+              suffix: prefix ? "\n}" : ""
             };
           }
         } catch (_) {}

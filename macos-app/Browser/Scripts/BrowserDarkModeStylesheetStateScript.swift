@@ -388,6 +388,22 @@ extension BrowserModel {
         || property.includes("shadow")
       );
 
+      const shouldTreatCustomPropertyAsText = (property) => {
+        const prop = String(property || "").toLowerCase();
+        return prop.includes("text")
+          || prop.includes("foreground")
+          || prop.includes("fg")
+          || prop.includes("content")
+          || prop.includes("label")
+          || prop.includes("title")
+          || prop.includes("caption")
+          || prop.includes("placeholder")
+          || prop.includes("link")
+          || prop.includes("icon")
+          || /(?:^|[-_])on[-_]/.test(prop)
+          || /(?:^|[-_])on(?:surface|background|primary|secondary|tertiary|error|warning|success|accent)(?:[-_]|$)/.test(prop);
+      };
+
       const shouldTreatCustomPropertyAsRawColor = (property) => {
         const prop = String(property || "").toLowerCase();
         return prop.includes("color")
@@ -427,8 +443,9 @@ extension BrowserModel {
       const cssVariableTypeForProperty = (property) => {
         const prop = property.toLowerCase();
         if (prop.startsWith("--")) {
-          if (shouldTreatCustomPropertyAsBackground(prop)) return "bg";
           if (shouldTreatCustomPropertyAsBorder(prop)) return "border";
+          if (shouldTreatCustomPropertyAsText(prop)) return "text";
+          if (shouldTreatCustomPropertyAsBackground(prop)) return "bg";
           return "text";
         }
         if (prop.startsWith("background") || prop === "box-shadow" || prop === "text-shadow") {

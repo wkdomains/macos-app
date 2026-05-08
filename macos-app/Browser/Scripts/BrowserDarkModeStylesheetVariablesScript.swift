@@ -65,10 +65,12 @@ extension BrowserModel {
           const hasColorLikeName = shouldTreatCustomPropertyAsRawColor(property);
           const hasNamedRawColor = parseRawColorValue(text) && hasColorLikeName;
           if (hasColor || /^\s*(rgb|hsl)a?\(/i.test(text) || hasNamedRawColor || (text.includes("var(") && hasColorLikeName)) {
-            if (shouldTreatCustomPropertyAsBackground(property)) {
-              resolveType(property, VAR_TYPE_BG);
-            } else if (shouldTreatCustomPropertyAsBorder(property)) {
+            if (shouldTreatCustomPropertyAsBorder(property)) {
               resolveType(property, VAR_TYPE_BORDER);
+            } else if (shouldTreatCustomPropertyAsText(property)) {
+              resolveType(property, VAR_TYPE_TEXT);
+            } else if (shouldTreatCustomPropertyAsBackground(property)) {
+              resolveType(property, VAR_TYPE_BG);
             } else {
               resolveType(property, VAR_TYPE_TEXT);
             }

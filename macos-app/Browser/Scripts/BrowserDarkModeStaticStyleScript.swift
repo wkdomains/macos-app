@@ -166,7 +166,15 @@ extension BrowserModel {
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input,
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) textarea,
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) select,
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) button {
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) button,
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) dialog,
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [popover],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [aria-modal="true"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="dialog"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="button"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="combobox"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="searchbox"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="textbox"] {
           color-scheme: dark !important;
         }
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input,
@@ -205,6 +213,14 @@ extension BrowserModel {
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) .editable[contenteditable] {
           color: var(--darkreader-neutral-text) !important;
           caret-color: var(--darkreader-neutral-text) !important;
+        }
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) dialog,
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [popover],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [aria-modal="true"],
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="dialog"] {
+          background-color: var(--darkreader-neutral-background) !important;
+          color: var(--darkreader-neutral-text) !important;
+          border-color: var(--darkreader-border) !important;
         }
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [bgcolor] :not(iframe):not(img):not(picture):not(video):not(canvas):not(svg):not(path):not([${BACKGROUND_ATTRIBUTE}]) {
           background-color: transparent !important;

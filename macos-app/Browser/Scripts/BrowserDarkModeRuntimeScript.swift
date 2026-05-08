@@ -32,6 +32,7 @@ extension BrowserModel {
       };
       const INLINE_STYLE_MUTATION_ATTRIBUTES = new Set(INLINE_STYLE_ATTRS);
       const STYLE_SHEET_MUTATION_ATTRIBUTES = new Set(["href", "media", "disabled"]);
+      const SURFACE_MUTATION_ATTRIBUTES = new Set(["class", "hidden", "open", "popover", "role", "aria-hidden", "aria-expanded", "aria-modal"]);
       let queuedMutations = [];
       let mutationQueueOverflow = false;
       let mutationFlushScheduled = false;
@@ -85,6 +86,8 @@ extension BrowserModel {
                 prunedDisconnectedRoots,
                 prunedRootObservers,
                 pendingRootApplies: pendingRootApplyQueue.length,
+                lightSurfaceFallbacksApplied,
+                lightSurfaceFallbacksCleared,
                 rootApplyScheduled,
                 shadowDiscoveryScheduled,
                 pendingShadowDiscoveryRoots: shadowDiscoveryRoots.size,
@@ -597,6 +600,19 @@ extension BrowserModel {
               markDirty(mutation.target);
               inlineChanged = true;
             }
+            if (SURFACE_MUTATION_ATTRIBUTES.has(mutation.attributeName)) {
+              clearCachedSourceFor(mutation.target);
+              if (
+                mutation.target.nodeType === Node.ELEMENT_NODE
+                && (
+                  mutation.target.matches(STYLE_OVERRIDE_SELECTOR)
+                  || mutation.target.querySelector?.(CONTROL_SELECTOR)
+                )
+              ) {
+                markDirty(mutation.target);
+                inlineChanged = true;
+              }
+            }
             if (
               STYLE_SHEET_MUTATION_ATTRIBUTES.has(mutation.attributeName)
               && shouldManageStyle(mutation.target)
@@ -673,9 +689,17 @@ extension BrowserModel {
             "bgcolor",
             "color",
             "background",
+            "class",
             "disabled",
             "href",
-            "media"
+            "media",
+            "hidden",
+            "open",
+            "popover",
+            "role",
+            "aria-hidden",
+            "aria-expanded",
+            "aria-modal"
           ],
           childList: true,
           subtree: true
@@ -922,6 +946,8 @@ extension BrowserModel {
         shadowDiscoveryScheduled = false;
         shadowDiscoveryRoots.clear();
         fallbackWasCleared = false;
+        lightSurfaceFallbacksApplied = 0;
+        lightSurfaceFallbacksCleared = 0;
         shadowProxyActive = false;
         customElementRegistryProxyActive = false;
         cancelStyleSync();

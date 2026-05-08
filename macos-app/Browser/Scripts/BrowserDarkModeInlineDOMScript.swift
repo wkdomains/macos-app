@@ -13,8 +13,11 @@ extension BrowserModel {
       const pendingRootApplySet = new Set();
       const pendingRootApplyQueue = [];
       let rootApplyScheduled = false;
+      let lightSurfaceFallbacksApplied = 0;
+      let lightSurfaceFallbacksCleared = 0;
       const ROOT_APPLY_BUDGET_MS = 8;
       const ROOT_APPLY_MAX_PER_SLICE = 8;
+      const LIGHT_SURFACE_ANCESTOR_LIMIT = 6;
 
       const setOverride = (element, attribute, property, value) => {
         if (!value) {
@@ -147,9 +150,38 @@ extension BrowserModel {
         return false;
       };
 
-      const CONTROL_SELECTOR = "input, textarea, select, button, [contenteditable='true'], [role='textbox']";
+      const CONTROL_SELECTOR = [
+        "input",
+        "textarea",
+        "select",
+        "button",
+        "[contenteditable='true']",
+        "[role='button']",
+        "[role='combobox']",
+        "[role='searchbox']",
+        "[role='spinbutton']",
+        "[role='switch']",
+        "[role='textbox']"
+      ].join(", ");
+      const LIGHT_SURFACE_SELECTOR = [
+        "dialog",
+        "[popover]",
+        "[aria-modal='true']",
+        "[role='dialog']",
+        "[role='region']",
+        "[role='group']",
+        "[role='form']",
+        "[class*='modal' i]",
+        "[class*='dialog' i]",
+        "[class*='popover' i]",
+        "[class*='popup' i]",
+        "[class*='drawer' i]",
+        "[class*='panel' i]",
+        "[class*='surface' i]",
+        "[class*='sheet' i]"
+      ].join(", ");
       const SVG_SELECTOR = Array.from(SVG_TAGS).map((tag) => tag.toLowerCase()).join(", ");
-      const STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, CONTROL_SELECTOR, SVG_SELECTOR].join(", ");
+      const STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, CONTROL_SELECTOR, SVG_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
 
       const shouldSkipElement = (element) => {
         if (!element || !element.tagName || SKIP_TAGS.has(element.tagName.toUpperCase())) return true;
@@ -186,6 +218,27 @@ extension BrowserModel {
       };
 
       const inlineCacheKeyFor = (element) => INLINE_STYLE_ATTRS.map((attr) => `${attr}=${element.getAttribute(attr) || ""}`).join("\n");
+
+      const isLightSurfaceCandidate = (element) => {
+        if (!element || !element.matches || !element.tagName) return false;
+        if (element === document.documentElement || element === document.body) return true;
+        if (SKIP_TAGS.has(element.tagName.toUpperCase())) return false;
+
+        const rect = visibleRectFor(element);
+        if (rect.width < 24 || rect.height < 18 || rect.area < 900) return false;
+
+        const role = String(element.getAttribute("role") || "").toLowerCase();
+        if (["dialog", "region", "group", "form", "textbox"].includes(role)) return true;
+        if (element.hasAttribute("popover") || element.getAttribute("aria-modal") === "true") return true;
+        if (element.matches("dialog")) return true;
+
+        const className = String(element.className || "");
+        if (/\b(modal|dialog|popover|popup|drawer|panel|surface|sheet|compose|editor|toolbar|container|content)\b/i.test(className)) {
+          return true;
+        }
+
+        return false;
+      };
 
       const hasColorInlineSource = (element) => {
         if (!element || !element.hasAttribute || !element.style) return false;
@@ -237,6 +290,97 @@ extension BrowserModel {
         if (!Array.isArray(declarations)) return;
         for (const declaration of declarations) {
           element.style.setProperty(declaration.property, declaration.value);
+        }
+      };
+
+      const applyComputedStyleFallback = (element, reason = "direct") => {
+        const tag = element.tagName.toUpperCase();
+        const style = captureSourceStyle(element) || getComputedStyle(element);
+
+        if (!SVG_TAGS.has(tag)) {
+          const color = transformForeground(parseColor(style.color), element);
+          setOverride(element, COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", color);
+        }
+
+        const sourceBackground = parseColor(style.backgroundColor);
+        const surfaceBackground = reason === "surface" && (!sourceBackground || sourceBackground.a <= 0.08)
+          ? surfaceColorFor(element)
+          : null;
+        const background = surfaceBackground || sourceBackground;
+        const backgroundLuminance = background ? relativeLuminance(background) : 0;
+        const mediaBackdrop = hasMediaBackdrop(element, style);
+        const transformedBackground = mediaBackdrop ? null : transformBackground(background, element);
+
+        if (mediaBackdrop) {
+          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", "transparent");
+        } else if (transformedBackground && background && (background.a > 0.08 || reason === "surface")) {
+          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", transformedBackground);
+          if (reason === "surface") lightSurfaceFallbacksApplied += 1;
+        } else {
+          if (element.hasAttribute(BACKGROUND_ATTRIBUTE)) lightSurfaceFallbacksCleared += 1;
+          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", null);
+        }
+
+        if (!mediaBackdrop && style.backgroundImage && style.backgroundImage.includes("gradient") && backgroundLuminance > 0.46) {
+          setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", replaceCSSColors(style.backgroundImage, modifyBackgroundColor));
+        } else {
+          setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", null);
+        }
+
+        const boxShadow = transformBoxShadow(style.boxShadow);
+        setOverride(element, BOX_SHADOW_ATTRIBUTE, "--wkdomains-forced-dark-box-shadow", boxShadow && boxShadow !== style.boxShadow ? boxShadow : null);
+
+        for (const override of BORDER_OVERRIDES) {
+          const border = transformBorder(parseColor(style[override.js]));
+          setOverride(element, override.attr, override.prop, border);
+        }
+
+        if (SVG_TAGS.has(tag)) {
+          const fill = parseColor(style.fill);
+          const stroke = parseColor(style.stroke);
+          if (fill && relativeLuminance(fill) < 0.52) {
+            setOverride(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", transformForeground(fill, element));
+          } else {
+            setOverride(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", null);
+          }
+          if (stroke && relativeLuminance(stroke) < 0.52) {
+            setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", transformForeground(stroke, element));
+          } else {
+            setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", null);
+          }
+        }
+      };
+
+      const shouldApplyLightSurfaceFallback = (element, forceCandidate = false) => {
+        if (!forceCandidate && !isLightSurfaceCandidate(element)) return false;
+        if (forceCandidate && (!element || !element.tagName || SKIP_TAGS.has(element.tagName.toUpperCase()))) return false;
+        if (forceCandidate) {
+          const rect = visibleRectFor(element);
+          if (rect.width < 24 || rect.height < 18 || rect.area < 900) return false;
+        }
+        const style = captureSourceStyle(element) || getComputedStyle(element);
+        if (!style || style.display === "none" || style.visibility === "hidden" || Number.parseFloat(style.opacity || "1") <= 0.02) return false;
+        if (hasMediaBackdrop(element, style)) return false;
+
+        const sourceBackground = parseColor(style.backgroundColor);
+        const surfaceBackground = (!sourceBackground || sourceBackground.a <= 0.08)
+          ? surfaceColorFor(element)
+          : sourceBackground;
+        if (!surfaceBackground || surfaceBackground.a <= 0.08) return false;
+        return relativeLuminance(surfaceBackground) > 0.68;
+      };
+
+      const applyLightSurfaceAncestors = (element) => {
+        if (!element || !element.parentElement) return;
+        let parent = element.parentElement;
+        let depth = 0;
+        while (parent && parent.nodeType === Node.ELEMENT_NODE && depth < LIGHT_SURFACE_ANCESTOR_LIMIT) {
+          if (parent === document.documentElement || parent === document.body) break;
+          if (shouldApplyLightSurfaceFallback(parent, true)) {
+            applyComputedStyleFallback(parent, "surface");
+          }
+          parent = parent.parentElement;
+          depth += 1;
         }
       };
 
@@ -383,61 +527,17 @@ extension BrowserModel {
           return;
         }
 
-        let style = null;
         const shouldFallbackToComputedStyle = hasInlineColors
           || SVG_TAGS.has(tag)
-          || element.matches(CONTROL_SELECTOR);
+          || element.matches(CONTROL_SELECTOR)
+          || shouldApplyLightSurfaceFallback(element);
         if (!shouldFallbackToComputedStyle) {
           return;
         }
 
-        style = style || captureSourceStyle(element) || getComputedStyle(element);
-
-        if (!SVG_TAGS.has(tag)) {
-          const color = transformForeground(parseColor(style.color), element);
-          setOverride(element, COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", color);
-        }
-
-        const background = parseColor(style.backgroundColor);
-        const backgroundLuminance = background ? relativeLuminance(background) : 0;
-        const mediaBackdrop = hasMediaBackdrop(element, style);
-        const transformedBackground = mediaBackdrop ? null : transformBackground(background, element);
-
-        if (mediaBackdrop) {
-          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", "transparent");
-        } else if (transformedBackground && background.a > 0.08) {
-          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", transformedBackground);
-        } else {
-          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", null);
-        }
-
-        if (!mediaBackdrop && style.backgroundImage && style.backgroundImage.includes("gradient") && backgroundLuminance > 0.46) {
-          setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", replaceCSSColors(style.backgroundImage, modifyBackgroundColor));
-        } else {
-          setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", null);
-        }
-
-        const boxShadow = transformBoxShadow(style.boxShadow);
-        setOverride(element, BOX_SHADOW_ATTRIBUTE, "--wkdomains-forced-dark-box-shadow", boxShadow && boxShadow !== style.boxShadow ? boxShadow : null);
-
-        for (const override of BORDER_OVERRIDES) {
-          const border = transformBorder(parseColor(style[override.js]));
-          setOverride(element, override.attr, override.prop, border);
-        }
-
-        if (SVG_TAGS.has(tag)) {
-          const fill = parseColor(style.fill);
-          const stroke = parseColor(style.stroke);
-          if (fill && relativeLuminance(fill) < 0.52) {
-            setOverride(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", transformForeground(fill, element));
-          } else {
-            setOverride(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", null);
-          }
-          if (stroke && relativeLuminance(stroke) < 0.52) {
-            setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", transformForeground(stroke, element));
-          } else {
-            setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", null);
-          }
+        applyComputedStyleFallback(element, shouldApplyLightSurfaceFallback(element) ? "surface" : "direct");
+        if (element.matches(CONTROL_SELECTOR)) {
+          applyLightSurfaceAncestors(element);
         }
       };
 

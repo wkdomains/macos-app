@@ -168,32 +168,47 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`, and `color()` relative forms now resolve source channels
   - `color()` now handles `srgb`, `srgb-linear`, `display-p3`, `xyz`, `xyz-d65`, and `xyz-d50`
   - modified colors are registered through a Dark Reader-style palette variable cache while raw RGB custom-property values still emit raw channels when they are used inside `rgb(var(--token))`
+- Added generic light-surface recovery for late dynamic UI:
+  - editable controls, ARIA controls, and modal-like surfaces now sample their original computed styles when stylesheet conversion misses a light surface
+  - control ancestors are checked in a small bounded walk so opaque parent rows/toolbars around inputs can be darkened without site-specific selectors
+  - runtime status now reports light-surface fallback apply/clear counters
+  - class, role, open/hidden, popover, and ARIA modal/expanded/hidden mutations now dirty relevant surfaces so dynamic dialogs are rechecked
+- Improved Material-style custom property typing:
+  - tokens such as `--*-on-surface`, `--*-content`, `--*-label`, and `--*-foreground` are treated as text colors instead of background colors
+  - `--*-surface` and related surface/canvas/container tokens continue to resolve as background colors
+- Added shared `color-scheme` rewriting:
+  - stylesheet and inline `color-scheme` declarations are rewritten to dark
+  - semantic dialogs/popovers and ARIA controls now get a dark color scheme from the static user-agent style
+- Improved modern group-rule conversion:
+  - `@container` and `@scope` blocks are preserved as their original group preludes instead of being misclassified as `@supports` or `@layer`
+  - async and sync CSS conversion now share the same group-rule recognition
+  - media/supports/layer conversion avoids serializing full nested `cssText` when CSSOM fields are enough
 
 ## Completion Estimates
 
-- Full `variablesStore` dependency graph for matching variables and dependents: 82%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 94%
-- Mature optimized DOM/style watchers: 83%
+- Full `variablesStore` dependency graph for matching variables and dependents: 84%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 95%
+- Mature optimized DOM/style watchers: 85%
 - Robust adopted stylesheet management: 84%
-- Full stylesheet proxy behavior and cross-context coordination: 87%
-- Dark Reader's color pipeline and extensive config corpus: 80%
+- Full stylesheet proxy behavior and cross-context coordination: 88%
+- Dark Reader's color pipeline and extensive config corpus: 82%
 - Mature fix selection/config parser behavior across many sites: 82%
 - Extension-world isolation: 61%
 
 ## Remaining Gaps
 
-- Variables graph is still not a full Dark Reader port. Current estimate: 82%.
+- Variables graph is still not a full Dark Reader port. Current estimate: 84%.
   - no full scoped variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - limited scoped variable handling
-- Per-stylesheet managers still need more mature behavior. Current estimate: 94%.
+- Per-stylesheet managers still need more mature behavior. Current estimate: 95%.
   - privileged cross-origin/background fetch parity
   - imported stylesheet retries
   - CSS text import expansion for fetched copies
-- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 83%.
+- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 85%.
 - Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 84%.
-- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 87%.
-- Color pipeline is still a major gap. Current estimate: 80%.
+- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 88%.
+- Color pipeline is still a major gap. Current estimate: 82%.
   - limited image analysis
   - no theme knob parity
 - Config/fix support is still incomplete. Current estimate: 82%.
@@ -214,4 +229,4 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Site-fix JavaScript with a non-empty sample config passed `node --check`.
 - Site-fix JavaScript generated with the full upstream Dark Reader `dynamic-theme-fixes.config` passed `node --check`.
 - Swift sources passed `xcrun swiftc -parse`.
-- Local API check was attempted, but `localhost:9001` was not listening during this pass.
+- Local API check was attempted again, but `localhost:9001` was not listening during this pass.
