@@ -15,6 +15,7 @@ extension BrowserModel {
       const DARKREADER_SCHEME_ATTRIBUTE = "data-darkreader-scheme";
       const COLOR_ATTRIBUTE = "data-wkdomains-forced-dark-color";
       const BACKGROUND_ATTRIBUTE = "data-wkdomains-forced-dark-bg";
+      const FORM_SURFACE_ATTRIBUTE = "data-wkdomains-forced-dark-form-surface";
       const BACKGROUND_IMAGE_ATTRIBUTE = "data-wkdomains-forced-dark-bg-image";
       const FILL_ATTRIBUTE = "data-wkdomains-forced-dark-fill";
       const STROKE_ATTRIBUTE = "data-wkdomains-forced-dark-stroke";
@@ -68,6 +69,7 @@ extension BrowserModel {
       const ATTRIBUTES_OWNED_BY_DARK_MODE = [
         COLOR_ATTRIBUTE,
         BACKGROUND_ATTRIBUTE,
+        FORM_SURFACE_ATTRIBUTE,
         BACKGROUND_IMAGE_ATTRIBUTE,
         FILL_ATTRIBUTE,
         STROKE_ATTRIBUTE,

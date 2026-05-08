@@ -36,7 +36,7 @@ extension BrowserModel {
           customElements.define = function(name, constructor, options) {
             const result = nativeDefine.call(this, name, constructor, options);
             if (customElementRegistryProxyActive) {
-              window.setTimeout(() => discoverExistingShadowRoots(document), 0);
+              scheduleShadowRootDiscovery(document, 60);
             }
             return result;
           };
@@ -45,6 +45,7 @@ extension BrowserModel {
       };
 
       const run = () => {
+        const runStartedAt = __wkdomainsDarkModeNow();
         __wkdomainsDarkModeDebug("run-start");
         scheduled = false;
         if (!document.documentElement || !document.body) return;
@@ -58,7 +59,7 @@ extension BrowserModel {
           scheduleShadowRootDiscovery(document, 0);
         }
         __wkdomainsDarkModeDebug("run-sync-styles");
-        flushStyleSyncNowOrSchedule();
+        scheduleStartupAwareStyleSync(0);
         ensureSiteFixStyle();
         tryInvertPDF();
 
@@ -68,11 +69,16 @@ extension BrowserModel {
         for (const root of roots) {
           queueRootApply(root, 0);
         }
-        flushQueuedRootApplies();
         ensureSiteFixStyle();
         tryInvertPDF();
 
         finalizeReadyWhenUseful();
+        __wkdomainsDarkModePerf(
+          "dynamic-run",
+          runStartedAt,
+          `roots=${roots.length} pendingRoot=${pendingRootApplyQueue.length} pendingElement=${pendingElementApplyQueue.length} styleScheduled=${stylesheetSyncScheduled} styleNeeded=${stylesheetSyncNeeded}`,
+          8
+        );
         __wkdomainsDarkModeDebug("run-end");
         window.setTimeout(() => {
           applying = false;

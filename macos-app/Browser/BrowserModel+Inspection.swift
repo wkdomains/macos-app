@@ -204,9 +204,12 @@ extension BrowserModel {
 
         let level = record.level.lowercased()
         if level == "error" || level == "warn" || record.message.contains("wkdomains") {
-            BrowserDebugLogging.log(
-                "[wkdomains-debug] console level=\(record.level) host=\(record.pageHost ?? "nil") url=\(record.pageURL ?? "nil") message=\(record.message)"
-            )
+            let line = "[wkdomains-debug] console level=\(record.level) host=\(record.pageHost ?? "nil") url=\(record.pageURL ?? "nil") message=\(record.message)"
+            if record.message.contains("wkdomains-dark-perf") || record.message.contains("wkdomains-dark-proxy-perf") {
+                BrowserDebugLogging.performance(line)
+            } else {
+                BrowserDebugLogging.log(line)
+            }
         }
     }
 

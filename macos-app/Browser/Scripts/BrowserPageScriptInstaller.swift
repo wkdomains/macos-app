@@ -18,6 +18,9 @@ extension BrowserModel {
         userContentController.add(self, name: "wkdomainsXHR")
         userContentController.add(self, name: "wkdomainsRender")
         userContentController.add(self, name: "wkdomainsConsole")
+        if Self.darkModeUsesIsolatedContentWorld {
+            userContentController.add(self, contentWorld: Self.darkModeContentWorld, name: "wkdomainsConsole")
+        }
         userContentController.add(self, name: "wkdomainsLogin")
         installPageTrackingUserScripts(on: userContentController)
     }

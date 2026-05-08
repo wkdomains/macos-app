@@ -132,6 +132,7 @@ extension BrowserModel {
       };
 
       const renderStyleManager = (element) => {
+        const renderStartedAt = __wkdomainsDarkModeNow();
         const details = getStyleManagerDetails(element, { secondRound: true });
         if (!details) return;
 
@@ -216,6 +217,7 @@ extension BrowserModel {
             element.parentNode.insertBefore(manager.syncStyle, element.nextSibling);
           }
         });
+        __wkdomainsDarkModePerf("render-style-manager", renderStartedAt, `rules=${rules.length} css=${css.length}`, 10);
         __wkdomainsDarkModeDebug("render-style-end");
       };
 
@@ -401,11 +403,12 @@ extension BrowserModel {
       };
 
       const collectInlineVariableStyles = (root) => {
+        const collectStartedAt = __wkdomainsDarkModeNow();
         if (!root || !root.querySelectorAll) return;
         let collected = 0;
+        let visited = 0;
         const startupCollection = stylesheetSyncElapsedSinceInstall() < STARTUP_STYLE_SYNC_WINDOW_MS;
         const collectLimit = startupCollection ? 360 : 2000;
-        const visitLimit = startupCollection ? 1800 : Number.POSITIVE_INFINITY;
         const collect = (element) => {
           if (!element || !element.style || !styleHasVariableData(element.style)) return;
           variablesStore.addInlineStyleForMatching(element.style);
@@ -419,21 +422,6 @@ extension BrowserModel {
           collect(root);
         }
 
-        if (startupCollection && document.createTreeWalker) {
-          const walkerRoot = root.nodeType === Node.DOCUMENT_NODE ? root.documentElement : root;
-          if (!walkerRoot) return;
-          const showElement = window.NodeFilter ? NodeFilter.SHOW_ELEMENT : 1;
-          const walker = document.createTreeWalker(walkerRoot, showElement);
-          let visited = 0;
-          let element = walker.nextNode();
-          while (element && collected < collectLimit && visited < visitLimit) {
-            visited += 1;
-            collect(element);
-            element = walker.nextNode();
-          }
-          return;
-        }
-
         let elements = [];
         try {
           elements = root.querySelectorAll("[style*='--'], [style*='var(']");
@@ -441,9 +429,11 @@ extension BrowserModel {
           elements = [];
         }
         for (const element of elements) {
+          visited += 1;
           collect(element);
           if (collected >= collectLimit) break;
         }
+        __wkdomainsDarkModePerf("collect-inline-vars", collectStartedAt, `startup=${startupCollection} collected=${collected} queried=${elements.length} visited=${visited}`, 8);
       };
 
       const updateRootVariableStyle = () => {
@@ -574,6 +564,7 @@ extension BrowserModel {
       };
 
       const flushPendingStyleRenderJobs = () => {
+        const flushStartedAt = __wkdomainsDarkModeNow();
         styleRenderScheduled = false;
         if (pendingStyleRenderJobs.length === 0) return;
 
@@ -610,6 +601,7 @@ extension BrowserModel {
           cleanFallbackStyle();
         }
         ensureSiteFixStyle();
+        __wkdomainsDarkModePerf("flush-style-render-jobs", flushStartedAt, `rendered=${rendered} remaining=${pendingStyleRenderJobs.length}`, 8);
       };
 
       const renderManageableStyles = (root, styles) => {
@@ -670,6 +662,7 @@ extension BrowserModel {
       };
 
       const syncAllStyles = () => {
+        const syncStartedAt = __wkdomainsDarkModeNow();
         __wkdomainsDarkModeDebug("sync-styles-start");
         stylesheetSyncNeeded = false;
         cancelPendingStyleRenderJobs();
@@ -705,12 +698,18 @@ extension BrowserModel {
         if (work.hasMore) {
           scheduleStyleSync(120);
         }
+        __wkdomainsDarkModePerf(
+          "sync-all-styles",
+          syncStartedAt,
+          `roots=${roots.length}/${allRoots.length} styleManagers=${managedStyleElements.size} adopted=${managedAdoptedRoots.size} pendingRender=${pendingStyleRenderJobs.length} loading=${loadingStyles.size}`,
+          8
+        );
         __wkdomainsDarkModeDebug("sync-styles-end");
       };
 
       const updateManageableStyles = () => {
         stylesheetSyncNeeded = true;
-        flushStyleSyncNowOrSchedule();
+        scheduleStartupAwareStyleSync(0);
       };
 
       const scheduleStyleSync = (delay = 30) => {
@@ -718,21 +717,42 @@ extension BrowserModel {
         if (stylesheetSyncScheduled) return;
         __wkdomainsDarkModeDebug(`schedule-style-sync:${delay}`);
         stylesheetSyncScheduled = true;
-        stylesheetSyncTimer = window.setTimeout(() => {
+        const runSync = () => {
           stylesheetSyncScheduled = false;
           stylesheetSyncTimer = null;
+          stylesheetSyncTimerKind = "";
           if (!stylesheetSyncNeeded) return;
           syncAllStyles();
           ensureSiteFixStyle();
-        }, delay);
+        };
+        const scheduleRun = () => {
+          if (window.requestIdleCallback) {
+            stylesheetSyncTimerKind = "idle";
+            stylesheetSyncTimer = window.requestIdleCallback(runSync, { timeout: 600 });
+          } else {
+            stylesheetSyncTimerKind = "timeout";
+            stylesheetSyncTimer = window.setTimeout(runSync, 0);
+          }
+        };
+        if (delay > 0) {
+          stylesheetSyncTimerKind = "timeout";
+          stylesheetSyncTimer = window.setTimeout(scheduleRun, delay);
+        } else {
+          scheduleRun();
+        }
       };
 
       const flushStyleSyncNow = () => {
         __wkdomainsDarkModeDebug("flush-style-sync");
         if (!stylesheetSyncNeeded && !stylesheetSyncScheduled) return;
         if (stylesheetSyncTimer) {
-          window.clearTimeout(stylesheetSyncTimer);
+          if (stylesheetSyncTimerKind === "idle" && window.cancelIdleCallback) {
+            window.cancelIdleCallback(stylesheetSyncTimer);
+          } else {
+            window.clearTimeout(stylesheetSyncTimer);
+          }
           stylesheetSyncTimer = null;
+          stylesheetSyncTimerKind = "";
         }
         stylesheetSyncScheduled = false;
         syncAllStyles();
@@ -741,8 +761,13 @@ extension BrowserModel {
 
       const cancelStyleSync = () => {
         if (stylesheetSyncTimer) {
-          window.clearTimeout(stylesheetSyncTimer);
+          if (stylesheetSyncTimerKind === "idle" && window.cancelIdleCallback) {
+            window.cancelIdleCallback(stylesheetSyncTimer);
+          } else {
+            window.clearTimeout(stylesheetSyncTimer);
+          }
           stylesheetSyncTimer = null;
+          stylesheetSyncTimerKind = "";
         }
         stylesheetSyncScheduled = false;
         stylesheetSyncNeeded = false;

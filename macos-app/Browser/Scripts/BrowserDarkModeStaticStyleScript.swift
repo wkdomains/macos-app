@@ -222,41 +222,27 @@ extension BrowserModel {
           color: var(--darkreader-neutral-text) !important;
           border-color: var(--darkreader-border) !important;
         }
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="region"][aria-label]:has(input, textarea, [contenteditable="true"]),
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="form"]:has(input, textarea, [contenteditable="true"]),
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) form:has(input, textarea, [contenteditable="true"]) {
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${FORM_SURFACE_ATTRIBUTE}] {
           color-scheme: dark !important;
           background-color: var(--darkreader-neutral-background) !important;
           color: var(--darkreader-neutral-text) !important;
           border-color: var(--darkreader-border) !important;
         }
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="region"][aria-label]:has(input, textarea, [contenteditable="true"]) :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe),
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="form"]:has(input, textarea, [contenteditable="true"]) :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe),
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) form:has(input, textarea, [contenteditable="true"]) :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe) {
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${FORM_SURFACE_ATTRIBUTE}] :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe) {
           border-color: var(--darkreader-border) !important;
         }
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="region"][aria-label]:has(input, textarea, [contenteditable="true"]) :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe):not([${BACKGROUND_ATTRIBUTE}]),
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="form"]:has(input, textarea, [contenteditable="true"]) :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe):not([${BACKGROUND_ATTRIBUTE}]),
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) form:has(input, textarea, [contenteditable="true"]) :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe):not([${BACKGROUND_ATTRIBUTE}]) {
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${FORM_SURFACE_ATTRIBUTE}] :not(img):not(picture):not(video):not(canvas):not(svg):not(path):not(iframe):not([${BACKGROUND_ATTRIBUTE}]) {
           background-color: transparent !important;
         }
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="region"][aria-label]:has(input, textarea, [contenteditable="true"]) input,
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="form"]:has(input, textarea, [contenteditable="true"]) input,
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) form:has(input, textarea, [contenteditable="true"]) input,
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="region"][aria-label]:has(input, textarea, [contenteditable="true"]) textarea,
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="form"]:has(input, textarea, [contenteditable="true"]) textarea,
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) form:has(input, textarea, [contenteditable="true"]) textarea,
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="region"][aria-label]:has(input, textarea, [contenteditable="true"]) [contenteditable="true"],
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="form"]:has(input, textarea, [contenteditable="true"]) [contenteditable="true"],
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) form:has(input, textarea, [contenteditable="true"]) [contenteditable="true"] {
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${FORM_SURFACE_ATTRIBUTE}] input,
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${FORM_SURFACE_ATTRIBUTE}] textarea,
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${FORM_SURFACE_ATTRIBUTE}] [contenteditable="true"] {
           background-color: transparent !important;
           color: var(--darkreader-neutral-text) !important;
           -webkit-text-fill-color: var(--darkreader-neutral-text) !important;
           caret-color: var(--darkreader-neutral-text) !important;
         }
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="region"][aria-label]:has(input, textarea, [contenteditable="true"]) [role="button"],
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [role="form"]:has(input, textarea, [contenteditable="true"]) [role="button"],
-        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) form:has(input, textarea, [contenteditable="true"]) [role="button"] {
+        :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${FORM_SURFACE_ATTRIBUTE}] [role="button"] {
           color: var(--darkreader-neutral-text) !important;
           -webkit-text-fill-color: var(--darkreader-neutral-text) !important;
         }

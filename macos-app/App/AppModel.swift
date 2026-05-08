@@ -15,6 +15,7 @@ final class AppModel: ObservableObject {
 
     init() {
         let settingsStore = AppSettingsStore.shared
+        BrowserDebugLogging.startMainThreadStallMonitor()
 
         browser = BrowserModel(settingsStore: settingsStore)
         browser.setLocalAPIBaseURL("http://localhost:\(settingsStore.settings.port)")

@@ -173,15 +173,28 @@ extension BrowserModel {
           }
         };
 
+        const hashVariableName = (name) => {
+          let hash = 2166136261;
+          for (let index = 0; index < name.length; index += 1) {
+            hash ^= name.charCodeAt(index);
+            hash = Math.imul(hash, 16777619);
+          }
+          return hash >>> 0;
+        };
+
         const updateVersion = () => {
           lastVariableReferenceCount = 0;
           for (const refs of varRefs.values()) {
             lastVariableReferenceCount += refs.size;
           }
-          const nextSignature = Array.from(varTypes.entries())
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([name, type]) => `${name}:${type}`)
-            .join("|");
+          let signatureSum = 0;
+          let signatureXor = 0;
+          for (const [name, type] of varTypes) {
+            const entryHash = (hashVariableName(name) ^ Math.imul(type, 2654435761)) >>> 0;
+            signatureSum = (signatureSum + entryHash) >>> 0;
+            signatureXor = (signatureXor ^ entryHash) >>> 0;
+          }
+          const nextSignature = `${varTypes.size}:${lastVariableReferenceCount}:${signatureSum}:${signatureXor}`;
           if (nextSignature !== lastTypeSignature) {
             lastTypeSignature = nextSignature;
             versionNumber += 1;

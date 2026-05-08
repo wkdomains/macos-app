@@ -16,6 +16,7 @@ extension BrowserModel {
       const adoptedStyleListenersByRoot = new WeakMap();
       let stylesheetSyncScheduled = false;
       let stylesheetSyncTimer = null;
+      let stylesheetSyncTimerKind = "";
       let stylesheetSyncNeeded = true;
       let stylesheetSyncRootCursor = 0;
       let lastStylesheetSyncRootCount = 0;

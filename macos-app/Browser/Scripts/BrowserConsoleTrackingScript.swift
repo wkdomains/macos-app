@@ -23,7 +23,15 @@ extension BrowserModel {
       };
 
       const post = (level, values, stack) => {
-        const args = Array.from(values || []).map(stringify).map((text) => {
+        const rawValues = Array.from(values || []);
+        if (!["error", "warn"].includes(level)) {
+          const first = rawValues[0];
+          if (typeof first !== "string" || !first.includes("wkdomains")) {
+            return;
+          }
+        }
+
+        const args = rawValues.map(stringify).map((text) => {
           if (text.length > 1200) return `${text.slice(0, 1200)}...`;
           return text;
         });

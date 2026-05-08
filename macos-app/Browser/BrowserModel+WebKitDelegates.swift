@@ -11,6 +11,16 @@ extension BrowserModel: BrowserContextMenuDelegate {}
 
 extension BrowserModel: WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        let startedAt = BrowserDebugLogging.timestamp()
+        defer {
+            BrowserDebugLogging.logSlowOperation(
+                "script-message",
+                since: startedAt,
+                threshold: 0.02,
+                details: "name=\(message.name) bodyType=\(String(describing: type(of: message.body)))"
+            )
+        }
+
         guard let body = message.body as? [String: Any] else {
             return
         }

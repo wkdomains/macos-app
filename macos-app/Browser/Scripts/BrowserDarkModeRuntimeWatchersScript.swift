@@ -158,14 +158,14 @@ extension BrowserModel {
         if (root) shadowDiscoveryRoots.add(root);
         if (shadowDiscoveryScheduled) return;
         shadowDiscoveryScheduled = true;
-        window.setTimeout(() => {
+        scheduleIdleTask(() => {
           shadowDiscoveryScheduled = false;
           const roots = Array.from(shadowDiscoveryRoots);
           shadowDiscoveryRoots.clear();
           for (const discoveryRoot of roots) {
             discoverExistingShadowRoots(discoveryRoot);
           }
-        }, delay);
+        }, delay, 500);
       };
 
       const discoverShadowRootsForAddedNode = (node) => {
@@ -182,9 +182,12 @@ extension BrowserModel {
       };
 
       const handleMutations = (mutations) => {
+        const handleStartedAt = __wkdomainsDarkModeNow();
         if (applying) return;
         let stylesChanged = false;
         let inlineChanged = false;
+        let addedElementCount = 0;
+        let priorityQueuedCount = 0;
 
         for (const mutation of mutations) {
           if (mutation.type === "attributes") {
@@ -223,9 +226,11 @@ extension BrowserModel {
 
           for (const node of mutation.addedNodes) {
             if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) continue;
+            addedElementCount += 1;
             if (shouldManageStyle(node)) stylesChanged = true;
             if (node.querySelector && node.querySelector(STYLE_SELECTOR)) stylesChanged = true;
             const queuedPriorityElements = queueElementSubtreeApply(node, 32);
+            priorityQueuedCount += queuedPriorityElements;
             if (queuedPriorityElements > 0) {
               markDirty(node);
               inlineChanged = true;
@@ -240,6 +245,12 @@ extension BrowserModel {
 
         if (stylesChanged) scheduleStartupAwareStyleSync(0);
         if (inlineChanged) schedule(0);
+        __wkdomainsDarkModePerf(
+          "handle-mutations",
+          handleStartedAt,
+          `mutations=${mutations.length} added=${addedElementCount} priorityQueued=${priorityQueuedCount} styles=${stylesChanged} inline=${inlineChanged}`,
+          8
+        );
       };
 
       const queueMutations = (mutations) => {
@@ -262,6 +273,7 @@ extension BrowserModel {
         if (mutationFlushScheduled) return;
         mutationFlushScheduled = true;
         mutationFlushTimer = window.setTimeout(() => {
+          const flushStartedAt = __wkdomainsDarkModeNow();
           mutationFlushScheduled = false;
           mutationFlushTimer = null;
           if (mutationQueueOverflow) {
@@ -275,6 +287,7 @@ extension BrowserModel {
           const mutationsToHandle = queuedMutations;
           queuedMutations = [];
           handleMutations(mutationsToHandle);
+          __wkdomainsDarkModePerf("flush-mutation-queue", flushStartedAt, `mutations=${mutationsToHandle.length}`, 8);
         }, 16);
       };
 

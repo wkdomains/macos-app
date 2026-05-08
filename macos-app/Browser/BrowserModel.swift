@@ -623,6 +623,9 @@ final class BrowserModel: NSObject, ObservableObject {
         userContentController.removeScriptMessageHandler(forName: "wkdomainsXHR")
         userContentController.removeScriptMessageHandler(forName: "wkdomainsRender")
         userContentController.removeScriptMessageHandler(forName: "wkdomainsConsole")
+        if Self.darkModeUsesIsolatedContentWorld {
+            userContentController.removeScriptMessageHandler(forName: "wkdomainsConsole", contentWorld: Self.darkModeContentWorld)
+        }
         userContentController.removeScriptMessageHandler(forName: "wkdomainsLogin")
     }
 

@@ -158,6 +158,7 @@ extension BrowserModel {
     static func forcedDarkModeScript(disabledSites: [String]) -> String {
         let disabledSiteList = disabledSites.map(javaScriptStringLiteral).joined(separator: ", ")
         let debugLoggingEnabled = BrowserDebugLogging.darkModeScriptEnabled ? "true" : "false"
+        let performanceLoggingEnabled = BrowserDebugLogging.performanceEnabled ? "true" : "false"
         let engineWorldName = Self.darkModeUsesIsolatedContentWorld ? Self.darkModeContentWorldName : "page"
         let engineWorldNameLiteral = javaScriptStringLiteral(engineWorldName)
 
@@ -166,12 +167,55 @@ extension BrowserModel {
       if (window.__wkdomainsDarkModeInstalled) return;
       window.__wkdomainsDarkModeInstalled = true;
       const __wkdomainsDarkModeDebugEnabled = \#(debugLoggingEnabled);
+      const __wkdomainsDarkModePerfEnabled = \#(performanceLoggingEnabled);
       const __wkdomainsDarkModeEngineWorldName = \#(engineWorldNameLiteral);
+      const __wkdomainsDarkModePerfCounts = new Map();
+      const __wkdomainsDarkModePostNativeLog = (level, values) => {
+        try {
+          const args = values.map((value) => String(value == null ? "" : value));
+          window.webkit.messageHandlers.wkdomainsConsole.postMessage({
+            level,
+            arguments: args,
+            message: args.join(" "),
+            pageURL: location.href,
+            pageHost: location.hostname
+          });
+          return true;
+        } catch (_) {
+          return false;
+        }
+      };
       const __wkdomainsDarkModeDebug = (phase) => {
         if (!__wkdomainsDarkModeDebugEnabled) return;
         try {
           console.debug("[wkdomains-dark]", phase, location.href, Math.round(performance.now()));
         } catch (_) {}
+      };
+      const __wkdomainsDarkModeNow = () => {
+        try { return performance.now(); } catch (_) { return Date.now(); }
+      };
+      const __wkdomainsDarkModePerf = (phase, startedAt, detail = "", threshold = 8) => {
+        if (!__wkdomainsDarkModePerfEnabled) return;
+        try {
+          const elapsed = __wkdomainsDarkModeNow() - startedAt;
+          if (elapsed >= threshold) {
+            const count = (__wkdomainsDarkModePerfCounts.get(phase) || 0) + 1;
+            __wkdomainsDarkModePerfCounts.set(phase, count);
+            if (elapsed < 50 && count > 12 && count % 20 !== 0) return;
+            const values = ["[wkdomains-dark-perf]", phase, `elapsed=${elapsed.toFixed(1)}ms`, detail, location.href, Math.round(__wkdomainsDarkModeNow())];
+            if (!__wkdomainsDarkModePostNativeLog("debug", values)) {
+              console.debug(...values);
+            }
+          }
+        } catch (_) {}
+      };
+      const __wkdomainsDarkModeProfile = (phase, action, detail = "", threshold = 8) => {
+        const startedAt = __wkdomainsDarkModeNow();
+        try {
+          return action();
+        } finally {
+          __wkdomainsDarkModePerf(phase, startedAt, typeof detail === "function" ? detail() : detail, threshold);
+        }
       };
       __wkdomainsDarkModeDebug("install-start");
 
