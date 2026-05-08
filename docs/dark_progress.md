@@ -253,6 +253,10 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - targeted manager batches add changed rules to the variable matcher, match dependencies once, refresh root variable overrides, and render only the affected stylesheet managers
   - adopted stylesheet events now queue root-local adopted manager updates through the same batched path
   - owned CSSOM stylesheet changes in the isolated engine now rely on the manager-local update path first, while page-world bridge events schedule slower fallback syncs only when needed
+- Reduced Gmail-style startup pressure from timing and watcher paths:
+  - dynamic DOM runs no longer request a full stylesheet sync unless the stylesheet scheduler already has dirty work
+  - inline/style-relevant mutations that are already handled by priority element updates no longer also queue a root scan
+  - debug-only native messages are no longer recorded into `/api/v1/timing` by default; elapsed dark-mode and network timings remain recorded
 
 ## Completion Estimates
 

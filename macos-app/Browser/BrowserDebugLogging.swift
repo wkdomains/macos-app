@@ -85,6 +85,14 @@ enum BrowserDebugLogging {
         return true
     }
 
+    private static var debugMessagesInTimingEnabled: Bool {
+        if let explicitValue = UserDefaults.standard.object(forKey: "wkdomains.timingDebugMessages") as? Bool {
+            return explicitValue
+        }
+
+        return false
+    }
+
     private static var xcodePerformanceLoggingEnabled: Bool {
         if forcePerformanceLogging {
             return true
@@ -109,8 +117,11 @@ enum BrowserDebugLogging {
     }
 
     static func log(_ message: @autoclosure () -> String) {
+        guard isEnabled || debugMessagesInTimingEnabled else { return }
         let text = message()
-        recordDebugMessage(text)
+        if debugMessagesInTimingEnabled {
+            recordDebugMessage(text)
+        }
         guard isEnabled else { return }
         NSLog("%@", text)
     }

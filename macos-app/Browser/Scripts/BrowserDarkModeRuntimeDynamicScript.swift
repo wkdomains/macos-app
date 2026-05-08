@@ -59,7 +59,9 @@ extension BrowserModel {
           scheduleShadowRootDiscovery(document, 0);
         }
         __wkdomainsDarkModeDebug("run-sync-styles");
-        scheduleStartupAwareStyleSync(0);
+        if (stylesheetSyncNeeded && !stylesheetSyncScheduled) {
+          scheduleStartupAwareStyleSync(0);
+        }
         ensureSiteFixStyle();
         tryInvertPDF();
 

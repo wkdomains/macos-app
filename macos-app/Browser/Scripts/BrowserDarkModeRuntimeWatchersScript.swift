@@ -202,8 +202,9 @@ extension BrowserModel {
             }
             if (INLINE_STYLE_MUTATION_ATTRIBUTES.has(mutation.attributeName)) {
               clearCachedSourceFor(mutation.target);
-              queueElementApply(mutation.target, 0);
-              markDirty(mutation.target);
+              if (!queueElementApply(mutation.target, 0)) {
+                markDirty(mutation.target);
+              }
               inlineChanged = true;
             }
             if (SURFACE_MUTATION_ATTRIBUTES.has(mutation.attributeName)) {
@@ -213,11 +214,13 @@ extension BrowserModel {
                 && (
                   mutation.target.matches(STYLE_OVERRIDE_SELECTOR)
                   || mutation.target.querySelector?.(EDITABLE_CONTROL_SELECTOR)
-                )
-              ) {
-                queueElementApply(mutation.target, 0);
-                queueElementSubtreeApply(mutation.target, 12);
-                markDirty(mutation.target);
+              )
+            ) {
+                const directQueued = queueElementApply(mutation.target, 0);
+                const subtreeQueued = queueElementSubtreeApply(mutation.target, 12);
+                if (!directQueued && subtreeQueued === 0) {
+                  markDirty(mutation.target);
+                }
                 inlineChanged = true;
               }
             }
@@ -244,6 +247,11 @@ extension BrowserModel {
             const queuedPriorityElements = queueElementSubtreeApply(node, 32);
             priorityQueuedCount += queuedPriorityElements;
             if (queuedPriorityElements > 0) {
+              inlineChanged = true;
+            } else if (
+              (node.nodeType === Node.ELEMENT_NODE && node.matches && node.matches(SVG_SELECTOR))
+              || (node.querySelector && node.querySelector(SVG_SELECTOR))
+            ) {
               markDirty(node);
               inlineChanged = true;
             }
