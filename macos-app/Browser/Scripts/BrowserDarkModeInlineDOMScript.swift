@@ -12,11 +12,13 @@ extension BrowserModel {
       const inlineStyleCache = new WeakMap();
       const pendingRootApplySet = new Set();
       const pendingRootApplyQueue = [];
+      const pendingRootApplyJobs = new Map();
       let rootApplyScheduled = false;
       let lightSurfaceFallbacksApplied = 0;
       let lightSurfaceFallbacksCleared = 0;
       const ROOT_APPLY_BUDGET_MS = 8;
       const ROOT_APPLY_MAX_PER_SLICE = 8;
+      const ROOT_APPLY_MAX_ELEMENTS_PER_SLICE = 96;
       const LIGHT_SURFACE_ANCESTOR_LIMIT = 6;
 
       const setOverride = (element, attribute, property, value) => {
@@ -522,8 +524,8 @@ extension BrowserModel {
         overrideInlineStyle(element);
 
         if (tag === "HTML" || tag === "BODY") {
-          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", toRGBA(DEFAULT_BACKGROUND));
-          setOverride(element, COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", toRGBA(DEFAULT_TEXT));
+          setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", toThemeRGBA(themeBackgroundColor()));
+          setOverride(element, COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", toThemeRGBA(themeTextColor()));
           return;
         }
 
@@ -559,6 +561,69 @@ extension BrowserModel {
         }
       };
 
+      const rootApplyWalkerRoot = (root) => {
+        if (!root) return null;
+        if (root.nodeType === Node.DOCUMENT_NODE) return root.documentElement;
+        return root;
+      };
+
+      const createRootApplyJob = (root) => ({
+        root,
+        initialized: false,
+        walker: null,
+        done: false
+      });
+
+      const processRootApplyJob = (job, started) => {
+        if (!job || job.done) return true;
+        const root = job.root;
+        if (!root || (root.host && !root.host.isConnected)) {
+          job.done = true;
+          return true;
+        }
+
+        if (!job.initialized) {
+          job.initialized = true;
+          if (root.nodeType === Node.DOCUMENT_NODE) {
+            applyElement(document.documentElement);
+            if (document.body) applyElement(document.body);
+          } else if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && root.host) {
+            createShadowStaticStyleOverrides(root);
+            renderAdoptedStyleSheets(root);
+          } else if (root.nodeType === Node.ELEMENT_NODE) {
+            applyElement(root);
+          }
+
+          const walkerRoot = rootApplyWalkerRoot(root);
+          if (walkerRoot && document.createTreeWalker) {
+            const showElement = window.NodeFilter ? NodeFilter.SHOW_ELEMENT : 1;
+            job.walker = document.createTreeWalker(walkerRoot, showElement);
+          } else {
+            job.done = true;
+            return true;
+          }
+        }
+
+        let count = 0;
+        let node = job.walker.nextNode();
+        while (node) {
+          if (node.matches && node.matches(STYLE_OVERRIDE_SELECTOR)) {
+            applyElement(node);
+          }
+          count += 1;
+          if (
+            count >= ROOT_APPLY_MAX_ELEMENTS_PER_SLICE
+            || performance.now() - started > ROOT_APPLY_BUDGET_MS
+          ) {
+            return false;
+          }
+          node = job.walker.nextNode();
+        }
+
+        job.done = true;
+        return true;
+      };
+
       const flushQueuedRootApplies = () => {
         rootApplyScheduled = false;
         if (pendingRootApplyQueue.length === 0) return;
@@ -572,10 +637,21 @@ extension BrowserModel {
           withFallbackDisabled(() => {
             while (pendingRootApplyQueue.length > 0) {
               const root = pendingRootApplyQueue.shift();
-              pendingRootApplySet.delete(root);
               if (!root || (root.host && !root.host.isConnected)) continue;
-              applyRoot(root);
-              count += 1;
+              let job = pendingRootApplyJobs.get(root);
+              if (!job) {
+                job = createRootApplyJob(root);
+                pendingRootApplyJobs.set(root, job);
+              }
+              const done = processRootApplyJob(job, started);
+              if (done) {
+                pendingRootApplyJobs.delete(root);
+                pendingRootApplySet.delete(root);
+                count += 1;
+              } else {
+                pendingRootApplyQueue.unshift(root);
+                break;
+              }
               if (count >= ROOT_APPLY_MAX_PER_SLICE || performance.now() - started > ROOT_APPLY_BUDGET_MS) {
                 break;
               }
@@ -627,6 +703,7 @@ extension BrowserModel {
         discoveredShadowRoots.clear();
         pendingRootApplySet.clear();
         pendingRootApplyQueue.splice(0);
+        pendingRootApplyJobs.clear();
         rootApplyScheduled = false;
       };
     """#

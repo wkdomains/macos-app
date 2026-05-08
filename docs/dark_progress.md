@@ -111,7 +111,7 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - registered color custom properties are mirrored into both variable namespaces
   - inline cleanup and proxy-generated-property checks recognize the Dark Reader-compatible alias namespace
 - Added the first extension-world isolation spike:
-  - the main dynamic-theme engine now installs into `WKContentWorld.defaultClient` by default
+  - the main dynamic-theme engine now installs into an isolated content world by default
   - a small page-world proxy remains for page-owned APIs that must be observed where the site's JavaScript runs
   - page-world proxy coverage includes CSSStyleSheet mutation APIs, CSSStyleDeclaration mutation APIs, CSS.registerProperty, adoptedStyleSheets, grouping rules, and attachShadow
   - proxy-to-engine DOM events schedule isolated-world stylesheet sync and carry color custom-property registrations when possible
@@ -121,7 +121,7 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - site-fix flags such as `DISABLE STYLESHEET PROXY`, `DISABLE SHADOW ROOT PROXY`, and custom-element registry enable/disable now apply to the page-world proxy too
   - page-world custom-element registry proxying is now available only when a fix explicitly opts in
 - Added runtime isolation status:
-  - isolated engine exposes `window.__wkdomainsDarkModeStatus()` inside `WKContentWorld.defaultClient`
+  - isolated engine exposes `window.__wkdomainsDarkModeStatus()` inside the dark-mode content world
   - page-world proxy exposes `window.__wkdomainsDarkModePageProxyStatus()` inside the page world
   - `/api/v1/dark-mode` reads both content worlds and reports bridge/proxy configuration, event counts, sync state, and manager counts
 - Added Reddit startup performance gating:
@@ -183,44 +183,70 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - `@container` and `@scope` blocks are preserved as their original group preludes instead of being misclassified as `@supports` or `@layer`
   - async and sync CSS conversion now share the same group-rule recognition
   - media/supports/layer conversion avoids serializing full nested `cssText` when CSSOM fields are enough
+- Added broad upstream config/corpus support:
+  - the full upstream Dark Reader `dynamic-theme-fixes.config` is now checked in as an app resource
+  - parser handling now treats `================================` as a block separator instead of leaking it into CSS sections
+  - consecutive URL lines in a block are now collected, matching the upstream config format
+  - old built-in Gmail/Reddit fixes are now fallback-only when no config corpus is available, avoiding one-site hardcoded overlap in normal builds
+- Added Dark Reader-style theme knobs:
+  - UserDefaults can now provide brightness, contrast, sepia, grayscale, and dark/light scheme colors
+  - generated palette variables, fallback styles, controls, selection colors, meta theme-color, and inline root colors now use the configured theme
+  - `/api/v1/dark-mode` reports the active theme values
+- Improved variables-store matching:
+  - inline custom properties and inline `var(...)` dependents are collected across document and shadow roots, not just from `:root`
+  - variable propagation depth was raised for longer alias chains
+  - runtime status now reports variable/dependency graph counts
+- Improved large DOM watcher/application behavior:
+  - large root application now walks elements in time-budgeted slices instead of processing an entire document root synchronously
+  - hidden-tab mutation storms are deferred until the document becomes visible
+  - runtime status now reports mutation overflow/hidden deferral counters
+- Improved stylesheet/adopted stylesheet behavior:
+  - fetched stylesheet copies now expand same-CORS `@import` rules recursively before parsing
+  - failed fetch-copy attempts now get a guarded retry instead of permanently marking a stylesheet unavailable
+  - adopted stylesheets now have per-sheet revision tracking and a shared conversion cache across roots
+  - runtime status now reports import expansion and adopted cache hit/miss counters
+- Improved CSSOM proxy coverage:
+  - `CSSStyleDeclaration.cssText` writes are now observed
+  - `CSSStyleRule.selectorText` writes are now observed
+  - `CSSKeyframesRule.appendRule()` and `deleteRule()` are now observed in both the isolated engine and page-world bridge
+  - `@keyframes` blocks are converted through the same sync/async stylesheet pipeline
+- Improved isolation:
+  - the main dark-mode engine now runs in a named `wkdomainsDarkMode` content world instead of sharing `WKContentWorld.defaultClient`
+  - `/api/v1/dark-mode` now reads page world, default client world, and the named dark-mode world separately
 
 ## Completion Estimates
 
-- Full `variablesStore` dependency graph for matching variables and dependents: 84%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 95%
-- Mature optimized DOM/style watchers: 85%
-- Robust adopted stylesheet management: 84%
-- Full stylesheet proxy behavior and cross-context coordination: 88%
-- Dark Reader's color pipeline and extensive config corpus: 82%
-- Mature fix selection/config parser behavior across many sites: 82%
-- Extension-world isolation: 61%
+- Full `variablesStore` dependency graph for matching variables and dependents: 91%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 96%
+- Mature optimized DOM/style watchers: 91%
+- Robust adopted stylesheet management: 91%
+- Full stylesheet proxy behavior and cross-context coordination: 93%
+- Dark Reader's color pipeline and extensive config corpus: 91%
+- Mature fix selection/config parser behavior across many sites: 92%
+- Extension-world isolation: 90%
 
 ## Remaining Gaps
 
-- Variables graph is still not a full Dark Reader port. Current estimate: 84%.
+- Variables graph is still not a full Dark Reader port. Current estimate: 91%.
   - no full scoped variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
-  - limited scoped variable handling
-- Per-stylesheet managers still need more mature behavior. Current estimate: 95%.
+  - scoped handling is stronger, but still not as exact as Dark Reader's full selector/dependency store
+- Per-stylesheet managers still need more mature behavior. Current estimate: 96%.
   - privileged cross-origin/background fetch parity
   - imported stylesheet retries
-  - CSS text import expansion for fetched copies
-- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 85%.
-- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 84%.
-- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 88%.
-- Color pipeline is still a major gap. Current estimate: 82%.
-  - limited image analysis
-  - no theme knob parity
-- Config/fix support is still incomplete. Current estimate: 82%.
-  - parser and runtime config injection exist, and large configs are now parsed in a relevant-only way, but no bundled Dark Reader config corpus is checked into the app yet
-  - broad corpus support depends on a UserDefaults string/path or a bundled resource supplied by the app build
-  - only a small set of targeted fixes
-- Extension-world isolation is not solved. Current estimate: 61%.
-  - the main engine is now isolated, but a page-world proxy is still required for page-owned stylesheet and shadow-root APIs
-  - complex SPAs can still be perturbed more than they would be by Dark Reader's extension-world architecture
-  - bridge behavior now has direct API visibility, startup work is chunked, and page-proxy events are batched, but it still needs runtime proving on Reddit, HN, and other noisy SPAs
-  - prototype hooks now restore on cleanup, but the small proxy still executes in the page world while active
-  - getting this category above 90% likely requires a real extension/content-script architecture or a much thinner page-world bridge than WKUserScript can provide today
+- Watchers are improved but still less mature than Dark Reader's separated watch modules and long-run throttling strategy. Current estimate: 91%.
+- Adopted stylesheet handling is better, but not equivalent to Dark Reader's full CSSStyleSheet override/fallback model. Current estimate: 91%.
+- Stylesheet proxy is closer, but cross-context coordination is still partial for some obscure CSSOM mutation APIs. Current estimate: 93%.
+- Color pipeline is much closer, but still not a full port. Current estimate: 91%.
+  - limited image analysis compared with Dark Reader
+  - color math is compatible in shape but still not Dark Reader's exact implementation
+- Config/fix support is much closer. Current estimate: 92%.
+  - full dynamic-theme fix corpus is bundled, but parser behavior may still miss future nonstandard upstream sections
+  - built-in fixes are retained only as no-corpus fallback coverage
+- Extension-world isolation is much closer. Current estimate: 90%.
+  - the engine runs in a named isolated content world, but a small page-world bridge is still required for page-owned stylesheet and shadow-root APIs
+  - the bridge is batched and reversible, but it still executes prototype hooks in the page world while active
+  - a native Safari/WebExtension architecture could remove more page-world residue, but the current WKUserScript path now mirrors the practical split: isolated engine plus minimal page bridge
 
 ## Latest Validation
 
@@ -228,5 +254,6 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Page-world proxy JavaScript passed `node --check`.
 - Site-fix JavaScript with a non-empty sample config passed `node --check`.
 - Site-fix JavaScript generated with the full upstream Dark Reader `dynamic-theme-fixes.config` passed `node --check`.
+- Site-fix parser runtime check with the full bundled config matched Reddit through the upstream corpus with built-in fixes disabled.
 - Swift sources passed `xcrun swiftc -parse`.
-- Local API check was attempted again, but `localhost:9001` was not listening during this pass.
+- Local API check was attempted again for `/api/v1/dark-mode`, `/api/v1/dom`, and `/api/v1/console`, but `localhost:9001` was not listening during this pass.

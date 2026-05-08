@@ -26,6 +26,10 @@ extension BrowserModel {
       const DEFAULT_BORDER = { r: 58, g: 63, b: 65, a: 1 };
       const THEME = {
         mode: 1,
+        brightness: 100,
+        contrast: 100,
+        sepia: 0,
+        grayscale: 0,
         darkSchemeBackgroundColor: "#181a1b",
         darkSchemeTextColor: "#e8e6e3",
         lightSchemeBackgroundColor: "#ffffff",

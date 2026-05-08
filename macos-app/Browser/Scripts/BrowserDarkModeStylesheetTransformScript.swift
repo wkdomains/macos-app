@@ -291,6 +291,14 @@ extension BrowserModel {
         }
       };
 
+      const isKeyframeRule = (rule) => {
+        try {
+          return !!(rule && rule.keyText && rule.style);
+        } catch (_) {
+          return false;
+        }
+      };
+
       const isImportRule = (rule) => {
         try {
           return !!(rule && rule.href && rule.styleSheet);
@@ -371,6 +379,11 @@ extension BrowserModel {
             return declarations.length > 0 ? `${rule.selectorText} {\n${declarations.join("\n")}\n}` : "";
           }
 
+          if (isKeyframeRule(rule)) {
+            const declarations = buildModifiedDeclarations(rule.style);
+            return declarations.length > 0 ? `${rule.keyText} {\n${declarations.join("\n")}\n}` : "";
+          }
+
           if (isImportRule(rule)) {
             return convertCSSRules(rule.styleSheet.cssRules, depth + 1, seenRuleLists);
           }
@@ -407,6 +420,14 @@ extension BrowserModel {
             const prefix = groupRulePrefix(rule);
             return prefix ? `${prefix} {\n${childRules}\n}` : "";
           }
+
+          const genericGroupRules = safeCSSRuleList(rule);
+          if (genericGroupRules) {
+            const childRules = convertCSSRules(genericGroupRules, depth + 1, seenRuleLists);
+            if (!childRules) return "";
+            const prefix = groupRulePrefix(rule);
+            return prefix ? `${prefix} {\n${childRules}\n}` : childRules;
+          }
         } catch (_) {}
 
         return "";
@@ -439,6 +460,11 @@ extension BrowserModel {
             if (shouldIgnoreCSSSelector(rule.selectorText)) return "";
             const declarations = buildModifiedDeclarations(rule.style);
             return declarations.length > 0 ? `${rule.selectorText} {\n${declarations.join("\n")}\n}` : "";
+          }
+
+          if (isKeyframeRule(rule)) {
+            const declarations = buildModifiedDeclarations(rule.style);
+            return declarations.length > 0 ? `${rule.keyText} {\n${declarations.join("\n")}\n}` : "";
           }
         } catch (_) {}
 
@@ -487,6 +513,16 @@ extension BrowserModel {
             const prefix = groupRulePrefix(rule);
             return {
               rules: safeCSSRuleList(rule),
+              prefix: prefix ? `${prefix} {\n` : "",
+              suffix: prefix ? "\n}" : ""
+            };
+          }
+
+          const genericGroupRules = safeCSSRuleList(rule);
+          if (genericGroupRules) {
+            const prefix = groupRulePrefix(rule);
+            return {
+              rules: genericGroupRules,
               prefix: prefix ? `${prefix} {\n` : "",
               suffix: prefix ? "\n}" : ""
             };

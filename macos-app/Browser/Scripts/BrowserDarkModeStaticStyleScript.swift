@@ -129,11 +129,11 @@ extension BrowserModel {
 
       const getVariablesStyle = () => `
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) {
-          --darkreader-neutral-background: ${toRGBA(DEFAULT_BACKGROUND)};
-          --darkreader-neutral-text: ${toRGBA(DEFAULT_TEXT)};
-          --darkreader-border: ${toRGBA(DEFAULT_BORDER)};
-          --darkreader-selection-background: rgb(67, 91, 122);
-          --darkreader-selection-text: rgb(246, 248, 250);
+          --darkreader-neutral-background: ${toThemeRGBA(themeBackgroundColor())};
+          --darkreader-neutral-text: ${toThemeRGBA(themeTextColor())};
+          --darkreader-border: ${toThemeRGBA(themeBorderColor())};
+          --darkreader-selection-background: ${toThemeRGBA(themeSelectionBackgroundColor())};
+          --darkreader-selection-text: ${toThemeRGBA(themeSelectionTextColor())};
           ${registeredColorDeclarations().join("\n")}
         }
       `;
@@ -141,11 +141,11 @@ extension BrowserModel {
       const getFallbackStyle = () => `
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) {
           color-scheme: dark !important;
-          --darkreader-neutral-background: ${toRGBA(DEFAULT_BACKGROUND)};
-          --darkreader-neutral-text: ${toRGBA(DEFAULT_TEXT)};
-          --darkreader-border: ${toRGBA(DEFAULT_BORDER)};
-          --darkreader-selection-background: rgb(67, 91, 122);
-          --darkreader-selection-text: rgb(246, 248, 250);
+          --darkreader-neutral-background: ${toThemeRGBA(themeBackgroundColor())};
+          --darkreader-neutral-text: ${toThemeRGBA(themeTextColor())};
+          --darkreader-border: ${toThemeRGBA(themeBorderColor())};
+          --darkreader-selection-background: ${toThemeRGBA(themeSelectionBackgroundColor())};
+          --darkreader-selection-text: ${toThemeRGBA(themeSelectionTextColor())};
         }
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]),
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body {
@@ -180,7 +180,7 @@ extension BrowserModel {
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input,
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) textarea,
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) select {
-          background-color: rgb(31, 33, 34) !important;
+          background-color: ${toThemeRGBA(mix(themeBackgroundColor(), themeTextColor(), 0.04))} !important;
           color: var(--darkreader-neutral-text) !important;
           border-color: var(--darkreader-border) !important;
           caret-color: var(--darkreader-neutral-text) !important;
@@ -196,12 +196,12 @@ extension BrowserModel {
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) textarea {
           -webkit-appearance: none !important;
           appearance: none !important;
-          background-color: rgb(24, 26, 27) !important;
+          background-color: var(--darkreader-neutral-background) !important;
           background-image: none !important;
           color: var(--darkreader-neutral-text) !important;
           -webkit-text-fill-color: var(--darkreader-neutral-text) !important;
           caret-color: var(--darkreader-neutral-text) !important;
-          box-shadow: inset 0 0 0 9999px rgb(24, 26, 27) !important;
+          box-shadow: inset 0 0 0 9999px var(--darkreader-neutral-background) !important;
         }
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) input::placeholder,
         :root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) textarea::placeholder {
@@ -374,7 +374,7 @@ extension BrowserModel {
                 content: meta.getAttribute("content")
               });
             }
-            const nextColor = toRGBA(DEFAULT_BACKGROUND);
+            const nextColor = toThemeRGBA(themeBackgroundColor());
             if (meta.getAttribute("content") !== nextColor) {
               meta.setAttribute("content", nextColor);
             }

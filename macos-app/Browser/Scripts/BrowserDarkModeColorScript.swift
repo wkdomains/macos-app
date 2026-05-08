@@ -851,6 +851,85 @@ extension BrowserModel {
           : `rgba(${r}, ${g}, ${b}, ${Math.round(a * 1000) / 1000})`;
       };
 
+      const themeNumber = (key, fallback, min, max) => {
+        const parsed = Number(THEME && THEME[key]);
+        if (!Number.isFinite(parsed)) return fallback;
+        return clamp(parsed, min, max);
+      };
+
+      const themeColor = (key, fallback) => parseColor(THEME && THEME[key]) || fallback;
+      const themeBackgroundColor = () => themeColor("darkSchemeBackgroundColor", DEFAULT_BACKGROUND);
+      const themeTextColor = () => themeColor("darkSchemeTextColor", DEFAULT_TEXT);
+      const themeBorderColor = () => {
+        const background = themeBackgroundColor();
+        const text = themeTextColor();
+        return mix(background, text, 0.18);
+      };
+      const themeSelectionBackgroundColor = () => {
+        const background = themeBackgroundColor();
+        const text = themeTextColor();
+        return mix(background, text, 0.34);
+      };
+      const themeSelectionTextColor = () => themeTextColor();
+
+      const themeFilterCacheKey = () => [
+        themeNumber("brightness", 100, 50, 150),
+        themeNumber("contrast", 100, 50, 150),
+        themeNumber("sepia", 0, 0, 100),
+        themeNumber("grayscale", 0, 0, 100)
+      ].join(":");
+
+      const applyThemeColorAdjustments = (color) => {
+        if (!color) return null;
+        const brightness = themeNumber("brightness", 100, 50, 150) / 100;
+        const contrast = themeNumber("contrast", 100, 50, 150) / 100;
+        const sepia = themeNumber("sepia", 0, 0, 100) / 100;
+        const grayscale = themeNumber("grayscale", 0, 0, 100) / 100;
+
+        let r = clamp(color.r, 0, 255);
+        let g = clamp(color.g, 0, 255);
+        let b = clamp(color.b, 0, 255);
+
+        if (grayscale > 0) {
+          const gray = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          r = r * (1 - grayscale) + gray * grayscale;
+          g = g * (1 - grayscale) + gray * grayscale;
+          b = b * (1 - grayscale) + gray * grayscale;
+        }
+
+        if (sepia > 0) {
+          const sr = clamp(0.393 * r + 0.769 * g + 0.189 * b, 0, 255);
+          const sg = clamp(0.349 * r + 0.686 * g + 0.168 * b, 0, 255);
+          const sb = clamp(0.272 * r + 0.534 * g + 0.131 * b, 0, 255);
+          r = r * (1 - sepia) + sr * sepia;
+          g = g * (1 - sepia) + sg * sepia;
+          b = b * (1 - sepia) + sb * sepia;
+        }
+
+        r = ((r / 255 - 0.5) * contrast + 0.5) * 255 * brightness;
+        g = ((g / 255 - 0.5) * contrast + 0.5) * 255 * brightness;
+        b = ((b / 255 - 0.5) * contrast + 0.5) * 255 * brightness;
+
+        return {
+          r: clamp(r, 0, 255),
+          g: clamp(g, 0, 255),
+          b: clamp(b, 0, 255),
+          a: color.a == null ? 1 : color.a
+        };
+      };
+
+      const toThemeRGBA = (color) => toRGBA(applyThemeColorAdjustments(color));
+
+      const themeDebugStatus = () => ({
+        mode: THEME.mode,
+        brightness: themeNumber("brightness", 100, 50, 150),
+        contrast: themeNumber("contrast", 100, 50, 150),
+        sepia: themeNumber("sepia", 0, 0, 100),
+        grayscale: themeNumber("grayscale", 0, 0, 100),
+        darkSchemeBackgroundColor: THEME.darkSchemeBackgroundColor,
+        darkSchemeTextColor: THEME.darkSchemeTextColor
+      });
+
       const relativeLuminance = (color) => {
         const channel = (value) => {
           const normalized = clamp(value, 0, 255) / 255;
@@ -972,7 +1051,7 @@ extension BrowserModel {
 
       const modifyColorWithCache = (type, color, modifier) => {
         if (!color) return null;
-        const key = `${type}:${colorCacheKey(color)}`;
+        const key = `${themeFilterCacheKey()}:${type}:${colorCacheKey(color)}`;
         if (modifiedColorCache.has(key)) return modifiedColorCache.get(key);
 
         const value = modifier(color);
@@ -996,9 +1075,9 @@ extension BrowserModel {
         return result;
       };
 
-      const backgroundPole = rgbToHSL(DEFAULT_BACKGROUND);
-      const foregroundPole = rgbToHSL(DEFAULT_TEXT);
-      const borderPole = rgbToHSL(DEFAULT_BORDER);
+      const backgroundPole = rgbToHSL(themeBackgroundColor());
+      const foregroundPole = rgbToHSL(themeTextColor());
+      const borderPole = rgbToHSL(themeBorderColor());
 
       const modifyBackgroundHSL = ({ h, s, l, a }) => {
         const isDark = l < 0.5;
@@ -1072,28 +1151,28 @@ extension BrowserModel {
 
       const modifyBackgroundColor = (color) => {
         if (!color || color.a < 0.05) return null;
-        return modifyColorWithCache("background", color, (value) => toRGBA(hslToRGB(modifyBackgroundHSL(rgbToHSL(value)))));
+        return modifyColorWithCache("background", color, (value) => toThemeRGBA(hslToRGB(modifyBackgroundHSL(rgbToHSL(value)))));
       };
 
       const modifyForegroundColor = (color) => {
         if (!color || color.a < 0.05) return null;
-        return modifyColorWithCache("text", color, (value) => toRGBA(hslToRGB(modifyForegroundHSL(rgbToHSL(value)))));
+        return modifyColorWithCache("text", color, (value) => toThemeRGBA(hslToRGB(modifyForegroundHSL(rgbToHSL(value)))));
       };
 
       const modifyBorderColor = (color) => {
         if (!color || color.a < 0.05) return null;
-        return modifyColorWithCache("border", color, (value) => toRGBA(hslToRGB(modifyBorderHSL(rgbToHSL(value)))));
+        return modifyColorWithCache("border", color, (value) => toThemeRGBA(hslToRGB(modifyBorderHSL(rgbToHSL(value)))));
       };
 
       const transformBackground = (color, element = null) => {
         if (!color || color.a < 0.05) return null;
-        if (relativeLuminance(color) < 0.10) return toRGBA(mix(color, DEFAULT_BACKGROUND, 0.18));
+        if (relativeLuminance(color) < 0.10) return toThemeRGBA(mix(color, themeBackgroundColor(), 0.18));
         return modifyBackgroundColor(color);
       };
 
       const transformForeground = (color) => {
         if (!color || color.a < 0.05) return null;
-        if (relativeLuminance(color) > 0.62) return toRGBA(color);
+        if (relativeLuminance(color) > 0.62) return toThemeRGBA(color);
         return modifyForegroundColor(color);
       };
 

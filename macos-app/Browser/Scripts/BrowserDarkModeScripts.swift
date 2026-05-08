@@ -10,6 +10,16 @@ extension BrowserModel {
         (UserDefaults.standard.object(forKey: "wkdomains.darkModeUseIsolatedWorld") as? Bool) ?? true
     }
 
+    private static let bundledDarkModeSiteFixConfig: String = {
+        if
+            let url = Bundle.main.url(forResource: "dynamic-theme-fixes", withExtension: "config"),
+            let config = try? String(contentsOf: url, encoding: .utf8)
+        {
+            return config
+        }
+        return ""
+    }()
+
     static var darkModeSiteFixConfig: String {
         if let config = UserDefaults.standard.string(forKey: "wkdomains.darkModeDynamicThemeFixesConfig"), !config.isEmpty {
             return config
@@ -21,13 +31,56 @@ extension BrowserModel {
         {
             return config
         }
-        if
-            let url = Bundle.main.url(forResource: "dynamic-theme-fixes", withExtension: "config"),
-            let config = try? String(contentsOf: url, encoding: .utf8)
-        {
-            return config
+        return bundledDarkModeSiteFixConfig
+    }
+
+    static var darkModeThemeConfig: [String: Any] {
+        let defaults = UserDefaults.standard
+        func number(_ keys: [String], _ fallback: Int, minimum: Int, maximum: Int) -> Int {
+            for key in keys {
+                guard let value = defaults.object(forKey: key) else { continue }
+                let parsed: Int?
+                if let number = value as? NSNumber {
+                    parsed = number.intValue
+                } else if let string = value as? String {
+                    parsed = Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+                } else {
+                    parsed = nil
+                }
+                if let parsed {
+                    return min(max(parsed, minimum), maximum)
+                }
+            }
+            return fallback
         }
-        return ""
+
+        func string(_ keys: [String], fallback: String) -> String {
+            for key in keys {
+                if let value = defaults.string(forKey: key), !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return value
+                }
+            }
+            return fallback
+        }
+
+        return [
+            "mode": number(["wkdomains.darkModeThemeMode", "wkdomains.darkModeMode"], 1, minimum: 0, maximum: 1),
+            "brightness": number(["wkdomains.darkModeThemeBrightness", "wkdomains.darkModeBrightness"], 100, minimum: 50, maximum: 150),
+            "contrast": number(["wkdomains.darkModeThemeContrast", "wkdomains.darkModeContrast"], 100, minimum: 50, maximum: 150),
+            "sepia": number(["wkdomains.darkModeThemeSepia", "wkdomains.darkModeSepia"], 0, minimum: 0, maximum: 100),
+            "grayscale": number(["wkdomains.darkModeThemeGrayscale", "wkdomains.darkModeGrayscale"], 0, minimum: 0, maximum: 100),
+            "darkSchemeBackgroundColor": string(["wkdomains.darkModeThemeBackgroundColor", "wkdomains.darkModeBackgroundColor"], fallback: "#181a1b"),
+            "darkSchemeTextColor": string(["wkdomains.darkModeThemeTextColor", "wkdomains.darkModeTextColor"], fallback: "#e8e6e3"),
+            "lightSchemeBackgroundColor": string(["wkdomains.lightModeThemeBackgroundColor", "wkdomains.lightModeBackgroundColor"], fallback: "#ffffff"),
+            "lightSchemeTextColor": string(["wkdomains.lightModeThemeTextColor", "wkdomains.lightModeTextColor"], fallback: "#000000")
+        ]
+    }
+
+    static var darkModeThemeConfigScript: String {
+        let data = (try? JSONSerialization.data(withJSONObject: darkModeThemeConfig, options: [.sortedKeys]))
+            ?? Data("{}".utf8)
+        let json = String(data: data, encoding: .utf8) ?? "{}"
+        return "      Object.assign(THEME, \(json));\n"
     }
 
     static let renderInvalidationScript = #"""
@@ -105,12 +158,15 @@ extension BrowserModel {
     static func forcedDarkModeScript(disabledSites: [String]) -> String {
         let disabledSiteList = disabledSites.map(javaScriptStringLiteral).joined(separator: ", ")
         let debugLoggingEnabled = BrowserDebugLogging.darkModeScriptEnabled ? "true" : "false"
+        let engineWorldName = Self.darkModeUsesIsolatedContentWorld ? Self.darkModeContentWorldName : "page"
+        let engineWorldNameLiteral = javaScriptStringLiteral(engineWorldName)
 
         return #"""
     (() => {
       if (window.__wkdomainsDarkModeInstalled) return;
       window.__wkdomainsDarkModeInstalled = true;
       const __wkdomainsDarkModeDebugEnabled = \#(debugLoggingEnabled);
+      const __wkdomainsDarkModeEngineWorldName = \#(engineWorldNameLiteral);
       const __wkdomainsDarkModeDebug = (phase) => {
         if (!__wkdomainsDarkModeDebugEnabled) return;
         try {
@@ -131,6 +187,8 @@ extension BrowserModel {
       }
 
     \#(Self.browserDarkModeConstantsScript)
+
+    \#(Self.darkModeThemeConfigScript)
 
     \#(Self.browserDarkModeColorScript)
 

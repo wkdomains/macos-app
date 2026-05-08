@@ -226,9 +226,11 @@ final class WebsiteDataReader {
 
         var pageWorldObject: Any?
         var defaultClientObject: Any?
+        var darkModeWorldObject: Any?
         var pageWorldError: String?
         var defaultClientError: String?
-        var pending = 2
+        var darkModeWorldError: String?
+        var pending = 3
 
         let decodeStatusObject = { (value: Any?) -> Any? in
             guard let json = value as? String,
@@ -253,7 +255,8 @@ final class WebsiteDataReader {
                 "estimatedProgress": self.browser.webView.estimatedProgress,
                 "contentWorlds": [
                     "page": pageWorldObject ?? ["error": pageWorldError ?? "No page-world status returned."],
-                    "defaultClient": defaultClientObject ?? ["error": defaultClientError ?? "No default-client status returned."]
+                    "defaultClient": defaultClientObject ?? ["error": defaultClientError ?? "No default-client status returned."],
+                    BrowserModel.darkModeContentWorldName: darkModeWorldObject ?? ["error": darkModeWorldError ?? "No dark-mode content-world status returned."]
                 ]
             ]
 
@@ -262,6 +265,9 @@ final class WebsiteDataReader {
             }
             if let defaultClientError {
                 response["defaultClientError"] = defaultClientError
+            }
+            if let darkModeWorldError {
+                response["darkModeWorldError"] = darkModeWorldError
             }
 
             BrowserDebugLogging.log("[wkdomains-debug] local-api dark-mode done elapsed=\(Self.formatElapsed(since: startedAt)) \(self.pageStateDescription())")
@@ -292,6 +298,22 @@ final class WebsiteDataReader {
                     }
                 case .failure(let error):
                     defaultClientError = error.localizedDescription
+                }
+                finishIfReady()
+            }
+        }
+
+        browser.webView.evaluateJavaScript(script, in: nil, in: BrowserModel.darkModeContentWorld) { result in
+            Task { @MainActor in
+                switch result {
+                case .success(let value):
+                    if let object = decodeStatusObject(value) {
+                        darkModeWorldObject = object
+                    } else {
+                        darkModeWorldError = InspectionError.couldNotDecodePageJSON.localizedDescription
+                    }
+                case .failure(let error):
+                    darkModeWorldError = error.localizedDescription
                 }
                 finishIfReady()
             }

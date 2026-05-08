@@ -16,6 +16,9 @@ extension BrowserModel {
         const inlineQueue = [];
         let versionNumber = 0;
         let lastTypeSignature = "";
+        let lastMatchedRuleLists = 0;
+        let lastMatchedInlineStyles = 0;
+        let lastVariableReferenceCount = 0;
 
         const clear = () => {
           varTypes.clear();
@@ -139,7 +142,7 @@ extension BrowserModel {
         const propagateTypes = () => {
           let changed = true;
           let guard = 0;
-          while (changed && guard < 16) {
+          while (changed && guard < 64) {
             changed = false;
             guard += 1;
             for (const [owner, refs] of varRefs) {
@@ -171,6 +174,10 @@ extension BrowserModel {
         };
 
         const updateVersion = () => {
+          lastVariableReferenceCount = 0;
+          for (const refs of varRefs.values()) {
+            lastVariableReferenceCount += refs.size;
+          }
           const nextSignature = Array.from(varTypes.entries())
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([name, type]) => `${name}:${type}`)
@@ -182,6 +189,8 @@ extension BrowserModel {
         };
 
         const matchVariablesAndDependents = () => {
+          lastMatchedRuleLists = rulesQueue.size;
+          lastMatchedInlineStyles = inlineQueue.length;
           for (const rules of rulesQueue) inspectRules(rules);
           for (const style of inlineQueue) inspectDeclarations(style);
           rulesQueue.clear();
@@ -239,7 +248,17 @@ extension BrowserModel {
           typesForVariable,
           isVarType,
           version: () => versionNumber,
-          rootDeclarations
+          rootDeclarations,
+          status: () => ({
+            version: versionNumber,
+            variables: varTypes.size,
+            values: varValues.size,
+            referenceOwners: varRefs.size,
+            references: lastVariableReferenceCount,
+            reverseReferenceOwners: reverseVarRefs.size,
+            matchedRuleLists: lastMatchedRuleLists,
+            matchedInlineStyles: lastMatchedInlineStyles
+          })
         };
       })();
     """#

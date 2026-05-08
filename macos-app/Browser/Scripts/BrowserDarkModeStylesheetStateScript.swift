@@ -9,6 +9,8 @@ extension BrowserModel {
     static let browserDarkModeStylesheetStateScript = #"""
       const styleManagers = new WeakMap();
       const adoptedStyleManagers = new WeakMap();
+      const adoptedSheetRevisions = new WeakMap();
+      const adoptedSheetConversionCache = new WeakMap();
       const managedStyleElements = new Set();
       const managedAdoptedRoots = new Set();
       const adoptedStyleListenersByRoot = new WeakMap();
@@ -25,6 +27,13 @@ extension BrowserModel {
       let stylesheetFetchCopyStarted = 0;
       let stylesheetFetchCopyCompleted = 0;
       let stylesheetFetchCopyFailed = 0;
+      let stylesheetFetchCopyRetried = 0;
+      let stylesheetFetchImportStarted = 0;
+      let stylesheetFetchImportCompleted = 0;
+      let stylesheetFetchImportFailed = 0;
+      let stylesheetFetchImportExpanded = 0;
+      let adoptedSheetCacheHits = 0;
+      let adoptedSheetCacheMisses = 0;
       let stylesheetProxyActive = false;
       let loadingStylesCounter = 0;
       const loadingStyles = new Set();
@@ -34,6 +43,7 @@ extension BrowserModel {
       const fetchedStyleSheetCopiesByElement = new WeakMap();
       const fetchingStyleSheetURLsByElement = new WeakMap();
       const failedStyleSheetFetchURLsByElement = new WeakMap();
+      const styleSheetFetchRetryTimersByElement = new WeakMap();
       const unavailableStyleElements = new WeakSet();
       const registeredCustomPropertyTypes = new Map();
       const stylesheetCustomPropertyTypes = new Map();
@@ -74,6 +84,14 @@ extension BrowserModel {
       };
 
       const shouldIgnoreCSSURL = (url) => ignoredCSSURLPatterns.some((pattern) => cssURLMatchesPattern(url, pattern));
+
+      const adoptedSheetRevisionFor = (sheet) => adoptedSheetRevisions.get(sheet) || 0;
+
+      const markAdoptedSheetChanged = (sheet) => {
+        if (!sheet) return;
+        adoptedSheetRevisions.set(sheet, adoptedSheetRevisionFor(sheet) + 1);
+        adoptedSheetConversionCache.delete(sheet);
+      };
 
       const shouldManageStyle = (element) => {
         if (!element || !element.matches || !element.matches(STYLE_SELECTOR)) return false;
@@ -130,10 +148,101 @@ extension BrowserModel {
         }
       );
 
+      const cssImportMediaApplies = (mediaText) => {
+        const text = String(mediaText || "").trim().toLowerCase();
+        if (!text) return true;
+        const parts = text.split(",").map((part) => part.trim()).filter(Boolean);
+        if (parts.length === 0) return true;
+        const ignored = ["aural", "braille", "embossed", "handheld", "print", "projection", "speech", "tty", "tv"];
+        return parts.some((part) => part.startsWith("screen") || part.startsWith("all") || part.startsWith("("))
+          || !parts.every((part) => ignored.some((kind) => part.startsWith(kind)));
+      };
+
+      const readCSSImportRules = (cssText) => {
+        const imports = [];
+        const importPattern = /@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1\s*\)?\s*([^;]*);/gi;
+        let match = null;
+        while ((match = importPattern.exec(String(cssText || "")))) {
+          imports.push({
+            start: match.index,
+            end: match.index + match[0].length,
+            text: match[0],
+            href: match[2],
+            media: match[3] || ""
+          });
+          if (imports.length >= 16) break;
+        }
+        return imports;
+      };
+
+      const fetchCSSImportText = (href, baseURL, depth, seenURLs) => {
+        let absoluteURL = "";
+        try {
+          absoluteURL = new URL(href, baseURL).href;
+        } catch (_) {
+          return Promise.resolve(null);
+        }
+        if (seenURLs.has(absoluteURL)) return Promise.resolve(null);
+        seenURLs.add(absoluteURL);
+        stylesheetFetchImportStarted += 1;
+        return fetch(absoluteURL, { cache: "force-cache", credentials: "include" })
+          .then((response) => {
+            if (!response || !response.ok) {
+              throw new Error(`Imported stylesheet fetch failed: ${response ? response.status : "no-response"}`);
+            }
+            return response.text();
+          })
+          .then((text) => {
+            stylesheetFetchImportCompleted += 1;
+            return resolveCSSImports(text, absoluteURL, depth + 1, seenURLs);
+          })
+          .catch(() => {
+            stylesheetFetchImportFailed += 1;
+            return null;
+          });
+      };
+
+      const resolveCSSImports = (cssText, baseURL, depth = 0, seenURLs = new Set()) => {
+        const text = String(cssText || "");
+        if (!window.fetch || depth >= 3) return Promise.resolve(rewriteRelativeCSSURLs(text, baseURL));
+        const imports = readCSSImportRules(text).filter((rule) => cssImportMediaApplies(rule.media));
+        if (imports.length === 0) return Promise.resolve(rewriteRelativeCSSURLs(text, baseURL));
+
+        const pieces = [];
+        let cursor = 0;
+        const tasks = imports.map((rule) => fetchCSSImportText(rule.href, baseURL, depth, seenURLs).then((importedText) => {
+          pieces.push({
+            start: rule.start,
+            end: rule.end,
+            text: importedText == null ? rule.text : importedText
+          });
+          if (importedText != null) stylesheetFetchImportExpanded += 1;
+        }));
+
+        return Promise.all(tasks).then(() => {
+          pieces.sort((a, b) => a.start - b.start);
+          let result = "";
+          for (const piece of pieces) {
+            result += text.slice(cursor, piece.start);
+            result += piece.text;
+            cursor = piece.end;
+          }
+          result += text.slice(cursor);
+          return rewriteRelativeCSSURLs(result, baseURL);
+        });
+      };
+
       const fetchedStyleSheetRulesFor = (element) => {
         const copy = fetchedStyleSheetCopiesByElement.get(element);
         if (!copy || copy.href !== element.href) return null;
         return copy.rules || null;
+      };
+
+      const clearStyleSheetFetchRetry = (element) => {
+        const retryTimer = styleSheetFetchRetryTimersByElement.get(element);
+        if (!retryTimer) return;
+        window.clearTimeout(retryTimer);
+        styleSheetFetchRetryTimersByElement.delete(element);
       };
 
       const startStyleSheetFetchCopy = (element) => {
@@ -144,6 +253,7 @@ extension BrowserModel {
         if (failedStyleSheetFetchURLsByElement.get(element) === element.href) return false;
 
         const href = element.href;
+        clearStyleSheetFetchRetry(element);
         fetchingStyleSheetURLsByElement.set(element, href);
         stylesheetFetchCopyStarted += 1;
         fetch(href, { cache: "force-cache", credentials: "include" })
@@ -153,10 +263,11 @@ extension BrowserModel {
             }
             return response.text();
           })
+          .then((cssText) => resolveCSSImports(cssText, href))
           .then((cssText) => {
             if (element.href !== href) return;
             const sheet = new CSSStyleSheet();
-            sheet.replaceSync(rewriteRelativeCSSURLs(cssText, href));
+            sheet.replaceSync(cssText);
             fetchedStyleSheetCopiesByElement.set(element, {
               href,
               sheet,
@@ -171,6 +282,16 @@ extension BrowserModel {
           .catch(() => {
             if (element.href === href) {
               failedStyleSheetFetchURLsByElement.set(element, href);
+              if (!styleSheetFetchRetryTimersByElement.has(element)) {
+                const retryTimer = window.setTimeout(() => {
+                  styleSheetFetchRetryTimersByElement.delete(element);
+                  if (!element.isConnected || element.href !== href) return;
+                  failedStyleSheetFetchURLsByElement.delete(element);
+                  stylesheetFetchCopyRetried += 1;
+                  scheduleStyleSync(0);
+                }, 5000);
+                styleSheetFetchRetryTimersByElement.set(element, retryTimer);
+              }
             }
             stylesheetFetchCopyFailed += 1;
             markStyleLoaded(element);

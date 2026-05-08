@@ -37,6 +37,9 @@ extension BrowserModel {
       let mutationQueueOverflow = false;
       let mutationFlushScheduled = false;
       let mutationFlushTimer = null;
+      let hiddenMutationDeferred = false;
+      let hiddenMutationDeferrals = 0;
+      let mutationQueueOverflows = 0;
       const MAX_QUEUED_MUTATIONS = 800;
       const installedAt = (() => {
         try { return performance.now(); } catch (_) { return Date.now(); }
@@ -54,7 +57,7 @@ extension BrowserModel {
             value() {
               return {
                 installed: true,
-                engineWorld: "defaultClient",
+                engineWorld: __wkdomainsDarkModeEngineWorldName,
                 dynamicStyleStarted,
                 pageProxyBridgeInstalled,
                 bridgeConfigured: bridgeStatus.configured,
@@ -64,6 +67,7 @@ extension BrowserModel {
                 bridgeConfig: bridgeStatus.config ? { ...bridgeStatus.config } : null,
                 siteFixes: siteFixDebugStatus(),
                 registeredColors: registeredColorStats(),
+                variables: variablesStore.status(),
                 registeredCustomProperties: registeredCustomPropertyTypes.size,
                 stylesheetCustomProperties: stylesheetCustomPropertyTypes.size,
                 stylesheetSyncScheduled,
@@ -79,19 +83,31 @@ extension BrowserModel {
                 stylesheetFetchCopyStarted,
                 stylesheetFetchCopyCompleted,
                 stylesheetFetchCopyFailed,
+                stylesheetFetchCopyRetried,
+                stylesheetFetchImportStarted,
+                stylesheetFetchImportCompleted,
+                stylesheetFetchImportFailed,
+                stylesheetFetchImportExpanded,
                 loadingStyles: loadingStyles.size,
                 managedStyleElements: managedStyleElements.size,
                 managedAdoptedRoots: managedAdoptedRoots.size,
+                adoptedSheetCacheHits,
+                adoptedSheetCacheMisses,
                 discoveredShadowRoots: discoveredShadowRoots.size,
                 prunedDisconnectedRoots,
                 prunedRootObservers,
                 pendingRootApplies: pendingRootApplyQueue.length,
+                pendingRootApplyJobs: pendingRootApplyJobs.size,
                 lightSurfaceFallbacksApplied,
                 lightSurfaceFallbacksCleared,
                 rootApplyScheduled,
                 shadowDiscoveryScheduled,
                 pendingShadowDiscoveryRoots: shadowDiscoveryRoots.size,
                 rootObservers: rootObservers.size,
+                hiddenMutationDeferred,
+                hiddenMutationDeferrals,
+                mutationQueueOverflows,
+                theme: themeDebugStatus(),
                 ready: document.documentElement?.getAttribute(READY_ATTRIBUTE) === "true"
               };
             }
@@ -445,6 +461,7 @@ extension BrowserModel {
       const forgetQueuedRootApply = (root) => {
         if (!root || !pendingRootApplySet.has(root)) return;
         pendingRootApplySet.delete(root);
+        pendingRootApplyJobs.delete(root);
         for (let index = pendingRootApplyQueue.length - 1; index >= 0; index -= 1) {
           if (pendingRootApplyQueue[index] === root) {
             pendingRootApplyQueue.splice(index, 1);
@@ -648,9 +665,18 @@ extension BrowserModel {
 
       const queueMutations = (mutations) => {
         if (applying || !mutations || mutations.length === 0) return;
+        if (!documentIsVisible()) {
+          hiddenMutationDeferred = true;
+          hiddenMutationDeferrals += 1;
+          queuedMutations = [];
+          mutationQueueOverflow = false;
+          dirtyRoots.add(document);
+          return;
+        }
         if (mutationQueueOverflow || queuedMutations.length + mutations.length > MAX_QUEUED_MUTATIONS) {
           queuedMutations = [];
           mutationQueueOverflow = true;
+          mutationQueueOverflows += 1;
         } else {
           queuedMutations.push(...mutations);
         }
@@ -764,12 +790,11 @@ extension BrowserModel {
 
         const roots = normalizeDirtyRoots();
         dirtyRoots.clear();
-        __wkdomainsDarkModeDebug(`run-apply-roots:${roots.length}`);
-        withFallbackDisabled(() => {
-          for (const root of roots) {
-            applyRoot(root);
-          }
-        });
+        __wkdomainsDarkModeDebug(`run-queue-roots:${roots.length}`);
+        for (const root of roots) {
+          queueRootApply(root, 0);
+        }
+        flushQueuedRootApplies();
         ensureSiteFixStyle();
         tryInvertPDF();
 
@@ -810,6 +835,14 @@ extension BrowserModel {
         dirtyRoots.add(document);
         scheduleStyleSync(0);
         schedule(40);
+      };
+
+      const handleVisibilityChange = () => {
+        if (!documentIsVisible() || !hiddenMutationDeferred) return;
+        hiddenMutationDeferred = false;
+        scheduleShadowRootDiscovery(document, 80);
+        scheduleStyleSync(80);
+        schedule(80);
       };
 
       const installPageProxyBridge = () => {
@@ -899,11 +932,13 @@ extension BrowserModel {
         document.addEventListener("DOMContentLoaded", handleDOMReady, { once: true });
         window.addEventListener("load", handleWindowLoad, { passive: true });
         window.addEventListener("pageshow", handlePageShow, { passive: true });
+        document.addEventListener("visibilitychange", handleVisibilityChange);
         __wkdomainsDarkModeDebug("dynamic-after-listeners");
         cleanupTasks.push(() => {
           document.removeEventListener("DOMContentLoaded", handleDOMReady);
           window.removeEventListener("load", handleWindowLoad);
           window.removeEventListener("pageshow", handlePageShow);
+          document.removeEventListener("visibilitychange", handleVisibilityChange);
         });
 
         __wkdomainsDarkModeDebug("dynamic-before-watch-root");
@@ -945,6 +980,9 @@ extension BrowserModel {
         bridgeStatus.config = null;
         shadowDiscoveryScheduled = false;
         shadowDiscoveryRoots.clear();
+        pendingRootApplySet.clear();
+        pendingRootApplyQueue.splice(0);
+        pendingRootApplyJobs.clear();
         fallbackWasCleared = false;
         lightSurfaceFallbacksApplied = 0;
         lightSurfaceFallbacksCleared = 0;
@@ -961,6 +999,7 @@ extension BrowserModel {
         dirtyRoots.clear();
         queuedMutations = [];
         mutationQueueOverflow = false;
+        hiddenMutationDeferred = false;
         if (mutationFlushTimer) {
           window.clearTimeout(mutationFlushTimer);
           mutationFlushTimer = null;

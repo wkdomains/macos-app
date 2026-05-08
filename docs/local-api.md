@@ -125,9 +125,10 @@ Responses include status, content type, sampled byte count, and a short
 curl http://localhost:9001/api/v1/dark-mode | jq .
 ```
 
-Returns forced dark-mode runtime state from both JavaScript content worlds:
+Returns forced dark-mode runtime state from the page world, default client
+world, and named dark-mode engine world:
 
-- `contentWorlds.defaultClient.engine`: isolated dynamic-theme engine status
+- `contentWorlds.wkdomainsDarkMode.engine`: isolated dynamic-theme engine status
 - `contentWorlds.page.pageProxy`: page-world proxy status
 - bridge event counts, proxy config, stylesheet sync state, and manager counts
 

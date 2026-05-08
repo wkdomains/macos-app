@@ -202,6 +202,11 @@ extension BrowserModel {
       const ensureAdoptedStyleListeners = (root) => {
         if (!root || adoptedStyleListenersByRoot.has(root)) return;
         const onChange = () => {
+          try {
+            for (const sheet of root.adoptedStyleSheets || []) {
+              markAdoptedSheetChanged(sheet);
+            }
+          } catch (_) {}
           const manager = adoptedStyleManagers.get(root);
           if (manager) {
             manager.revision += 1;
@@ -221,6 +226,25 @@ extension BrowserModel {
         root.removeEventListener(ADOPTED_STYLES_CHANGE_EVENT, listener);
         root.removeEventListener(ADOPTED_DECLARATION_CHANGE_EVENT, listener);
         adoptedStyleListenersByRoot.delete(root);
+      };
+
+      const adoptedSheetSignature = (sheet, rules) => [
+        variablesStore.version(),
+        adoptedSheetRevisionFor(sheet),
+        cssRuleListLength(rules)
+      ].join(":");
+
+      const convertAdoptedSheetWithCache = (sheet, rules) => {
+        const signature = adoptedSheetSignature(sheet, rules);
+        const cached = adoptedSheetConversionCache.get(sheet);
+        if (cached && cached.signature === signature) {
+          adoptedSheetCacheHits += 1;
+          return cached.css;
+        }
+        adoptedSheetCacheMisses += 1;
+        const css = convertCSSRules(rules);
+        adoptedSheetConversionCache.set(sheet, { signature, css });
+        return css;
       };
 
       const renderAdoptedStyleSheets = (root) => {
@@ -247,11 +271,14 @@ extension BrowserModel {
         }
 
         const ruleLists = [];
+        const sheetsWithRules = [];
         const signature = [];
         for (const sheet of root.adoptedStyleSheets) {
           const rules = safeGetRules(sheet);
           if (!rules) continue;
-          signature.push(cssRuleListLength(rules));
+          const sheetSignature = adoptedSheetSignature(sheet, rules);
+          signature.push(sheetSignature);
+          sheetsWithRules.push({ sheet, rules });
           ruleLists.push(rules);
         }
 
@@ -315,8 +342,8 @@ extension BrowserModel {
 
         cancelPendingStyleConversion(manager);
         const chunks = [];
-        for (const rules of ruleLists) {
-          const css = convertCSSRules(rules);
+        for (const { sheet, rules } of sheetsWithRules) {
+          const css = convertAdoptedSheetWithCache(sheet, rules);
           if (css) chunks.push(css);
         }
         manager.signature = nextSignature;
@@ -333,6 +360,47 @@ extension BrowserModel {
         }
       };
 
+      const styleHasVariableData = (style) => {
+        if (!style) return false;
+        for (let index = 0; index < style.length; index += 1) {
+          const property = style.item(index);
+          const value = style.getPropertyValue(property);
+          if (isGeneratedDarkModeProperty(property)) continue;
+          if (property.startsWith("--") || (String(value || "").includes("var(") && !String(value || "").includes(DARK_VAR_PREFIX))) {
+            return true;
+          }
+        }
+        return false;
+      };
+
+      const collectInlineVariableStyles = (root) => {
+        if (!root || !root.querySelectorAll) return;
+        let collected = 0;
+        const collect = (element) => {
+          if (!element || !element.style || !styleHasVariableData(element.style)) return;
+          variablesStore.addInlineStyleForMatching(element.style);
+          collected += 1;
+        };
+
+        if (root.nodeType === Node.DOCUMENT_NODE) {
+          collect(document.documentElement);
+          if (document.body) collect(document.body);
+        } else if (root.nodeType === Node.ELEMENT_NODE) {
+          collect(root);
+        }
+
+        let elements = [];
+        try {
+          elements = root.querySelectorAll("[style*='--'], [style*='var(']");
+        } catch (_) {
+          elements = [];
+        }
+        for (const element of elements) {
+          collect(element);
+          if (collected >= 2000) break;
+        }
+      };
+
       const updateRootVariableStyle = () => {
         if (!document.documentElement) return;
         const rootVarsStyle = createOrUpdateStyle("wkdomains-darkreader--root-vars", document);
@@ -344,6 +412,7 @@ extension BrowserModel {
 
       const removeStyleManager = (element) => {
         const manager = styleManagers.get(element);
+        clearStyleSheetFetchRetry(element);
         const listener = loadingStyleListenersByElement.get(element);
         if (listener && element instanceof HTMLLinkElement) {
           element.removeEventListener("load", listener);
@@ -430,9 +499,7 @@ extension BrowserModel {
           }
         }
         collectAdoptedStyleSheetRules(root);
-        if (root === document && document.documentElement) {
-          variablesStore.addInlineStyleForMatching(document.documentElement.style);
-        }
+        collectInlineVariableStyles(root);
         return styles;
       };
 

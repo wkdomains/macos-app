@@ -7,6 +7,12 @@ import Foundation
 import WebKit
 
 extension BrowserModel {
+    static let darkModeContentWorldName = "wkdomainsDarkMode"
+
+    static var darkModeContentWorld: WKContentWorld {
+        WKContentWorld.world(name: darkModeContentWorldName)
+    }
+
     func installPageTrackingScripts(on userContentController: WKUserContentController) {
         BrowserDebugLogging.log("[wkdomains-debug] scripts install handlers")
         userContentController.add(self, name: "wkdomainsXHR")
@@ -50,7 +56,7 @@ extension BrowserModel {
             if Self.darkModeUsesIsolatedContentWorld {
                 let pageProxyScript = Self.forcedDarkModePageProxyScript(disabledSites: settingsStore.darkDisabledSites)
                 let engineScript = Self.forcedDarkModeScript(disabledSites: settingsStore.darkDisabledSites)
-                BrowserDebugLogging.log("[wkdomains-debug] scripts add forcedDarkMode pageProxyLength=\(pageProxyScript.count) engineLength=\(engineScript.count) isolated=true")
+                BrowserDebugLogging.log("[wkdomains-debug] scripts add forcedDarkMode pageProxyLength=\(pageProxyScript.count) engineLength=\(engineScript.count) isolated=true world=\(Self.darkModeContentWorldName)")
                 userContentController.addUserScript(
                     WKUserScript(
                         source: pageProxyScript,
@@ -63,7 +69,7 @@ extension BrowserModel {
                         source: engineScript,
                         injectionTime: .atDocumentStart,
                         forMainFrameOnly: true,
-                        in: .defaultClient
+                        in: Self.darkModeContentWorld
                     )
                 )
             } else {

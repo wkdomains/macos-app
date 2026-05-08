@@ -136,6 +136,7 @@ extension BrowserModel {
           } catch (_) {}
         };
         const reportAdoptedSheetChange = (sheet) => {
+          markAdoptedSheetChanged(sheet);
           const owners = adoptedSheetOwners.get(sheet);
           if (owners) {
             for (const root of Array.from(owners)) {
@@ -250,24 +251,29 @@ extension BrowserModel {
           const declarationProto = CSSStyleDeclaration.prototype;
           const nativeSetProperty = declarationProto.setProperty;
           const nativeRemoveProperty = declarationProto.removeProperty;
+          const cssTextDescriptor = Object.getOwnPropertyDescriptor(declarationProto, "cssText");
           defineHiddenProperty(declarationProto, "__wkdomainsDarkModeProxy", true);
+
+          const reportDeclarationChange = (declaration, property) => {
+            const propertyName = property ? String(property) : "";
+            if (isGeneratedDarkModeProperty(propertyName)) {
+              return;
+            }
+            const adoptedSheet = adoptedDeclarationSheets.get(declaration);
+            if (adoptedSheet) {
+              reportAdoptedSheetChange(adoptedSheet);
+              return;
+            }
+            if (declaration.parentRule || propertyName.startsWith("--") || propertyName === "cssText") {
+              scheduleStyleSync(0);
+            }
+          };
 
           rememberPropertyDescriptor(declarationProto, "setProperty");
           declarationProto.setProperty = function(property, value, priority) {
             const result = nativeSetProperty.call(this, property, value, priority);
             if (!stylesheetProxyActive) return result;
-            const propertyName = property ? String(property) : "";
-            if (isGeneratedDarkModeProperty(propertyName)) {
-              return result;
-            }
-            const adoptedSheet = adoptedDeclarationSheets.get(this);
-            if (adoptedSheet) {
-              reportAdoptedSheetChange(adoptedSheet);
-              return result;
-            }
-            if (this.parentRule || propertyName.startsWith("--")) {
-              scheduleStyleSync(0);
-            }
+            reportDeclarationChange(this, property);
             return result;
           };
 
@@ -275,20 +281,65 @@ extension BrowserModel {
           declarationProto.removeProperty = function(property) {
             const result = nativeRemoveProperty.call(this, property);
             if (!stylesheetProxyActive) return result;
-            const propertyName = property ? String(property) : "";
-            if (isGeneratedDarkModeProperty(propertyName)) {
-              return result;
-            }
-            const adoptedSheet = adoptedDeclarationSheets.get(this);
-            if (adoptedSheet) {
-              reportAdoptedSheetChange(adoptedSheet);
-              return result;
-            }
-            if (this.parentRule || propertyName.startsWith("--")) {
-              scheduleStyleSync(0);
-            }
+            reportDeclarationChange(this, property);
             return result;
           };
+
+          if (cssTextDescriptor && cssTextDescriptor.set) {
+            rememberPropertyDescriptor(declarationProto, "cssText");
+            Object.defineProperty(declarationProto, "cssText", {
+              configurable: true,
+              enumerable: cssTextDescriptor.enumerable,
+              get: cssTextDescriptor.get ? function() { return cssTextDescriptor.get.call(this); } : undefined,
+              set(value) {
+                const result = cssTextDescriptor.set.call(this, value);
+                if (stylesheetProxyActive) reportDeclarationChange(this, "cssText");
+                return result;
+              }
+            });
+          }
+        }
+
+        if (window.CSSStyleRule && !CSSStyleRule.prototype.__wkdomainsDarkModeRuleProxy) {
+          const ruleProto = CSSStyleRule.prototype;
+          const selectorTextDescriptor = Object.getOwnPropertyDescriptor(ruleProto, "selectorText");
+          if (selectorTextDescriptor && selectorTextDescriptor.set) {
+            defineHiddenProperty(ruleProto, "__wkdomainsDarkModeRuleProxy", true);
+            rememberPropertyDescriptor(ruleProto, "selectorText");
+            Object.defineProperty(ruleProto, "selectorText", {
+              configurable: true,
+              enumerable: selectorTextDescriptor.enumerable,
+              get: selectorTextDescriptor.get ? function() { return selectorTextDescriptor.get.call(this); } : undefined,
+              set(value) {
+                const result = selectorTextDescriptor.set.call(this, value);
+                if (stylesheetProxyActive) reportSheetChange(this.parentStyleSheet);
+                return result;
+              }
+            });
+          }
+        }
+
+        if (window.CSSKeyframesRule && !CSSKeyframesRule.prototype.__wkdomainsDarkModeKeyframesProxy) {
+          const keyframesProto = CSSKeyframesRule.prototype;
+          const nativeAppendRule = keyframesProto.appendRule;
+          const nativeDeleteKeyframeRule = keyframesProto.deleteRule;
+          defineHiddenProperty(keyframesProto, "__wkdomainsDarkModeKeyframesProxy", true);
+          if (nativeAppendRule) {
+            rememberPropertyDescriptor(keyframesProto, "appendRule");
+            keyframesProto.appendRule = function(rule) {
+              const result = nativeAppendRule.call(this, rule);
+              if (stylesheetProxyActive && !isOwnGeneratedCSS(rule)) reportSheetChange(this.parentStyleSheet);
+              return result;
+            };
+          }
+          if (nativeDeleteKeyframeRule) {
+            rememberPropertyDescriptor(keyframesProto, "deleteRule");
+            keyframesProto.deleteRule = function(key) {
+              const result = nativeDeleteKeyframeRule.call(this, key);
+              if (stylesheetProxyActive) reportSheetChange(this.parentStyleSheet);
+              return result;
+            };
+          }
         }
 
         if (nativeRegisterProperty && !CSS.__wkdomainsDarkModeRegisterPropertyProxy) {

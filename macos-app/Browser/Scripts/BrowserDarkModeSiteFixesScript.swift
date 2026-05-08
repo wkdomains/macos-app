@@ -348,6 +348,8 @@ extension BrowserModel {
         return tokens.length > 0 && tokens.every(isLikelySiteFixURLToken);
       };
 
+      const isSiteFixSeparatorLine = (line) => /^={3,}$/.test(String(line || "").trim());
+
       const makeEmptyParsedSiteFix = (urls) => ({
         url: urls,
         invert: [],
@@ -402,6 +404,12 @@ extension BrowserModel {
             continue;
           }
 
+          if (isSiteFixSeparatorLine(trimmed)) {
+            commit();
+            hadBlankLine = true;
+            continue;
+          }
+
           const normalizedHeader = trimmed.toUpperCase();
           if (SITE_FIX_SECTION_MAP.has(normalizedHeader)) {
             section = SITE_FIX_SECTION_MAP.get(normalizedHeader);
@@ -421,6 +429,12 @@ extension BrowserModel {
           if ((hadBlankLine || !current) && isLikelySiteFixURLLine(trimmed)) {
             commit();
             current = makeEmptyParsedSiteFix(trimmed.split(/\s+/).filter(Boolean));
+            hadBlankLine = false;
+            continue;
+          }
+
+          if (current && !section && isLikelySiteFixURLLine(trimmed)) {
+            current.url.push(...trimmed.split(/\s+/).filter(Boolean));
             hadBlankLine = false;
             continue;
           }
@@ -535,7 +549,8 @@ extension BrowserModel {
 
       const parsedSiteFixResult = parseRelevantSiteFixConfig(SITE_FIX_CONFIG);
       const parsedSiteFixes = parsedSiteFixResult.fixes;
-      const allSiteFixes = SITE_FIXES.concat(parsedSiteFixes);
+      const builtInSiteFixesActive = SITE_FIX_CONFIG.length === 0;
+      const allSiteFixes = (builtInSiteFixesActive ? SITE_FIXES : []).concat(parsedSiteFixes);
       const matchingSiteFixes = allSiteFixes.filter((fix) => Array.isArray(fix.url) && fix.url.some(siteFixMatchesPattern));
       const genericSiteFixes = matchingSiteFixes.filter((fix) => fix.url.includes("*"));
       const specificSiteFixes = matchingSiteFixes.filter((fix) => !fix.url.includes("*"));
@@ -559,7 +574,8 @@ extension BrowserModel {
       const siteFixFlag = (key) => activeSiteFix && activeSiteFix[key] === true;
       const siteFixDebugStatus = () => ({
         configBytes: SITE_FIX_CONFIG.length,
-        builtInFixes: SITE_FIXES.length,
+        builtInFixes: builtInSiteFixesActive ? SITE_FIXES.length : 0,
+        fallbackBuiltInFixes: SITE_FIXES.length,
         parsedFixes: parsedSiteFixResult.parsedFixCount,
         selectedParsedFixes: parsedSiteFixes.length,
         matchedParsedFixes: parsedSiteFixResult.matchedFixCount,
