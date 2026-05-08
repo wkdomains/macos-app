@@ -10,6 +10,9 @@ extension BrowserModel {
       const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
       const scale = (value, inLow, inHigh, outLow, outHigh) => outLow + ((value - inLow) / (inHigh - inLow)) * (outHigh - outLow);
       const colorParseCache = new Map();
+      const modifiedColorCache = new Map();
+      const registeredColors = new Map();
+      let registeredColorStyleUpdateScheduled = false;
       const colorProbe = document.createElement("span");
       const COLOR_LITERAL_RE = /#[0-9a-f]{3,8}\b|\b[a-z][-_a-z0-9]*\b/gi;
       const CSS_COLOR_FUNCTION_NAMES = [
@@ -234,6 +237,16 @@ extension BrowserModel {
         return { name, tokens };
       };
 
+      const parseFunctionBody = (value, names) => {
+        const text = String(value || "").trim();
+        const open = text.indexOf("(");
+        const close = text.lastIndexOf(")");
+        if (open < 0 || close <= open) return null;
+        const name = text.slice(0, open).trim().toLowerCase();
+        if (!names.includes(name)) return null;
+        return { name, body: text.slice(open + 1, close).trim() };
+      };
+
       const parseLightness = (token, scaleValue) => {
         const value = String(token || "").trim().toLowerCase();
         if (value === "none") return 0;
@@ -314,6 +327,75 @@ extension BrowserModel {
         a
       });
 
+      const sRGBToXYZD65 = ({ r, g, b }) => {
+        const lr = sRGBToLinear(r / 255);
+        const lg = sRGBToLinear(g / 255);
+        const lb = sRGBToLinear(b / 255);
+        return {
+          x: 0.4124564 * lr + 0.3575761 * lg + 0.1804375 * lb,
+          y: 0.2126729 * lr + 0.7151522 * lg + 0.0721750 * lb,
+          z: 0.0193339 * lr + 0.1191920 * lg + 0.9503041 * lb
+        };
+      };
+
+      const xyzD65ToD50 = ({ x, y, z }) => ({
+        x: 1.0478112 * x + 0.0228866 * y - 0.0501270 * z,
+        y: 0.0295424 * x + 0.9904844 * y - 0.0170491 * z,
+        z: -0.0092345 * x + 0.0150436 * y + 0.7521316 * z
+      });
+
+      const xyzD50ToLab = ({ x, y, z }, alpha) => {
+        const epsilon = 216 / 24389;
+        const kappa = 24389 / 27;
+        const f = (value) => value > epsilon
+          ? Math.cbrt(value)
+          : (kappa * value + 16) / 116;
+        const fx = f(x / 0.96422);
+        const fy = f(y);
+        const fz = f(z / 0.82521);
+        return {
+          l: 116 * fy - 16,
+          a: 500 * (fx - fy),
+          b: 200 * (fy - fz),
+          alpha
+        };
+      };
+
+      const sRGBToLab = (color) => xyzD50ToLab(xyzD65ToD50(sRGBToXYZD65(color)), color.a == null ? 1 : color.a);
+
+      const sRGBToOKLab = (color) => {
+        const lr = sRGBToLinear(color.r / 255);
+        const lg = sRGBToLinear(color.g / 255);
+        const lb = sRGBToLinear(color.b / 255);
+        const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+        const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+        const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+        return {
+          l: 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+          a: 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+          b: 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+          alpha: color.a == null ? 1 : color.a
+        };
+      };
+
+      const labLikeToLCH = ({ l, a: axisA, b: axisB, alpha }) => {
+        const c = Math.sqrt(axisA * axisA + axisB * axisB);
+        const h = ((Math.atan2(axisB, axisA) * 180 / Math.PI) + 360) % 360;
+        return { l, c, h, alpha };
+      };
+
+      const displayP3ToSRGB = (c1, c2, c3, alpha) => {
+        const r = sRGBToLinear(c1);
+        const g = sRGBToLinear(c2);
+        const b = sRGBToLinear(c3);
+        return xyzD65ToSRGB({
+          x: 0.48657095 * r + 0.26566769 * g + 0.19821729 * b,
+          y: 0.22897456 * r + 0.69173852 * g + 0.07928691 * b,
+          z: 0.00000000 * r + 0.04511338 * g + 1.04394437 * b,
+          a: alpha
+        });
+      };
+
       const parseColorSpaceFunction = (value) => {
         const parsed = parseColorFunctionTokens(value, ["color"]);
         if (!parsed || parsed.tokens.length < 4) return null;
@@ -335,15 +417,13 @@ extension BrowserModel {
           };
         }
         if (space === "display-p3") {
-          const r = sRGBToLinear(c1);
-          const g = sRGBToLinear(c2);
-          const b = sRGBToLinear(c3);
-          return xyzD65ToSRGB({
-            x: 0.48657095 * r + 0.26566769 * g + 0.19821729 * b,
-            y: 0.22897456 * r + 0.69173852 * g + 0.07928691 * b,
-            z: 0.00000000 * r + 0.04511338 * g + 1.04394437 * b,
-            a: alpha
-          });
+          return displayP3ToSRGB(c1, c2, c3, alpha);
+        }
+        if (space === "xyz" || space === "xyz-d65") {
+          return xyzD65ToSRGB({ x: c1, y: c2, z: c3, a: alpha });
+        }
+        if (space === "xyz-d50") {
+          return xyzD50ToSRGB({ x: c1, y: c2, z: c3, a: alpha });
         }
         return null;
       };
@@ -491,12 +571,214 @@ extension BrowserModel {
         return parseColor(parts[1]) || parseColor(parts[0]);
       };
 
+      const readRelativeSourceColor = (body) => {
+        const text = String(body || "").trim();
+        if (!text.toLowerCase().startsWith("from ")) return null;
+        const sourceStart = 5;
+        let sourceEnd = sourceStart;
+        if (text[sourceStart] === "#") {
+          sourceEnd = sourceStart + 1;
+          while (sourceEnd < text.length && /[0-9a-f]/i.test(text[sourceEnd])) sourceEnd += 1;
+        } else {
+          const open = text.indexOf("(", sourceStart);
+          const firstSpace = text.indexOf(" ", sourceStart);
+          if (open >= 0 && (firstSpace < 0 || open < firstSpace)) {
+            const close = findMatchingParen(text, open);
+            if (close < 0) return null;
+            sourceEnd = close + 1;
+          } else {
+            while (sourceEnd < text.length && !/\s/.test(text[sourceEnd])) sourceEnd += 1;
+          }
+        }
+
+        const sourceText = text.slice(sourceStart, sourceEnd).trim();
+        const source = parseColor(sourceText);
+        if (!source) return null;
+        return {
+          source,
+          rest: text.slice(sourceEnd).trim()
+        };
+      };
+
+      const splitRelativeComponents = (value) => {
+        const text = String(value || "").trim();
+        const slash = (() => {
+          let depth = 0;
+          for (let index = 0; index < text.length; index += 1) {
+            const char = text[index];
+            if (char === "(") depth += 1;
+            else if (char === ")") depth = Math.max(0, depth - 1);
+            else if (char === "/" && depth === 0) return index;
+          }
+          return -1;
+        })();
+        const channelText = slash >= 0 ? text.slice(0, slash) : text;
+        const alphaText = slash >= 0 ? text.slice(slash + 1).trim() : "";
+        return {
+          channels: channelText.split(/\s+/).filter(Boolean),
+          alpha: alphaText || ""
+        };
+      };
+
+      const relativeChannelValue = (token, channels, fallback, parser) => {
+        const value = String(token || "").trim().toLowerCase();
+        if (!value) return fallback;
+        if (value === "none") return 0;
+        if (Object.prototype.hasOwnProperty.call(channels, value)) return channels[value];
+        return parser(value);
+      };
+
+      const parseRelativeColor = (value) => {
+        const parsed = parseFunctionBody(value, ["rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color"]);
+        if (!parsed || !parsed.body.toLowerCase().startsWith("from ")) return null;
+        const sourceDetails = readRelativeSourceColor(parsed.body);
+        if (!sourceDetails) return null;
+
+        const components = splitRelativeComponents(sourceDetails.rest);
+        const source = sourceDetails.source;
+        const alpha = components.alpha
+          ? relativeChannelValue(components.alpha, { alpha: source.a ?? 1, a: source.a ?? 1 }, source.a ?? 1, (token) => parseComponent(token, true))
+          : (source.a ?? 1);
+
+        if (parsed.name === "color") {
+          const space = String(components.channels[0] || "").toLowerCase();
+          const channelTokens = components.channels.slice(1);
+          const unitChannels = {
+            r: source.r / 255,
+            g: source.g / 255,
+            b: source.b / 255,
+            alpha: source.a ?? 1,
+            a: source.a ?? 1
+          };
+
+          if (space === "srgb" || space === "display-p3") {
+            const c1 = relativeChannelValue(channelTokens[0], unitChannels, unitChannels.r, parseUnitColorComponent);
+            const c2 = relativeChannelValue(channelTokens[1], unitChannels, unitChannels.g, parseUnitColorComponent);
+            const c3 = relativeChannelValue(channelTokens[2], unitChannels, unitChannels.b, parseUnitColorComponent);
+            return space === "display-p3"
+              ? displayP3ToSRGB(c1, c2, c3, alpha)
+              : { r: c1 * 255, g: c2 * 255, b: c3 * 255, a: alpha };
+          }
+
+          if (space === "srgb-linear") {
+            const linearChannels = {
+              r: sRGBToLinear(source.r / 255),
+              g: sRGBToLinear(source.g / 255),
+              b: sRGBToLinear(source.b / 255),
+              alpha: source.a ?? 1,
+              a: source.a ?? 1
+            };
+            return {
+              r: linearRGBToSRGB(relativeChannelValue(channelTokens[0], linearChannels, linearChannels.r, parseUnitColorComponent)),
+              g: linearRGBToSRGB(relativeChannelValue(channelTokens[1], linearChannels, linearChannels.g, parseUnitColorComponent)),
+              b: linearRGBToSRGB(relativeChannelValue(channelTokens[2], linearChannels, linearChannels.b, parseUnitColorComponent)),
+              a: alpha
+            };
+          }
+
+          if (space === "xyz" || space === "xyz-d65" || space === "xyz-d50") {
+            const xyz = space === "xyz-d50" ? xyzD65ToD50(sRGBToXYZD65(source)) : sRGBToXYZD65(source);
+            const xyzChannels = { x: xyz.x, y: xyz.y, z: xyz.z, alpha: source.a ?? 1, a: source.a ?? 1 };
+            const next = {
+              x: relativeChannelValue(channelTokens[0], xyzChannels, xyz.x, (token) => parseAxis(token, 1)),
+              y: relativeChannelValue(channelTokens[1], xyzChannels, xyz.y, (token) => parseAxis(token, 1)),
+              z: relativeChannelValue(channelTokens[2], xyzChannels, xyz.z, (token) => parseAxis(token, 1)),
+              a: alpha
+            };
+            return space === "xyz-d50" ? xyzD50ToSRGB(next) : xyzD65ToSRGB(next);
+          }
+
+          return null;
+        }
+
+        if (parsed.name === "rgb" || parsed.name === "rgba") {
+          const channels = { r: source.r, g: source.g, b: source.b, alpha: source.a ?? 1, a: source.a ?? 1 };
+          return {
+            r: relativeChannelValue(components.channels[0], channels, source.r, (token) => parseComponent(token)),
+            g: relativeChannelValue(components.channels[1], channels, source.g, (token) => parseComponent(token)),
+            b: relativeChannelValue(components.channels[2], channels, source.b, (token) => parseComponent(token)),
+            a: alpha
+          };
+        }
+
+        if (parsed.name === "hsl" || parsed.name === "hsla") {
+          const hsl = rgbToHSL(source);
+          const channels = { h: hsl.h, s: hsl.s, l: hsl.l, alpha: source.a ?? 1, a: source.a ?? 1 };
+          return hslToRGB({
+            h: relativeChannelValue(components.channels[0], channels, hsl.h, parseHue),
+            s: relativeChannelValue(components.channels[1], channels, hsl.s, (token) => clamp(Number.parseFloat(token) / (String(token).endsWith("%") ? 100 : 1), 0, 1)),
+            l: relativeChannelValue(components.channels[2], channels, hsl.l, (token) => clamp(Number.parseFloat(token) / (String(token).endsWith("%") ? 100 : 1), 0, 1)),
+            a: alpha
+          });
+        }
+
+        if (parsed.name === "hwb") {
+          const hsl = rgbToHSL(source);
+          const white = Math.min(source.r, source.g, source.b) / 255;
+          const black = 1 - Math.max(source.r, source.g, source.b) / 255;
+          const channels = { h: hsl.h, w: white, b: black, alpha: source.a ?? 1, a: source.a ?? 1 };
+          const h = relativeChannelValue(components.channels[0], channels, hsl.h, parseHue);
+          const w = relativeChannelValue(components.channels[1], channels, white, (token) => clamp(Number.parseFloat(token) / (String(token).endsWith("%") ? 100 : 1), 0, 1));
+          const blackness = relativeChannelValue(components.channels[2], channels, black, (token) => clamp(Number.parseFloat(token) / (String(token).endsWith("%") ? 100 : 1), 0, 1));
+          const hueColor = hslToRGB({ h, s: 1, l: 0.5, a: 1 });
+          const factor = Math.max(0, 1 - w - blackness);
+          return {
+            r: hueColor.r * factor + w * 255,
+            g: hueColor.g * factor + w * 255,
+            b: hueColor.b * factor + w * 255,
+            a: alpha
+          };
+        }
+
+        if (parsed.name === "lab" || parsed.name === "oklab") {
+          const sourceLab = parsed.name === "oklab" ? sRGBToOKLab(source) : sRGBToLab(source);
+          const channels = { l: sourceLab.l, a: sourceLab.a, b: sourceLab.b, alpha: source.a ?? 1 };
+          const next = {
+            l: relativeChannelValue(
+              components.channels[0],
+              channels,
+              sourceLab.l,
+              (token) => clamp(parseLightness(token, parsed.name === "oklab" ? 1 : 100), 0, parsed.name === "oklab" ? 1 : 100)
+            ),
+            a: relativeChannelValue(components.channels[1], channels, sourceLab.a, (token) => parseAxis(token, parsed.name === "oklab" ? 0.4 : 125)),
+            b: relativeChannelValue(components.channels[2], channels, sourceLab.b, (token) => parseAxis(token, parsed.name === "oklab" ? 0.4 : 125)),
+            alpha
+          };
+          return parsed.name === "oklab" ? oklabToSRGB(next) : labToSRGB(next);
+        }
+
+        if (parsed.name === "lch" || parsed.name === "oklch") {
+          const sourceLCH = labLikeToLCH(parsed.name === "oklch" ? sRGBToOKLab(source) : sRGBToLab(source));
+          const channels = { l: sourceLCH.l, c: sourceLCH.c, h: sourceLCH.h, alpha: source.a ?? 1 };
+          const lightnessScale = parsed.name === "oklch" ? 1 : 100;
+          const chromaScale = parsed.name === "oklch" ? 0.4 : 150;
+          const l = relativeChannelValue(components.channels[0], channels, sourceLCH.l, (token) => clamp(parseLightness(token, lightnessScale), 0, lightnessScale));
+          const c = relativeChannelValue(components.channels[1], channels, sourceLCH.c, (token) => parseAxis(token, chromaScale));
+          const h = relativeChannelValue(components.channels[2], channels, sourceLCH.h, parseHue) * Math.PI / 180;
+          const next = {
+            l,
+            a: c * Math.cos(h),
+            b: c * Math.sin(h),
+            alpha
+          };
+          return parsed.name === "oklch" ? oklabToSRGB(next) : labToSRGB(next);
+        }
+
+        return null;
+      };
+
+      const unwrapGeneratedColorFallback = (value) => {
+        const text = String(value || "").trim();
+        const match = text.match(/^var\([^,]+,\s*([\s\S]+)\)$/);
+        return match ? match[1].trim() : text;
+      };
+
       const replaceRawColorValue = (value, transformer) => {
         const color = parseRawColorValue(value);
         if (!color) return null;
         const transformed = transformer(color);
         if (!transformed) return null;
-        const parsed = parseColor(transformed);
+        const parsed = parseColor(unwrapGeneratedColorFallback(transformed));
         if (!parsed) return transformed;
         const alpha = color.a == null ? 1 : color.a;
         const rawText = String(value || "");
@@ -535,6 +817,8 @@ extension BrowserModel {
         const hex = parseHexColor(text);
         if (hex) return hex;
         if (NAMED_COLORS[text]) return NAMED_COLORS[text];
+        const relative = parseRelativeColor(text);
+        if (relative) return relative;
         const hsl = parseHSLLike(text);
         if (hsl) return hsl;
         const hwb = parseHWBLike(text);
@@ -637,6 +921,81 @@ extension BrowserModel {
         a: a.a + (b.a - a.a) * amount
       });
 
+      const colorCacheKey = (color) => {
+        const r = Math.round(clamp(color.r, 0, 255));
+        const g = Math.round(clamp(color.g, 0, 255));
+        const b = Math.round(clamp(color.b, 0, 255));
+        const a = Math.round(clamp(color.a == null ? 1 : color.a, 0, 1) * 1000);
+        return `${r},${g},${b},${a}`;
+      };
+
+      const colorVariableID = (color) => {
+        const channel = (value) => Math.round(clamp(value, 0, 255)).toString(16).padStart(2, "0");
+        const alpha = Math.round(clamp(color.a == null ? 1 : color.a, 0, 1) * 255);
+        return `${channel(color.r)}${channel(color.g)}${channel(color.b)}${alpha < 255 ? channel(alpha) : ""}`;
+      };
+
+      const scheduleRegisteredColorStyleUpdate = () => {
+        if (registeredColorStyleUpdateScheduled) return;
+        registeredColorStyleUpdateScheduled = true;
+        queueMicrotask(() => {
+          registeredColorStyleUpdateScheduled = false;
+          try {
+            const style = findStaticStyle("wkdomains-darkreader--variables", document);
+            if (style) style.textContent = getVariablesStyle();
+          } catch (_) {}
+        });
+      };
+
+      const registeredColorDeclarations = () => {
+        const declarations = [];
+        for (const registered of registeredColors.values()) {
+          for (const key of ["background", "text", "border"]) {
+            const entry = registered[key];
+            if (entry) declarations.push(`  ${entry.variable}: ${entry.value};`);
+          }
+        }
+        return declarations;
+      };
+
+      const registeredColorStats = () => {
+        let background = 0;
+        let text = 0;
+        let border = 0;
+        for (const registered of registeredColors.values()) {
+          if (registered.background) background += 1;
+          if (registered.text) text += 1;
+          if (registered.border) border += 1;
+        }
+        return { unique: registeredColors.size, background, text, border };
+      };
+
+      const modifyColorWithCache = (type, color, modifier) => {
+        if (!color) return null;
+        const key = `${type}:${colorCacheKey(color)}`;
+        if (modifiedColorCache.has(key)) return modifiedColorCache.get(key);
+
+        const value = modifier(color);
+        if (!value) {
+          modifiedColorCache.set(key, null);
+          return null;
+        }
+
+        const sourceKey = colorCacheKey(color);
+        let registered = registeredColors.get(sourceKey);
+        if (!registered) {
+          registered = { parsed: { ...color } };
+          registeredColors.set(sourceKey, registered);
+        }
+
+        const variable = `--darkreader-${type}-${colorVariableID(color)}`;
+        registered[type] = { variable, value };
+        const result = `var(${variable}, ${value})`;
+        modifiedColorCache.set(key, result);
+        scheduleRegisteredColorStyleUpdate();
+        return result;
+      };
+
       const backgroundPole = rgbToHSL(DEFAULT_BACKGROUND);
       const foregroundPole = rgbToHSL(DEFAULT_TEXT);
       const borderPole = rgbToHSL(DEFAULT_BORDER);
@@ -713,17 +1072,17 @@ extension BrowserModel {
 
       const modifyBackgroundColor = (color) => {
         if (!color || color.a < 0.05) return null;
-        return toRGBA(hslToRGB(modifyBackgroundHSL(rgbToHSL(color))));
+        return modifyColorWithCache("background", color, (value) => toRGBA(hslToRGB(modifyBackgroundHSL(rgbToHSL(value)))));
       };
 
       const modifyForegroundColor = (color) => {
         if (!color || color.a < 0.05) return null;
-        return toRGBA(hslToRGB(modifyForegroundHSL(rgbToHSL(color))));
+        return modifyColorWithCache("text", color, (value) => toRGBA(hslToRGB(modifyForegroundHSL(rgbToHSL(value)))));
       };
 
       const modifyBorderColor = (color) => {
         if (!color || color.a < 0.05) return null;
-        return toRGBA(hslToRGB(modifyBorderHSL(rgbToHSL(color))));
+        return modifyColorWithCache("border", color, (value) => toRGBA(hslToRGB(modifyBorderHSL(rgbToHSL(value)))));
       };
 
       const transformBackground = (color, element = null) => {

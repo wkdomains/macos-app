@@ -338,9 +338,9 @@ extension BrowserModel {
       ]);
 
       const isLikelySiteFixURLToken = (token) => {
-        const value = String(token || "").trim();
+        const value = String(token || "").trim().replace(/^https?:\/\//i, "");
         return value === "*"
-          || /^[*.a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?$/i.test(value);
+          || /^(?:localhost(?::\d+)?|[*.a-z0-9-]+(?:\.[*a-z0-9-]+)+(?::\d+)?)(?:\/\S*)?$/i.test(value);
       };
 
       const isLikelySiteFixURLLine = (line) => {
@@ -362,15 +362,33 @@ extension BrowserModel {
         enableCustomElementRegistryProxy: false
       });
 
-      const parseSiteFixConfig = (configText) => {
-        const fixes = [];
+      const parseRelevantSiteFixConfig = (configText) => {
+        const genericFixes = [];
+        const bestSpecificFixes = [];
+        let bestSpecificity = 0;
+        let parsedFixCount = 0;
+        let matchedFixCount = 0;
         let current = null;
         let section = null;
         let hadBlankLine = true;
 
         const commit = () => {
           if (current && current.url.length > 0) {
-            fixes.push(current);
+            parsedFixCount += 1;
+            const isGeneric = current.url.includes("*");
+            const specificity = siteFixSpecificity(current);
+            if (isGeneric) {
+              genericFixes.push(current);
+              matchedFixCount += 1;
+            } else if (specificity > 0) {
+              matchedFixCount += 1;
+              if (specificity > bestSpecificity) {
+                bestSpecificity = specificity;
+                bestSpecificFixes.splice(0, bestSpecificFixes.length, current);
+              } else if (specificity === bestSpecificity) {
+                bestSpecificFixes.push(current);
+              }
+            }
           }
           current = null;
           section = null;
@@ -421,11 +439,15 @@ extension BrowserModel {
         }
 
         commit();
-        return fixes;
+        return {
+          fixes: [...genericFixes, ...bestSpecificFixes],
+          parsedFixCount,
+          matchedFixCount
+        };
       };
 
       const siteFixPatternParts = (pattern) => {
-        const normalized = String(pattern || "").toLowerCase().replace(/^https?:\/\//, "");
+        const normalized = String(pattern || "").toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
         const slashIndex = normalized.indexOf("/");
         return {
           host: slashIndex >= 0 ? normalized.slice(0, slashIndex) : normalized,
@@ -511,7 +533,8 @@ extension BrowserModel {
         return combined;
       };
 
-      const parsedSiteFixes = parseSiteFixConfig(SITE_FIX_CONFIG);
+      const parsedSiteFixResult = parseRelevantSiteFixConfig(SITE_FIX_CONFIG);
+      const parsedSiteFixes = parsedSiteFixResult.fixes;
       const allSiteFixes = SITE_FIXES.concat(parsedSiteFixes);
       const matchingSiteFixes = allSiteFixes.filter((fix) => Array.isArray(fix.url) && fix.url.some(siteFixMatchesPattern));
       const genericSiteFixes = matchingSiteFixes.filter((fix) => fix.url.includes("*"));
@@ -537,7 +560,9 @@ extension BrowserModel {
       const siteFixDebugStatus = () => ({
         configBytes: SITE_FIX_CONFIG.length,
         builtInFixes: SITE_FIXES.length,
-        parsedFixes: parsedSiteFixes.length,
+        parsedFixes: parsedSiteFixResult.parsedFixCount,
+        selectedParsedFixes: parsedSiteFixes.length,
+        matchedParsedFixes: parsedSiteFixResult.matchedFixCount,
         matchingFixes: matchingSiteFixes.length,
         active: !!activeSiteFix,
         activeUrls: activeSiteFix ? activeSiteFix.url.slice(0, 12) : [],

@@ -451,13 +451,18 @@ extension BrowserModel {
             CSS.registerProperty = function(definition) {
               const result = nativeRegisterProperty.call(this, definition);
               try {
-                if (definition && definition.name && String(definition.syntax || "").includes("<color>")) {
+                const name = String(definition && definition.name || "");
+                const syntax = String(definition && definition.syntax || "");
+                const initialValue = String(definition && definition.initialValue || "");
+                const colorLikeRegistration = syntax.includes("<color>")
+                  || (/color|background|bg|border|fill|stroke|theme|surface|text|foreground/i.test(name) && /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|hwb\(|lab\(|lch\(|oklab\(|oklch\(|color\(|\b(?:white|black|red|green|blue|gray|grey|transparent)\b/i.test(initialValue));
+                if (definition && name && colorLikeRegistration) {
                   reportGlobalChange("register-property", {
                     definition: {
-                      name: String(definition.name || ""),
-                      syntax: String(definition.syntax || ""),
+                      name,
+                      syntax,
                       inherits: definition.inherits !== false,
-                      initialValue: String(definition.initialValue || "")
+                      initialValue
                     }
                   });
                 }

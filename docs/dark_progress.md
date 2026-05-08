@@ -156,22 +156,34 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Improved site-fix config plumbing:
   - `wkdomains.darkModeDynamicThemeFixesConfig` can now provide a Dark Reader-style dynamic-theme config corpus without editing the content script
   - `/api/v1/dark-mode` reports active site-fix counts, config size, matched URLs, CSS bytes, and proxy flags
+- Improved large config handling:
+  - the dynamic-theme config parser now keeps only the global block plus the most-specific matching block instead of building every parsed fix on every page
+  - parser status now reports total parsed fixes, selected parsed fixes, and matched parsed fixes
+  - URL patterns with schemes, ports, localhost, wildcards, and paths are accepted by the shared parser
+- Improved custom-property registration lifecycle:
+  - stylesheet `@property` registrations are recomputed per stylesheet pass and no longer live forever after the source sheet changes
+  - runtime `CSS.registerProperty()` registrations remain persistent, matching the browser API behavior
+  - `/api/v1/dark-mode` reports runtime and stylesheet custom-property registration counts separately
+- Expanded relative color handling:
+  - `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`, and `color()` relative forms now resolve source channels
+  - `color()` now handles `srgb`, `srgb-linear`, `display-p3`, `xyz`, `xyz-d65`, and `xyz-d50`
+  - modified colors are registered through a Dark Reader-style palette variable cache while raw RGB custom-property values still emit raw channels when they are used inside `rgb(var(--token))`
 
 ## Completion Estimates
 
-- Full `variablesStore` dependency graph for matching variables and dependents: 77%
+- Full `variablesStore` dependency graph for matching variables and dependents: 82%
 - Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 94%
 - Mature optimized DOM/style watchers: 83%
 - Robust adopted stylesheet management: 84%
-- Full stylesheet proxy behavior and cross-context coordination: 85%
-- Dark Reader's color pipeline and extensive config corpus: 64%
-- Mature fix selection/config parser behavior across many sites: 68%
-- Extension-world isolation: 58%
+- Full stylesheet proxy behavior and cross-context coordination: 87%
+- Dark Reader's color pipeline and extensive config corpus: 80%
+- Mature fix selection/config parser behavior across many sites: 82%
+- Extension-world isolation: 61%
 
 ## Remaining Gaps
 
-- Variables graph is still not a full Dark Reader port. Current estimate: 77%.
-  - no full variable sheet registration/release lifecycle
+- Variables graph is still not a full Dark Reader port. Current estimate: 82%.
+  - no full scoped variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - limited scoped variable handling
 - Per-stylesheet managers still need more mature behavior. Current estimate: 94%.
@@ -180,24 +192,26 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - CSS text import expansion for fetched copies
 - Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 83%.
 - Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 84%.
-- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 85%.
-- Color pipeline is still a major gap. Current estimate: 64%.
-  - no full Dark Reader palette/cache system
+- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 87%.
+- Color pipeline is still a major gap. Current estimate: 80%.
   - limited image analysis
-  - limited relative-color handling
   - no theme knob parity
-- Config/fix support is still incomplete. Current estimate: 68%.
-  - parser and runtime config injection exist, but no bundled Dark Reader config corpus yet
-  - no broad site corpus
+- Config/fix support is still incomplete. Current estimate: 82%.
+  - parser and runtime config injection exist, and large configs are now parsed in a relevant-only way, but no bundled Dark Reader config corpus is checked into the app yet
+  - broad corpus support depends on a UserDefaults string/path or a bundled resource supplied by the app build
   - only a small set of targeted fixes
-- Extension-world isolation is not solved. Current estimate: 58%.
+- Extension-world isolation is not solved. Current estimate: 61%.
   - the main engine is now isolated, but a page-world proxy is still required for page-owned stylesheet and shadow-root APIs
   - complex SPAs can still be perturbed more than they would be by Dark Reader's extension-world architecture
   - bridge behavior now has direct API visibility, startup work is chunked, and page-proxy events are batched, but it still needs runtime proving on Reddit, HN, and other noisy SPAs
   - prototype hooks now restore on cleanup, but the small proxy still executes in the page world while active
+  - getting this category above 90% likely requires a real extension/content-script architecture or a much thinner page-world bridge than WKUserScript can provide today
 
 ## Latest Validation
 
 - Combined dark-mode JavaScript passed `node --check`.
 - Page-world proxy JavaScript passed `node --check`.
+- Site-fix JavaScript with a non-empty sample config passed `node --check`.
+- Site-fix JavaScript generated with the full upstream Dark Reader `dynamic-theme-fixes.config` passed `node --check`.
 - Swift sources passed `xcrun swiftc -parse`.
+- Local API check was attempted, but `localhost:9001` was not listening during this pass.

@@ -15,7 +15,9 @@ extension BrowserModel {
         const name = String(definition.name || "");
         const syntax = String(definition.syntax || "");
         const sourceValue = String(definition.initialValue || "").trim();
-        if (!name.startsWith("--") || !syntax.includes("<color>") || !sourceValue) return;
+        const isColorRegistration = syntax.includes("<color>")
+          || (shouldTreatCustomPropertyAsRawColor(name) && (hasCSSColor(sourceValue) || parseRawColorValue(sourceValue)));
+        if (!name.startsWith("--") || !isColorRegistration || !sourceValue) return;
 
         const entries = [
           ["bg", modifyBackgroundColor],
@@ -43,7 +45,10 @@ extension BrowserModel {
         if (!definition || !definition.name) return;
         const name = String(definition.name || "");
         const syntax = String(definition.syntax || "");
-        if (!name.startsWith("--") || !syntax.includes("<color>")) return;
+        const sourceValue = String(definition.initialValue || "").trim();
+        const isColorRegistration = syntax.includes("<color>")
+          || (shouldTreatCustomPropertyAsRawColor(name) && (hasCSSColor(sourceValue) || parseRawColorValue(sourceValue)));
+        if (!name.startsWith("--") || !isColorRegistration) return;
         registeredCustomPropertyTypes.set(name, variableTypeNumberForProperty(name, definition.initialValue || ""));
         registerWrappedCustomProperties(definition);
         scheduleStyleSync(0);

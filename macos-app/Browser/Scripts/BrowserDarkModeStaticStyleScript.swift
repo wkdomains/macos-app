@@ -134,6 +134,7 @@ extension BrowserModel {
           --darkreader-border: ${toRGBA(DEFAULT_BORDER)};
           --darkreader-selection-background: rgb(67, 91, 122);
           --darkreader-selection-text: rgb(246, 248, 250);
+          ${registeredColorDeclarations().join("\n")}
         }
       `;
 

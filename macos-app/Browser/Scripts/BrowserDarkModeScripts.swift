@@ -11,7 +11,23 @@ extension BrowserModel {
     }
 
     static var darkModeSiteFixConfig: String {
-        UserDefaults.standard.string(forKey: "wkdomains.darkModeDynamicThemeFixesConfig") ?? ""
+        if let config = UserDefaults.standard.string(forKey: "wkdomains.darkModeDynamicThemeFixesConfig"), !config.isEmpty {
+            return config
+        }
+        if
+            let path = UserDefaults.standard.string(forKey: "wkdomains.darkModeDynamicThemeFixesConfigPath"),
+            !path.isEmpty,
+            let config = try? String(contentsOfFile: path, encoding: .utf8)
+        {
+            return config
+        }
+        if
+            let url = Bundle.main.url(forResource: "dynamic-theme-fixes", withExtension: "config"),
+            let config = try? String(contentsOf: url, encoding: .utf8)
+        {
+            return config
+        }
+        return ""
     }
 
     static let renderInvalidationScript = #"""

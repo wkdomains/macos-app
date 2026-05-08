@@ -22,6 +22,7 @@ extension BrowserModel {
           varValues.clear();
           varRefs.clear();
           reverseVarRefs.clear();
+          stylesheetCustomPropertyTypes.clear();
           rulesQueue.clear();
           inlineQueue.splice(0);
         };
@@ -51,7 +52,7 @@ extension BrowserModel {
           if (!property || !property.startsWith("--")) return;
           const text = String(value || "").trim();
           varValues.set(property, text);
-          const registeredType = registeredCustomPropertyTypes.get(property);
+          const registeredType = customPropertyTypeFor(property);
           if (registeredType) {
             resolveType(property, registeredType);
           }
@@ -108,8 +109,14 @@ extension BrowserModel {
           for (let index = 0; index < rules.length; index += 1) {
             const rule = rules[index];
             try {
-              if (rule.name && rule.syntax && String(rule.syntax).includes("<color>")) {
-                registeredCustomPropertyTypes.set(rule.name, variableTypeNumberForProperty(rule.name, rule.initialValue || ""));
+              if (rule.name && rule.syntax) {
+                const syntax = String(rule.syntax || "");
+                const initialValue = String(rule.initialValue || "");
+                const isColorRegistration = syntax.includes("<color>")
+                  || (shouldTreatCustomPropertyAsRawColor(rule.name) && (hasCSSColor(initialValue) || parseRawColorValue(initialValue)));
+                if (isColorRegistration) {
+                  stylesheetCustomPropertyTypes.set(rule.name, variableTypeNumberForProperty(rule.name, initialValue));
+                }
                 if (rule.initialValue) {
                   inspectVariable(rule.name, rule.initialValue);
                 }

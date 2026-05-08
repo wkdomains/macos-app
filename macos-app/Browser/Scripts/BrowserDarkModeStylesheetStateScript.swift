@@ -36,6 +36,7 @@ extension BrowserModel {
       const failedStyleSheetFetchURLsByElement = new WeakMap();
       const unavailableStyleElements = new WeakSet();
       const registeredCustomPropertyTypes = new Map();
+      const stylesheetCustomPropertyTypes = new Map();
       let fallbackWasCleared = false;
       const LOADING_STYLE_TIMEOUT = 3500;
       const STYLE_UPDATE_EVENT = "__darkreader__updateSheet";
@@ -52,6 +53,12 @@ extension BrowserModel {
           stylesheetProxyActive = wasActive;
         }
       };
+
+      const customPropertyTypeFor = (property) => (
+        stylesheetCustomPropertyTypes.get(property)
+        || registeredCustomPropertyTypes.get(property)
+        || 0
+      );
 
       const cssURLMatchesPattern = (url, pattern) => {
         const value = String(url || "");
