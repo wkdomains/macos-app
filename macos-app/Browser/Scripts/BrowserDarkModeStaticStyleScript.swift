@@ -122,11 +122,34 @@ extension BrowserModel {
           ...SHORTHAND_OVERRIDES.map((override) => [override.attr, override.prop, override.css])
         ];
 
-        return inlineOverrides.map(([attribute, property, cssProperty]) => [
+        const overrideRules = inlineOverrides.map(([attribute, property, cssProperty]) => [
           `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${attribute}] {`,
           `  ${cssProperty}: var(${property}) !important;`,
           "}"
-        ].join("\n")).join("\n");
+        ].join("\n"));
+
+        overrideRules.push([
+          `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${LEGACY_BACKGROUND_ATTRIBUTE}]:not([${COLOR_ATTRIBUTE}]) {`,
+          `  color: var(--wkdomains-forced-dark-legacy-color) !important;`,
+          "}",
+          `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${LEGACY_BACKGROUND_ATTRIBUTE}]:not([${COLOR_ATTRIBUTE}]) :where(a, span, td, th, p, div, font, b, i, em, strong, small):not([${COLOR_ATTRIBUTE}]) {`,
+          `  color: var(--wkdomains-forced-dark-legacy-color) !important;`,
+          "}",
+          `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body[${LEGACY_TEXT_ATTRIBUTE}] {`,
+          `  color: var(--wkdomains-forced-dark-legacy-text-color) !important;`,
+          "}",
+          `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body[${LEGACY_LINK_ATTRIBUTE}] a:link:not([${COLOR_ATTRIBUTE}]) {`,
+          `  color: var(--wkdomains-forced-dark-legacy-link-color) !important;`,
+          "}",
+          `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body[${LEGACY_VISITED_LINK_ATTRIBUTE}] a:visited:not([${COLOR_ATTRIBUTE}]) {`,
+          `  color: var(--wkdomains-forced-dark-legacy-vlink-color) !important;`,
+          "}",
+          `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body[${LEGACY_ACTIVE_LINK_ATTRIBUTE}] a:active:not([${COLOR_ATTRIBUTE}]) {`,
+          `  color: var(--wkdomains-forced-dark-legacy-alink-color) !important;`,
+          "}"
+        ].join("\n"));
+
+        return overrideRules.join("\n");
       };
 
       const getVariablesStyle = () => `

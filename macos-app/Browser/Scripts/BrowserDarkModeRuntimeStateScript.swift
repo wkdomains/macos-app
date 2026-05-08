@@ -31,7 +31,7 @@ extension BrowserModel {
         lastEventAt: 0,
         config: null
       };
-      const INLINE_STYLE_MUTATION_ATTRIBUTES = new Set(INLINE_STYLE_ATTRS);
+      const INLINE_STYLE_MUTATION_ATTRIBUTES = new Set([...INLINE_STYLE_ATTRS, ...LEGACY_BODY_STYLE_ATTRS]);
       const STYLE_SHEET_MUTATION_ATTRIBUTES = new Set(["href", "media", "disabled"]);
       const SURFACE_MUTATION_ATTRIBUTES = new Set(["class", "hidden", "open", "popover", "role", "aria-hidden", "aria-expanded", "aria-modal"]);
       let queuedMutations = [];

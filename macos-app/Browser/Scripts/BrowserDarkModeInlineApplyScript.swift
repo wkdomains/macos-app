@@ -173,6 +173,12 @@ extension BrowserModel {
         setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", null);
         element.removeAttribute(FORM_SURFACE_ATTRIBUTE);
         setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", null);
+        element.removeAttribute(LEGACY_BACKGROUND_ATTRIBUTE);
+        if (element && element.style) element.style.removeProperty("--wkdomains-forced-dark-legacy-color");
+        setOverride(element, LEGACY_TEXT_ATTRIBUTE, "--wkdomains-forced-dark-legacy-text-color", null);
+        setOverride(element, LEGACY_LINK_ATTRIBUTE, "--wkdomains-forced-dark-legacy-link-color", null);
+        setOverride(element, LEGACY_VISITED_LINK_ATTRIBUTE, "--wkdomains-forced-dark-legacy-vlink-color", null);
+        setOverride(element, LEGACY_ACTIVE_LINK_ATTRIBUTE, "--wkdomains-forced-dark-legacy-alink-color", null);
         setOverride(element, IMAGE_FILTER_ATTRIBUTE, "--wkdomains-forced-dark-image-filter", null);
         setOverride(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", null);
         setOverride(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", null);
@@ -228,10 +234,52 @@ extension BrowserModel {
           return;
         }
 
+        const normalizeLegacyColorValue = (value) => {
+          const text = String(value || "").trim();
+          if (/^[0-9a-f]{3}$/i.test(text) || /^[0-9a-f]{4}$/i.test(text) || /^[0-9a-f]{6}$/i.test(text) || /^[0-9a-f]{8}$/i.test(text)) return `#${text}`;
+          return text;
+        };
+
+        const setLegacyBackgroundTextFallback = (element, sourceColorValue) => {
+          const sourceBackground = parseColor(sourceColorValue);
+          const transformedBackground = sourceBackground ? parseColor(transformBackground(sourceBackground, element)) : null;
+          const sourceStyle = captureSourceStyle(element) || getComputedStyle(element);
+          const sourceColor = parseColor(sourceStyle.color) || DEFAULT_TEXT;
+          const transformedColor = transformForeground(sourceColor) || toThemeRGBA(themeTextColor());
+          element.setAttribute(LEGACY_BACKGROUND_ATTRIBUTE, "");
+          if (
+            transformedBackground
+            && relativeLuminance(transformedBackground) < 0.48
+            && relativeLuminance(sourceColor) < 0.56
+          ) {
+            element.style.setProperty("--wkdomains-forced-dark-legacy-color", transformedColor);
+          } else {
+            element.style.removeProperty("--wkdomains-forced-dark-legacy-color");
+          }
+        };
+
         if (element.hasAttribute("bgcolor")) {
-          let value = element.getAttribute("bgcolor") || "";
-          if (/^[0-9a-f]{3}$/i.test(value) || /^[0-9a-f]{6}$/i.test(value)) value = `#${value}`;
+          const value = normalizeLegacyColorValue(element.getAttribute("bgcolor") || "");
           setInlineCustomProp(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", "background-color", "background-color", value);
+          setLegacyBackgroundTextFallback(element, value);
+        } else {
+          element.removeAttribute(LEGACY_BACKGROUND_ATTRIBUTE);
+          element.style.removeProperty("--wkdomains-forced-dark-legacy-color");
+        }
+
+        if (element.tagName && element.tagName.toUpperCase() === "BODY") {
+          const legacyBodyColorAttrs = [
+            ["text", LEGACY_TEXT_ATTRIBUTE, "--wkdomains-forced-dark-legacy-text-color"],
+            ["link", LEGACY_LINK_ATTRIBUTE, "--wkdomains-forced-dark-legacy-link-color"],
+            ["vlink", LEGACY_VISITED_LINK_ATTRIBUTE, "--wkdomains-forced-dark-legacy-vlink-color"],
+            ["alink", LEGACY_ACTIVE_LINK_ATTRIBUTE, "--wkdomains-forced-dark-legacy-alink-color"]
+          ];
+          for (const [sourceAttribute, markerAttribute, customProperty] of legacyBodyColorAttrs) {
+            const value = element.hasAttribute(sourceAttribute)
+              ? transformCSSValue("color", normalizeLegacyColorValue(element.getAttribute(sourceAttribute) || ""), element)
+              : null;
+            setOverride(element, markerAttribute, customProperty, value);
+          }
         }
 
         if ((element === document.documentElement || element === document.body) && element.hasAttribute("background")) {

@@ -17,6 +17,11 @@ extension BrowserModel {
       const BACKGROUND_ATTRIBUTE = "data-wkdomains-forced-dark-bg";
       const FORM_SURFACE_ATTRIBUTE = "data-wkdomains-forced-dark-form-surface";
       const BACKGROUND_IMAGE_ATTRIBUTE = "data-wkdomains-forced-dark-bg-image";
+      const LEGACY_BACKGROUND_ATTRIBUTE = "data-wkdomains-forced-dark-legacy-bg";
+      const LEGACY_TEXT_ATTRIBUTE = "data-wkdomains-forced-dark-legacy-text";
+      const LEGACY_LINK_ATTRIBUTE = "data-wkdomains-forced-dark-legacy-link";
+      const LEGACY_VISITED_LINK_ATTRIBUTE = "data-wkdomains-forced-dark-legacy-vlink";
+      const LEGACY_ACTIVE_LINK_ATTRIBUTE = "data-wkdomains-forced-dark-legacy-alink";
       const IMAGE_FILTER_ATTRIBUTE = "data-wkdomains-forced-dark-image-filter";
       const FILL_ATTRIBUTE = "data-wkdomains-forced-dark-fill";
       const STROKE_ATTRIBUTE = "data-wkdomains-forced-dark-stroke";
@@ -47,7 +52,11 @@ extension BrowserModel {
         "SYMBOL", "STOP", "LINEARGRADIENT", "RADIALGRADIENT", "TEXT", "TSPAN"
       ]);
       const INLINE_STYLE_ATTRS = ["style", "fill", "stop-color", "stroke", "bgcolor", "color", "background"];
-      const INLINE_STYLE_SELECTOR = INLINE_STYLE_ATTRS.map((attr) => `[${attr}]`).join(", ");
+      const LEGACY_BODY_STYLE_ATTRS = ["text", "link", "vlink", "alink"];
+      const INLINE_STYLE_SELECTOR = [
+        ...INLINE_STYLE_ATTRS.map((attr) => `[${attr}]`),
+        ...LEGACY_BODY_STYLE_ATTRS.map((attr) => `body[${attr}]`)
+      ].join(", ");
       const BORDER_OVERRIDES = [
         { js: "borderTopColor", css: "border-top-color", attr: "data-wkdomains-forced-dark-border-top", prop: "--wkdomains-forced-dark-border-top" },
         { js: "borderRightColor", css: "border-right-color", attr: "data-wkdomains-forced-dark-border-right", prop: "--wkdomains-forced-dark-border-right" },
@@ -72,6 +81,11 @@ extension BrowserModel {
         BACKGROUND_ATTRIBUTE,
         FORM_SURFACE_ATTRIBUTE,
         BACKGROUND_IMAGE_ATTRIBUTE,
+        LEGACY_BACKGROUND_ATTRIBUTE,
+        LEGACY_TEXT_ATTRIBUTE,
+        LEGACY_LINK_ATTRIBUTE,
+        LEGACY_VISITED_LINK_ATTRIBUTE,
+        LEGACY_ACTIVE_LINK_ATTRIBUTE,
         IMAGE_FILTER_ATTRIBUTE,
         FILL_ATTRIBUTE,
         STROKE_ATTRIBUTE,

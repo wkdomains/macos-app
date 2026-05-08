@@ -86,6 +86,8 @@ Inline DOM handling is intentionally narrower than the earlier broad fallback pa
 - Root and element application are time-budgeted, watchdog-protected, and visibility-aware.
 - Generated inline properties are ignored in cache keys so our own writes do not repeatedly retrigger conversion.
 - Inline style handling includes Dark Reader-style loop protection, the ProseMirror node-view-content guard, four-digit legacy `color` normalization, and small-SVG fill classification.
+- Legacy HTML background and body text/link attributes now get generic transformed fallbacks when old document markup would otherwise strand dark inherited/link text.
+- Post-load computed fallback covers broader light header, titlebar, toolbar, and labeled region surfaces without adding app-specific selectors.
 
 Adopted stylesheet handling is solid for WebKit:
 
@@ -113,7 +115,7 @@ Config/fix support is much closer to upstream:
 
 ## Parity Estimate
 
-Overall dynamic-theme parity against Dark Reader's current `index.ts` orchestration is about 96%.
+Overall dynamic-theme parity against Dark Reader's current `index.ts` orchestration is about 97%.
 
 - Startup, static styles, lifecycle, cleanup: 97%
 - Per-stylesheet managers and loading lifecycle: 99%
@@ -122,8 +124,8 @@ Overall dynamic-theme parity against Dark Reader's current `index.ts` orchestrat
 - Adopted stylesheet handling: 95%
 - Stylesheet proxy and page/isolated-world bridge: 98%
 - Dynamic-theme fix config parsing and selection: 96%
-- Color parsing/conversion coverage: 94%
-- Image/background analysis: 84%
+- Color parsing/conversion coverage: 95%
+- Image/background analysis: 85%
 - Extension-world isolation for this WKWebView architecture: 92%
 
 The remaining delta is not one big missing subsystem. It is mostly exact upstream color math, broader bitmap/background image analysis, Dark Reader's fuller variables sheet lifecycle, and adopted stylesheet fallback behavior for browser paths that do not map perfectly to WKWebView.
@@ -164,6 +166,6 @@ Keep future entries focused on:
 Current useful validation state:
 
 - Hacker News no longer needs a site-specific stylesheet bypass.
-- Gmail startup work has been narrowed to Dark Reader-like inline candidates plus sliced stylesheet rendering.
+- Gmail startup work has been narrowed to Dark Reader-like inline candidates plus sliced stylesheet rendering, and late light title/header surfaces are handled by the generic surface path.
 - Reddit remains the primary stress case for shadow roots, adopted stylesheets, and bursty CSSOM updates.
 - The bundled upstream config corpus is the active source of site-specific behavior when present.

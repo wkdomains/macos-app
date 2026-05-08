@@ -45,16 +45,24 @@ extension BrowserModel {
         "[role='article']",
         "[role='dialog']",
         "[role='alertdialog']",
+        "[role='banner']",
+        "[role='toolbar']",
+        "[role='heading']",
         "[role='region'][aria-label]",
         "[role='form']",
+        "header",
         "[class*='modal' i]",
         "[class*='dialog' i]",
         "[class*='popover' i]",
         "[class*='popup' i]",
         "[class*='drawer' i]",
+        "[class*='header' i]",
         "[class*='panel' i]",
         "[class*='surface' i]",
-        "[class*='sheet' i]"
+        "[class*='sheet' i]",
+        "[class*='titlebar' i]",
+        "[class*='title-bar' i]",
+        "[class*='toolbar' i]"
       ].join(", ");
       const ROOT_STYLE_OVERRIDE_SELECTOR = INLINE_STYLE_SELECTOR;
       const PRIORITY_STYLE_OVERRIDE_SELECTOR = INLINE_STYLE_SELECTOR;
@@ -103,10 +111,15 @@ extension BrowserModel {
         inlineStyleSourceKeyFromText(oldValue) !== inlineStyleSourceKeyForElement(element)
       );
 
-      const inlineCacheKeyFor = (element) => INLINE_STYLE_ATTRS.map((attr) => {
-        if (attr === "style") return `style=${inlineStyleSourceKeyForElement(element)}`;
-        return `${attr}=${element.getAttribute(attr) || ""}`;
-      }).join("\n");
+      const inlineCacheKeyFor = (element) => [
+        ...INLINE_STYLE_ATTRS.map((attr) => {
+          if (attr === "style") return `style=${inlineStyleSourceKeyForElement(element)}`;
+          return `${attr}=${element.getAttribute(attr) || ""}`;
+        }),
+        ...(element && element.tagName && element.tagName.toUpperCase() === "BODY"
+          ? LEGACY_BODY_STYLE_ATTRS.map((attr) => `${attr}=${element.getAttribute(attr) || ""}`)
+          : [])
+      ].join("\n");
 
       const elementApplyCacheKeyFor = (element) => [
         elementApplyCacheVersion,
@@ -143,11 +156,12 @@ extension BrowserModel {
         const role = String(element.getAttribute("role") || "").toLowerCase();
         if (["main", "article", "dialog", "alertdialog", "form"].includes(role)) return true;
         if (role === "region" && element.hasAttribute("aria-label")) return true;
+        if (["banner", "toolbar", "heading"].includes(role)) return true;
         if (element.hasAttribute("popover") || element.getAttribute("aria-modal") === "true") return true;
-        if (element.matches("main, article, dialog, form")) return true;
+        if (element.matches("main, article, dialog, form, header")) return true;
 
         const className = String(element.className || "");
-        if (/\b(modal|dialog|popover|popup|drawer|panel|surface|sheet|editor|toolbar)\b/i.test(className)) {
+        if (/\b(modal|dialog|popover|popup|drawer|panel|surface|sheet|editor|toolbar|titlebar|title-bar|header)\b/i.test(className)) {
           return true;
         }
 
