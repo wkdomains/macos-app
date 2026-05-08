@@ -223,9 +223,15 @@ extension BrowserModel {
             }
             if (
               STYLE_SHEET_MUTATION_ATTRIBUTES.has(mutation.attributeName)
-              && shouldManageStyle(mutation.target)
+              && mutation.target
+              && mutation.target.matches
+              && mutation.target.matches(STYLE_SELECTOR)
             ) {
-              stylesChanged = true;
+              if (styleManagers.has(mutation.target) && shouldManageStyle(mutation.target)) {
+                queueStyleManagerUpdate(mutation.target);
+              } else {
+                stylesChanged = true;
+              }
             }
             continue;
           }

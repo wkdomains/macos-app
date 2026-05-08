@@ -52,6 +52,14 @@ extension BrowserModel {
         styleRenderScheduled = false;
         styleRenderBatches = 0;
         styleRenderJobsCompleted = 0;
+        cancelStyleManagerUpdates();
+        styleManagerUpdateBatches = 0;
+        styleManagerUpdatesCompleted = 0;
+        styleManagerUpdatesSkipped = 0;
+        cancelAdoptedStyleUpdates();
+        adoptedStyleUpdateBatches = 0;
+        adoptedStyleUpdatesCompleted = 0;
+        adoptedStyleUpdatesSkipped = 0;
         shadowProxyActive = false;
         customElementRegistryProxyActive = false;
         cancelStyleSync();

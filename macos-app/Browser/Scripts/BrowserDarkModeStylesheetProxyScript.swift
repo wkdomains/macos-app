@@ -138,27 +138,37 @@ extension BrowserModel {
         const reportAdoptedSheetChange = (sheet) => {
           markAdoptedSheetChanged(sheet);
           const owners = adoptedSheetOwners.get(sheet);
+          let dispatched = false;
           if (owners) {
             for (const root of Array.from(owners)) {
               if (root !== document && root.host && !root.host.isConnected) {
                 owners.delete(root);
                 continue;
               }
-              dispatchSheetEvent(root, ADOPTED_STYLE_CHANGE_EVENT);
+              if (adoptedStyleManagers.has(root)) {
+                dispatchSheetEvent(root, ADOPTED_STYLE_CHANGE_EVENT);
+                dispatched = true;
+              }
             }
           }
-          scheduleStartupAwareStyleSync(0);
+          if (!dispatched) {
+            scheduleStartupAwareStyleSync(120);
+          }
         };
         const reportSheetChange = (sheet) => {
           if (!sheet || isOwnGeneratedSheet(sheet)) return;
+          let dispatchedToOwner = false;
           if (sheet.ownerNode && !isOwnGeneratedCSS(sheet.ownerNode.className || "")) {
             dispatchSheetEvent(sheet.ownerNode, STYLE_UPDATE_EVENT);
+            dispatchedToOwner = true;
           }
           if (adoptedSheetOwners.has(sheet)) {
             reportAdoptedSheetChange(sheet);
             return;
           }
-          scheduleStartupAwareStyleSync(0);
+          if (!dispatchedToOwner) {
+            scheduleStartupAwareStyleSync(120);
+          }
         };
         const reportSheetChangeAsync = (sheet, promise) => {
           if (promise && promise instanceof Promise) {
@@ -169,8 +179,11 @@ extension BrowserModel {
         };
         const reportAdoptedSheetsChange = (root, sheets) => {
           rememberAdoptedSheetOwners(root, sheets);
-          dispatchSheetEvent(root, ADOPTED_STYLES_CHANGE_EVENT);
-          scheduleStartupAwareStyleSync(0);
+          if (adoptedStyleManagers.has(root)) {
+            dispatchSheetEvent(root, ADOPTED_STYLES_CHANGE_EVENT);
+          } else {
+            scheduleStartupAwareStyleSync(120);
+          }
         };
         const proxyAdoptedSheetsArray = (root, source) => {
           if (!Array.isArray(source)) return source;
@@ -264,8 +277,13 @@ extension BrowserModel {
               reportAdoptedSheetChange(adoptedSheet);
               return;
             }
-            if (declaration.parentRule || propertyName.startsWith("--") || propertyName === "cssText") {
-              scheduleStartupAwareStyleSync(0);
+            const parentSheet = declaration && declaration.parentRule && declaration.parentRule.parentStyleSheet;
+            if (parentSheet) {
+              reportSheetChange(parentSheet);
+              return;
+            }
+            if (propertyName.startsWith("--") || propertyName === "cssText") {
+              scheduleStartupAwareStyleSync(120);
             }
           };
 

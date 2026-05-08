@@ -28,6 +28,18 @@ extension BrowserModel {
       let styleRenderScheduled = false;
       let styleRenderBatches = 0;
       let styleRenderJobsCompleted = 0;
+      const pendingStyleManagerUpdates = new Set();
+      let styleManagerUpdateScheduled = false;
+      let styleManagerUpdateTimer = null;
+      let styleManagerUpdateBatches = 0;
+      let styleManagerUpdatesCompleted = 0;
+      let styleManagerUpdatesSkipped = 0;
+      const pendingAdoptedStyleUpdates = new Set();
+      let adoptedStyleUpdateScheduled = false;
+      let adoptedStyleUpdateTimer = null;
+      let adoptedStyleUpdateBatches = 0;
+      let adoptedStyleUpdatesCompleted = 0;
+      let adoptedStyleUpdatesSkipped = 0;
       let asyncStyleConversionsStarted = 0;
       let asyncStyleConversionsCompleted = 0;
       let asyncStyleConversionsCancelled = 0;
@@ -65,6 +77,7 @@ extension BrowserModel {
       const STARTUP_STYLE_SYNC_MIN_DELAY_MS = 160;
       const STARTUP_STYLE_RENDER_BUDGET_MS = 7;
       const STARTUP_STYLE_RENDER_MAX_PER_SLICE = 12;
+      const STYLE_MANAGER_UPDATE_DELAY_MS = 16;
       const LOADING_STYLE_TIMEOUT = 3500;
       const STYLE_UPDATE_EVENT = "__darkreader__updateSheet";
       const ADOPTED_STYLE_CHANGE_EVENT = "__darkreader__adoptedStyleSheetChange";
@@ -294,7 +307,7 @@ extension BrowserModel {
             stylesheetFetchCopyCompleted += 1;
             failedStyleSheetFetchURLsByElement.delete(element);
             markStyleLoaded(element);
-            scheduleStartupAwareStyleSync(0);
+            queueStyleManagerUpdate(element);
           })
           .catch(() => {
             if (element.href === href) {
@@ -305,7 +318,7 @@ extension BrowserModel {
                   if (!element.isConnected || element.href !== href) return;
                   failedStyleSheetFetchURLsByElement.delete(element);
                   stylesheetFetchCopyRetried += 1;
-                  scheduleStartupAwareStyleSync(0);
+                  queueStyleManagerUpdate(element);
                 }, 5000);
                 styleSheetFetchRetryTimersByElement.set(element, retryTimer);
               }
@@ -402,7 +415,7 @@ extension BrowserModel {
             element.removeEventListener("error", done);
             loadingStyleListenersByElement.delete(element);
             markStyleLoaded(element);
-            scheduleStartupAwareStyleSync(0);
+            queueStyleManagerUpdate(element);
           };
           element.addEventListener("load", done, { once: true });
           element.addEventListener("error", done, { once: true });
@@ -413,7 +426,7 @@ extension BrowserModel {
           const timeout = window.setTimeout(() => {
             loadingStyleTimeoutsByElement.delete(element);
             markStyleUnavailable(element);
-            scheduleStartupAwareStyleSync(0);
+            queueStyleManagerUpdate(element);
           }, LOADING_STYLE_TIMEOUT);
           loadingStyleTimeoutsByElement.set(element, timeout);
         }

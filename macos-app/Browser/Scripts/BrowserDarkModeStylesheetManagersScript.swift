@@ -60,8 +60,7 @@ extension BrowserModel {
             cancelConversion: null
           };
           const onSheetChange = () => {
-            manager.revision += 1;
-            scheduleStartupAwareStyleSync(0);
+            queueStyleManagerUpdate(element);
           };
           manager.onSheetChange = onSheetChange;
           styleManagers.set(element, manager);
@@ -69,7 +68,7 @@ extension BrowserModel {
           element.addEventListener(STYLE_UPDATE_EVENT, onSheetChange);
 
           if (window.MutationObserver) {
-            manager.observer = new MutationObserver(() => scheduleStartupAwareStyleSync(0));
+            manager.observer = new MutationObserver(() => queueStyleManagerUpdate(element));
             const isLink = element instanceof HTMLLinkElement;
             manager.observer.observe(element, {
               attributes: true,
@@ -82,6 +81,89 @@ extension BrowserModel {
         }
 
         return manager;
+      };
+
+      const flushStyleManagerUpdates = () => {
+        const flushStartedAt = __wkdomainsDarkModeNow();
+        styleManagerUpdateScheduled = false;
+        styleManagerUpdateTimer = null;
+        if (pendingStyleManagerUpdates.size === 0) return;
+
+        const styles = Array.from(pendingStyleManagerUpdates);
+        pendingStyleManagerUpdates.clear();
+        const detailsByStyle = [];
+        let missingManagers = 0;
+        let skipped = 0;
+
+        styleManagerUpdateBatches += 1;
+        for (const element of styles) {
+          if (!element || !element.isConnected || !shouldManageStyle(element)) {
+            if (element) removeStyleManager(element);
+            skipped += 1;
+            continue;
+          }
+
+          const manager = styleManagers.get(element);
+          if (!manager) {
+            missingManagers += 1;
+            continue;
+          }
+
+          const details = getStyleManagerDetails(element, { secondRound: true });
+          if (!details) {
+            skipped += 1;
+            continue;
+          }
+          variablesStore.addRulesForMatching(details.rules);
+          detailsByStyle.push(element);
+        }
+
+        if (missingManagers > 0) {
+          scheduleStartupAwareStyleSync(120);
+        }
+
+        if (detailsByStyle.length === 0) {
+          styleManagerUpdatesSkipped += skipped + missingManagers;
+          return;
+        }
+
+        variablesStore.matchVariablesAndDependents();
+        updateRootVariableStyle();
+        for (const element of detailsByStyle) {
+          renderStyleManager(element);
+        }
+        styleManagerUpdatesCompleted += detailsByStyle.length;
+        styleManagerUpdatesSkipped += skipped + missingManagers;
+        ensureSiteFixStyle();
+        __wkdomainsDarkModePerf(
+          "flush-style-manager-updates",
+          flushStartedAt,
+          `updated=${detailsByStyle.length} skipped=${skipped} missing=${missingManagers}`,
+          6
+        );
+      };
+
+      const queueStyleManagerUpdate = (element, delay = STYLE_MANAGER_UPDATE_DELAY_MS) => {
+        if (!element) return;
+        const manager = styleManagers.get(element);
+        if (!manager) {
+          if (shouldManageStyle(element)) scheduleStartupAwareStyleSync(120);
+          return;
+        }
+        manager.revision += 1;
+        pendingStyleManagerUpdates.add(element);
+        if (styleManagerUpdateScheduled) return;
+        styleManagerUpdateScheduled = true;
+        styleManagerUpdateTimer = window.setTimeout(flushStyleManagerUpdates, Math.max(0, Number(delay) || 0));
+      };
+
+      const cancelStyleManagerUpdates = () => {
+        pendingStyleManagerUpdates.clear();
+        if (styleManagerUpdateTimer) {
+          window.clearTimeout(styleManagerUpdateTimer);
+          styleManagerUpdateTimer = null;
+        }
+        styleManagerUpdateScheduled = false;
       };
 
       const signatureForStyleManager = (element, manager, rules) => [
@@ -240,7 +322,7 @@ extension BrowserModel {
           if (manager) {
             manager.revision += 1;
           }
-          scheduleStartupAwareStyleSync(0);
+          queueAdoptedStyleUpdate(root);
         };
         root.addEventListener(ADOPTED_STYLE_CHANGE_EVENT, onChange);
         root.addEventListener(ADOPTED_STYLES_CHANGE_EVENT, onChange);
@@ -389,6 +471,66 @@ extension BrowserModel {
         }
       };
 
+      const flushAdoptedStyleUpdates = () => {
+        const flushStartedAt = __wkdomainsDarkModeNow();
+        adoptedStyleUpdateScheduled = false;
+        adoptedStyleUpdateTimer = null;
+        if (pendingAdoptedStyleUpdates.size === 0) return;
+
+        const roots = Array.from(pendingAdoptedStyleUpdates);
+        pendingAdoptedStyleUpdates.clear();
+        const renderRoots = [];
+        let skipped = 0;
+
+        adoptedStyleUpdateBatches += 1;
+        for (const root of roots) {
+          if (!root || (root !== document && root.host && !root.host.isConnected)) {
+            if (root) removeAdoptedStyleManager(root);
+            skipped += 1;
+            continue;
+          }
+          collectAdoptedStyleSheetRules(root);
+          renderRoots.push(root);
+        }
+
+        if (renderRoots.length === 0) {
+          adoptedStyleUpdatesSkipped += skipped;
+          return;
+        }
+
+        variablesStore.matchVariablesAndDependents();
+        updateRootVariableStyle();
+        for (const root of renderRoots) {
+          renderAdoptedStyleSheets(root);
+        }
+        adoptedStyleUpdatesCompleted += renderRoots.length;
+        adoptedStyleUpdatesSkipped += skipped;
+        ensureSiteFixStyle();
+        __wkdomainsDarkModePerf(
+          "flush-adopted-style-updates",
+          flushStartedAt,
+          `updated=${renderRoots.length} skipped=${skipped}`,
+          6
+        );
+      };
+
+      const queueAdoptedStyleUpdate = (root, delay = STYLE_MANAGER_UPDATE_DELAY_MS) => {
+        if (!root) return;
+        pendingAdoptedStyleUpdates.add(root);
+        if (adoptedStyleUpdateScheduled) return;
+        adoptedStyleUpdateScheduled = true;
+        adoptedStyleUpdateTimer = window.setTimeout(flushAdoptedStyleUpdates, Math.max(0, Number(delay) || 0));
+      };
+
+      const cancelAdoptedStyleUpdates = () => {
+        pendingAdoptedStyleUpdates.clear();
+        if (adoptedStyleUpdateTimer) {
+          window.clearTimeout(adoptedStyleUpdateTimer);
+          adoptedStyleUpdateTimer = null;
+        }
+        adoptedStyleUpdateScheduled = false;
+      };
+
       const styleHasVariableData = (style) => {
         if (!style) return false;
         for (let index = 0; index < style.length; index += 1) {
@@ -447,6 +589,7 @@ extension BrowserModel {
 
       const removeStyleManager = (element) => {
         const manager = styleManagers.get(element);
+        pendingStyleManagerUpdates.delete(element);
         clearStyleSheetFetchRetry(element);
         const listener = loadingStyleListenersByElement.get(element);
         if (listener && element instanceof HTMLLinkElement) {
@@ -477,6 +620,7 @@ extension BrowserModel {
 
       const removeAdoptedStyleManager = (root) => {
         const manager = adoptedStyleManagers.get(root);
+        pendingAdoptedStyleUpdates.delete(root);
         if (manager) {
           cancelPendingStyleConversion(manager);
           withStylesheetProxyDisabled(() => {
@@ -497,6 +641,8 @@ extension BrowserModel {
       };
 
       const destroyStyleManagers = () => {
+        cancelStyleManagerUpdates();
+        cancelAdoptedStyleUpdates();
         for (const element of Array.from(managedStyleElements)) {
           removeStyleManager(element);
         }
@@ -760,6 +906,8 @@ extension BrowserModel {
       };
 
       const cancelStyleSync = () => {
+        cancelStyleManagerUpdates();
+        cancelAdoptedStyleUpdates();
         if (stylesheetSyncTimer) {
           if (stylesheetSyncTimerKind === "idle" && window.cancelIdleCallback) {
             window.cancelIdleCallback(stylesheetSyncTimer);

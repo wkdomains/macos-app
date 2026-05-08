@@ -169,7 +169,21 @@ extension BrowserModel {
             schedule(40);
           }
 
-        scheduleStartupAwareStyleSync(0);
+          const hasBridgeKind = (name) => kind === name || !!(kinds && kinds[name]);
+          const hasRegistrationChange = hasBridgeKind("register-property") || definitions.length > 0 || !!definition;
+          const hasAdoptedChange = hasBridgeKind("adopted-sheet")
+            || hasBridgeKind("adopted-sheets")
+            || hasBridgeKind("adopted-declaration");
+          const hasDeclarationChange = hasBridgeKind("declaration");
+          const hasSheetChange = hasBridgeKind("sheet");
+
+          if (hasRegistrationChange || hasAdoptedChange) {
+            scheduleStartupAwareStyleSync(120);
+          } else if (hasDeclarationChange) {
+            scheduleStartupAwareStyleSync(500);
+          } else if (hasSheetChange) {
+            scheduleStartupAwareStyleSync(1000);
+          }
         };
 
         document.addEventListener(PAGE_PROXY_EVENT, onPageProxyChange);

@@ -248,14 +248,19 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - inline cache keys now ignore generated dark-mode custom properties, so our own `--wkdomains-*` and Dark Reader-compatible aliases do not look like page-authored inline style changes
   - style-attribute mutation handling now compares source declarations with generated declarations stripped out before queueing inline re-application
   - this reduces self-triggered inline reprocessing and prevents repeated transforms from washing out accent backgrounds such as legacy `bgcolor` bars
+- Improved Dark Reader-style per-stylesheet update behavior:
+  - `__darkreader__updateSheet` events and source stylesheet mutations now queue targeted style-manager updates instead of forcing a full all-stylesheet rebuild
+  - targeted manager batches add changed rules to the variable matcher, match dependencies once, refresh root variable overrides, and render only the affected stylesheet managers
+  - adopted stylesheet events now queue root-local adopted manager updates through the same batched path
+  - owned CSSOM stylesheet changes in the isolated engine now rely on the manager-local update path first, while page-world bridge events schedule slower fallback syncs only when needed
 
 ## Completion Estimates
 
 - Full `variablesStore` dependency graph for matching variables and dependents: 93%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 98%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 99%
 - Mature optimized DOM/style watchers: 99%
-- Robust adopted stylesheet management: 93%
-- Full stylesheet proxy behavior and cross-context coordination: 95%
+- Robust adopted stylesheet management: 94%
+- Full stylesheet proxy behavior and cross-context coordination: 96%
 - Dark Reader's color pipeline and extensive config corpus: 92%
 - Mature fix selection/config parser behavior across many sites: 94%
 - Extension-world isolation: 91%
@@ -266,12 +271,12 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - no full scoped variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - scoped handling is stronger, but still not as exact as Dark Reader's full selector/dependency store
-- Per-stylesheet managers still need more mature behavior. Current estimate: 98%.
+- Per-stylesheet managers still need more mature behavior. Current estimate: 99%.
   - privileged cross-origin/background fetch parity
   - imported stylesheet retries
 - Watchers now have the main Dark Reader-style batching/dirty-root/priority-surface/self-write suppression pieces, but still need more long-run observer pressure testing. Current estimate: 99%.
-- Adopted stylesheet handling is better, but not equivalent to Dark Reader's full CSSStyleSheet override/fallback model. Current estimate: 93%.
-- Stylesheet proxy is closer, but cross-context coordination is still partial for some obscure CSSOM mutation APIs. Current estimate: 95%.
+- Adopted stylesheet handling is better, but not equivalent to Dark Reader's full CSSStyleSheet override/fallback model. Current estimate: 94%.
+- Stylesheet proxy is closer, but cross-context coordination is still partial for some obscure CSSOM mutation APIs. Current estimate: 96%.
 - Color pipeline is much closer, but still not a full port. Current estimate: 92%.
   - limited image analysis compared with Dark Reader
   - color math is compatible in shape but still not Dark Reader's exact implementation
@@ -291,4 +296,5 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Site-fix JavaScript generated with the full upstream Dark Reader `dynamic-theme-fixes.config` passed `node --check`.
 - Site-fix parser runtime check with the full bundled config matched Reddit through the upstream corpus with built-in fixes disabled.
 - Swift sources passed `xcrun swiftc -parse`.
+- Targeted stylesheet/adopted-manager update changes passed `xcrun swiftc -parse` for the touched script fragments.
 - Local API check was attempted again for `/api/v1/dark-mode`, `/api/v1/dom`, and `/api/v1/console`, but `localhost:9001` was not listening during this pass.
