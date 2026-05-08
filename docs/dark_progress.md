@@ -257,6 +257,16 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - dynamic DOM runs no longer request a full stylesheet sync unless the stylesheet scheduler already has dirty work
   - inline/style-relevant mutations that are already handled by priority element updates no longer also queue a root scan
   - debug-only native messages are no longer recorded into `/api/v1/timing` by default; elapsed dark-mode and network timings remain recorded
+- Reduced remaining inline declaration and fallback-application pressure:
+  - page-world inline `CSSStyleDeclaration` writes no longer schedule full stylesheet syncs; stylesheet/adopted declarations still route to their managers
+  - inline custom-property changes are batched through the variables store and root variable style instead of going through the full stylesheet pipeline
+  - root/element fallback application uses smaller time slices and bounded media-backdrop scanning to keep large compose/dialog surfaces from monopolizing the main thread
+- Reduced Gmail-style root/element application stalls:
+  - root fallback application now uses an incremental `TreeWalker` with match and scan budgets instead of materializing `querySelectorAll(...)` results before slicing
+  - element fallback application now has a Dark Reader-style source/theme cache, so priority passes and later root sweeps do not recompute unchanged nodes
+  - style-manager, adopted stylesheet, and full stylesheet updates invalidate the element/source caches when computed styles can legitimately change
+  - class/ARIA/open surface mutations now update direct or already-known fallback candidates instead of rescanning descendants on generic class churn
+  - DOM-ready/load/pageshow handlers no longer force a full stylesheet sync unless stylesheet work is already dirty or styles are still loading
 
 ## Completion Estimates
 
@@ -301,4 +311,5 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Site-fix parser runtime check with the full bundled config matched Reddit through the upstream corpus with built-in fixes disabled.
 - Swift sources passed `xcrun swiftc -parse`.
 - Targeted stylesheet/adopted-manager update changes passed `xcrun swiftc -parse` for the touched script fragments.
+- Gmail performance pass for incremental root walking, element fallback caching, narrower surface mutation handling, and lifecycle sync gating passed `xcrun swiftc -parse` for the touched script fragments.
 - Local API check was attempted again for `/api/v1/dark-mode`, `/api/v1/dom`, and `/api/v1/console`, but `localhost:9001` was not listening during this pass.

@@ -129,6 +129,7 @@ extension BrowserModel {
 
         variablesStore.matchVariablesAndDependents();
         updateRootVariableStyle();
+        invalidateElementApplyCaches();
         for (const element of detailsByStyle) {
           renderStyleManager(element);
         }
@@ -500,6 +501,7 @@ extension BrowserModel {
 
         variablesStore.matchVariablesAndDependents();
         updateRootVariableStyle();
+        invalidateElementApplyCaches();
         for (const root of renderRoots) {
           renderAdoptedStyleSheets(root);
         }
@@ -585,6 +587,39 @@ extension BrowserModel {
         rootVarsStyle.textContent = declarations.length > 0
           ? `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) {\n${declarations.map(([property, value]) => `  ${property}: ${value};`).join("\n")}\n}`
           : "";
+      };
+
+      const flushInlineVariableUpdate = () => {
+        const flushStartedAt = __wkdomainsDarkModeNow();
+        inlineVariableUpdateScheduled = false;
+        inlineVariableUpdateTimer = null;
+        inlineVariableUpdateBatches += 1;
+        variablesStore.matchVariablesAndDependents();
+        updateRootVariableStyle();
+        inlineVariableUpdatesCompleted += 1;
+        __wkdomainsDarkModePerf(
+          "flush-inline-variable-update",
+          flushStartedAt,
+          `version=${variablesStore.version()}`,
+          6
+        );
+      };
+
+      const queueInlineVariableUpdate = (style, delay = 80) => {
+        if (style) {
+          variablesStore.addInlineStyleForMatching(style);
+        }
+        if (inlineVariableUpdateScheduled) return;
+        inlineVariableUpdateScheduled = true;
+        inlineVariableUpdateTimer = window.setTimeout(flushInlineVariableUpdate, Math.max(0, Number(delay) || 0));
+      };
+
+      const cancelInlineVariableUpdate = () => {
+        if (inlineVariableUpdateTimer) {
+          window.clearTimeout(inlineVariableUpdateTimer);
+          inlineVariableUpdateTimer = null;
+        }
+        inlineVariableUpdateScheduled = false;
       };
 
       const removeStyleManager = (element) => {
@@ -814,6 +849,7 @@ extension BrowserModel {
         cancelPendingStyleRenderJobs();
         pruneStyleManagers();
         pruneAdoptedStyleManagers();
+        invalidateElementApplyCaches();
         variablesStore.clear();
 
         const allRoots = getStylesheetSyncRoots();
@@ -908,6 +944,7 @@ extension BrowserModel {
       const cancelStyleSync = () => {
         cancelStyleManagerUpdates();
         cancelAdoptedStyleUpdates();
+        cancelInlineVariableUpdate();
         if (stylesheetSyncTimer) {
           if (stylesheetSyncTimerKind === "idle" && window.cancelIdleCallback) {
             window.cancelIdleCallback(stylesheetSyncTimer);

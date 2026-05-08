@@ -8,8 +8,9 @@ import Foundation
 extension BrowserModel {
     static let browserDarkModeInlineDOMScript = #"""
       const discoveredShadowRoots = new Set();
-      const sourceStyleCache = new WeakMap();
+      let sourceStyleCache = new WeakMap();
       const inlineStyleCache = new WeakMap();
+      let elementApplyCache = new WeakMap();
       const pendingRootApplySet = new Set();
       const pendingRootApplyQueue = [];
       const pendingRootApplyJobs = new Map();
@@ -21,16 +22,21 @@ extension BrowserModel {
       let lightSurfaceFallbacksCleared = 0;
       let priorityElementApplyBatches = 0;
       let priorityElementApplies = 0;
+      let elementApplyCacheVersion = 0;
       const ROOT_APPLY_BUDGET_MS = 8;
       const ROOT_APPLY_STARTUP_BUDGET_MS = 4;
       const ROOT_APPLY_STARTUP_DELAY_MS = 32;
       const ROOT_APPLY_MAX_PER_SLICE = 8;
-      const ROOT_APPLY_MAX_ELEMENTS_PER_SLICE = 96;
-      const ROOT_APPLY_STARTUP_MAX_ELEMENTS_PER_SLICE = 48;
-      const ELEMENT_APPLY_BUDGET_MS = 6;
-      const ELEMENT_APPLY_MAX_PER_SLICE = 80;
+      const ROOT_APPLY_MAX_ELEMENTS_PER_SLICE = 48;
+      const ROOT_APPLY_STARTUP_MAX_ELEMENTS_PER_SLICE = 28;
+      const ROOT_APPLY_MAX_SCANNED_PER_SLICE = 900;
+      const ROOT_APPLY_STARTUP_MAX_SCANNED_PER_SLICE = 420;
+      const ELEMENT_APPLY_BUDGET_MS = 3;
+      const ELEMENT_APPLY_MAX_PER_SLICE = 32;
       const ELEMENT_SUBTREE_QUEUE_LIMIT = 32;
       const LIGHT_SURFACE_ANCESTOR_LIMIT = 6;
+      const MEDIA_BACKDROP_SCAN_LIMIT = 48;
+      const MEDIA_BACKDROP_SCAN_BUDGET_MS = 2.5;
 
       const rootApplyInStartupWindow = () => {
         try {
@@ -44,6 +50,9 @@ extension BrowserModel {
       const rootApplyElementLimit = () => rootApplyInStartupWindow()
         ? ROOT_APPLY_STARTUP_MAX_ELEMENTS_PER_SLICE
         : ROOT_APPLY_MAX_ELEMENTS_PER_SLICE;
+      const rootApplyScanLimit = () => rootApplyInStartupWindow()
+        ? ROOT_APPLY_STARTUP_MAX_SCANNED_PER_SLICE
+        : ROOT_APPLY_MAX_SCANNED_PER_SLICE;
       const rootApplyRescheduleDelay = () => rootApplyInStartupWindow() ? ROOT_APPLY_STARTUP_DELAY_MS : 16;
       const scheduleIdleTask = (callback, delay = 0, timeout = 250) => {
         if (delay > 0) {
@@ -225,7 +234,17 @@ extension BrowserModel {
         const elementRect = visibleRectFor(element);
         if (elementRect.area <= 0) return false;
 
-        for (const media of element.querySelectorAll("video,img,picture,canvas,iframe,object,embed")) {
+        let mediaElements = [];
+        try {
+          mediaElements = element.querySelectorAll("video,img,picture,canvas,iframe,object,embed");
+        } catch (_) {
+          mediaElements = [];
+        }
+        const scanStartedAt = __wkdomainsDarkModeNow();
+        const maxMediaCount = Math.min(mediaElements.length, MEDIA_BACKDROP_SCAN_LIMIT);
+        for (let index = 0; index < maxMediaCount; index += 1) {
+          const media = mediaElements[index];
+          if (index > 0 && __wkdomainsDarkModeNow() - scanStartedAt > MEDIA_BACKDROP_SCAN_BUDGET_MS) break;
           if (!isVisibleMedia(media)) continue;
           if (shouldIgnoreImageAnalysis(media)) continue;
 
@@ -342,6 +361,30 @@ extension BrowserModel {
         if (attr === "style") return `style=${inlineStyleSourceKeyForElement(element)}`;
         return `${attr}=${element.getAttribute(attr) || ""}`;
       }).join("\n");
+
+      const elementApplyCacheKeyFor = (element) => [
+        elementApplyCacheVersion,
+        `${theme.mode}:${theme.brightness}:${theme.contrast}:${theme.grayscale}:${theme.sepia}`,
+        element.tagName || "",
+        inlineCacheKeyFor(element),
+        `class=${element.getAttribute("class") || ""}`,
+        `role=${element.getAttribute("role") || ""}`,
+        `type=${element.getAttribute("type") || ""}`,
+        `hidden=${element.hasAttribute("hidden") ? "1" : "0"}`,
+        `open=${element.hasAttribute("open") ? "1" : "0"}`,
+        `popover=${element.getAttribute("popover") || ""}`,
+        `disabled=${element.hasAttribute("disabled") ? "1" : "0"}`,
+        `contenteditable=${element.getAttribute("contenteditable") || ""}`,
+        `aria-hidden=${element.getAttribute("aria-hidden") || ""}`,
+        `aria-expanded=${element.getAttribute("aria-expanded") || ""}`,
+        `aria-modal=${element.getAttribute("aria-modal") || ""}`
+      ].join("\n");
+
+      const invalidateElementApplyCaches = () => {
+        sourceStyleCache = new WeakMap();
+        elementApplyCache = new WeakMap();
+        elementApplyCacheVersion += 1;
+      };
 
       const isLightSurfaceCandidate = (element) => {
         if (!element || !element.matches || !element.tagName) return false;
@@ -460,6 +503,19 @@ extension BrowserModel {
         if (!Array.isArray(declarations)) return;
         for (const declaration of declarations) {
           element.style.setProperty(declaration.property, declaration.value);
+        }
+      };
+
+      const describeElementForTiming = (element, reason = "") => {
+        try {
+          const tag = (element && element.tagName ? element.tagName.toLowerCase() : "node");
+          const id = element && element.id ? `#${String(element.id).slice(0, 32)}` : "";
+          const className = element && element.className && typeof element.className === "string"
+            ? `.${String(element.className).trim().replace(/\s+/g, ".").slice(0, 72)}`
+            : "";
+          return `${tag}${id}${className}${reason ? ` reason=${reason}` : ""}`;
+        } catch (_) {
+          return reason || "element";
         }
       };
 
@@ -697,11 +753,29 @@ extension BrowserModel {
           }
         }
 
+        if (styleHasVariableData(element.style)) {
+          queueInlineVariableUpdate(element.style);
+        }
+
         inlineStyleCache.set(element, key);
       };
 
       const applyElement = (element) => {
-        if (!element || element.nodeType !== Node.ELEMENT_NODE || shouldSkipElement(element)) return;
+        const applyStartedAt = __wkdomainsDarkModeNow();
+        let timingReason = "skipped";
+        if (!element || element.nodeType !== Node.ELEMENT_NODE) return;
+
+        const cacheKey = elementApplyCacheKeyFor(element);
+        if (elementApplyCache.get(element) === cacheKey) {
+          timingReason = "cache";
+          return;
+        }
+
+        if (shouldSkipElement(element)) {
+          elementApplyCache.set(element, cacheKey);
+          timingReason = "display-none";
+          return;
+        }
 
         const tag = element.tagName.toUpperCase();
         const hasInlineColors = hasColorInlineSource(element);
@@ -711,6 +785,8 @@ extension BrowserModel {
         if (tag === "HTML" || tag === "BODY") {
           setOverride(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", toThemeRGBA(themeBackgroundColor()));
           setOverride(element, COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", toThemeRGBA(themeTextColor()));
+          elementApplyCache.set(element, cacheKey);
+          timingReason = "root";
           return;
         }
 
@@ -728,9 +804,12 @@ extension BrowserModel {
           || needsActionFallback
           || needsSurfaceFallback;
         if (!shouldFallbackToComputedStyle) {
+          elementApplyCache.set(element, cacheKey);
+          timingReason = "inline-only";
           return;
         }
 
+        timingReason = needsSurfaceFallback || needsActionFallback ? "surface" : "direct";
         applyComputedStyleFallback(
           element,
           needsSurfaceFallback || needsActionFallback ? "surface" : "direct",
@@ -739,6 +818,8 @@ extension BrowserModel {
         if (isEditableControl) {
           applyLightSurfaceAncestors(element);
         }
+        elementApplyCache.set(element, cacheKey);
+        __wkdomainsDarkModePerf("apply-element", applyStartedAt, describeElementForTiming(element, timingReason), 18);
       };
 
       const elementApplyIsConnected = (element) => {
@@ -852,10 +933,73 @@ extension BrowserModel {
       const createRootApplyJob = (root) => ({
         root,
         initialized: false,
-        elements: [],
+        walker: null,
+        fallbackElements: null,
         index: 0,
+        matched: 0,
+        scanned: 0,
         done: false
       });
+
+      const initializeRootApplyWalker = (job, root) => {
+        const walkerRoot = rootApplyWalkerRoot(root);
+        if (!walkerRoot) return;
+        if (document.createTreeWalker) {
+          try {
+            const showElement = window.NodeFilter ? NodeFilter.SHOW_ELEMENT : 1;
+            job.walker = document.createTreeWalker(walkerRoot, showElement);
+            return;
+          } catch (_) {
+            job.walker = null;
+          }
+        }
+        if (walkerRoot.querySelectorAll) {
+          try {
+            job.fallbackElements = Array.from(walkerRoot.querySelectorAll(STYLE_OVERRIDE_SELECTOR));
+          } catch (_) {
+            job.fallbackElements = [];
+          }
+        }
+      };
+
+      const nextRootApplyElement = (job, started) => {
+        if (job.walker) {
+          let node = job.walker.nextNode();
+          let scannedThisSlice = 0;
+          while (node) {
+            job.scanned += 1;
+            scannedThisSlice += 1;
+            if (
+              node.nodeType === Node.ELEMENT_NODE
+              && node.matches
+              && node.matches(STYLE_OVERRIDE_SELECTOR)
+            ) {
+              job.matched += 1;
+              return node;
+            }
+            if (
+              scannedThisSlice >= rootApplyScanLimit()
+              || performance.now() - started > rootApplyBudgetMS()
+            ) {
+              return undefined;
+            }
+            node = job.walker.nextNode();
+          }
+          return null;
+        }
+
+        if (job.fallbackElements) {
+          while (job.index < job.fallbackElements.length) {
+            const node = job.fallbackElements[job.index];
+            job.index += 1;
+            job.scanned += 1;
+            job.matched += 1;
+            return node;
+          }
+        }
+
+        return null;
+      };
 
       const processRootApplyJob = (job, started) => {
         if (!job || job.done) return true;
@@ -877,20 +1021,14 @@ extension BrowserModel {
             applyElement(root);
           }
 
-          const walkerRoot = rootApplyWalkerRoot(root);
-          if (walkerRoot && walkerRoot.querySelectorAll) {
-            try {
-              job.elements = Array.from(walkerRoot.querySelectorAll(STYLE_OVERRIDE_SELECTOR));
-            } catch (_) {
-              job.elements = [];
-            }
-          }
+          initializeRootApplyWalker(job, root);
         }
 
         let count = 0;
-        while (job.index < job.elements.length) {
-          const node = job.elements[job.index];
-          job.index += 1;
+        while (true) {
+          const node = nextRootApplyElement(job, started);
+          if (node === undefined) return false;
+          if (!node) break;
           if (elementApplyIsConnected(node)) {
             applyElement(node);
           }
@@ -950,7 +1088,7 @@ extension BrowserModel {
         __wkdomainsDarkModePerf(
           "flush-root-applies",
           flushStartedAt,
-          `rootsDone=${count} remaining=${pendingRootApplyQueue.length} jobs=${pendingRootApplyJobs.size} active=${activeRootJob ? `${activeRootJob.index}/${activeRootJob.elements.length}` : "none"} startup=${rootApplyInStartupWindow()}`,
+          `rootsDone=${count} remaining=${pendingRootApplyQueue.length} jobs=${pendingRootApplyJobs.size} active=${activeRootJob ? `matched=${activeRootJob.matched} scanned=${activeRootJob.scanned}` : "none"} startup=${rootApplyInStartupWindow()}`,
           6
         );
       };
@@ -972,6 +1110,7 @@ extension BrowserModel {
         if (node && node.nodeType === Node.ELEMENT_NODE) {
           sourceStyleCache.delete(node);
           inlineStyleCache.delete(node);
+          elementApplyCache.delete(node);
         }
       };
 

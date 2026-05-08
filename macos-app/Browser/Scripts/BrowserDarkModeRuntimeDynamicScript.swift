@@ -97,25 +97,31 @@ extension BrowserModel {
         }, delay);
       };
 
+      const scheduleLifecycleStyleRefresh = (delay = 120) => {
+        if (stylesheetSyncNeeded || loadingStyles.size > 0) {
+          scheduleStartupAwareStyleSync(delay);
+        }
+      };
+
       const handleDOMReady = () => {
         __wkdomainsDarkModeDebug("dom-ready");
         watchRoot(document);
         dirtyRoots.add(document);
-        scheduleStartupAwareStyleSync(0);
+        scheduleLifecycleStyleRefresh(120);
         schedule(0);
       };
 
       const handleWindowLoad = () => {
         __wkdomainsDarkModeDebug("window-load");
         dirtyRoots.add(document);
-        scheduleStartupAwareStyleSync(0);
+        scheduleLifecycleStyleRefresh(120);
         schedule(40);
       };
 
       const handlePageShow = () => {
         __wkdomainsDarkModeDebug("page-show");
         dirtyRoots.add(document);
-        scheduleStartupAwareStyleSync(0);
+        scheduleLifecycleStyleRefresh(120);
         schedule(40);
       };
 

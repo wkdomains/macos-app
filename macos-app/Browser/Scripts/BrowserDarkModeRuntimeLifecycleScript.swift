@@ -60,6 +60,9 @@ extension BrowserModel {
         adoptedStyleUpdateBatches = 0;
         adoptedStyleUpdatesCompleted = 0;
         adoptedStyleUpdatesSkipped = 0;
+        cancelInlineVariableUpdate();
+        inlineVariableUpdateBatches = 0;
+        inlineVariableUpdatesCompleted = 0;
         shadowProxyActive = false;
         customElementRegistryProxyActive = false;
         cancelStyleSync();

@@ -465,9 +465,6 @@ extension BrowserModel {
               reportSheetChange(parentSheet);
               return;
             }
-            if (propertyName.startsWith("--") || propertyName === "cssText") {
-              reportGlobalChange("declaration");
-            }
           };
 
           rememberPropertyDescriptor(declarationProto, "setProperty");

@@ -282,9 +282,6 @@ extension BrowserModel {
               reportSheetChange(parentSheet);
               return;
             }
-            if (propertyName.startsWith("--") || propertyName === "cssText") {
-              scheduleStartupAwareStyleSync(120);
-            }
           };
 
           rememberPropertyDescriptor(declarationProto, "setProperty");

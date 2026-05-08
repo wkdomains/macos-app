@@ -40,6 +40,10 @@ extension BrowserModel {
       let adoptedStyleUpdateBatches = 0;
       let adoptedStyleUpdatesCompleted = 0;
       let adoptedStyleUpdatesSkipped = 0;
+      let inlineVariableUpdateScheduled = false;
+      let inlineVariableUpdateTimer = null;
+      let inlineVariableUpdateBatches = 0;
+      let inlineVariableUpdatesCompleted = 0;
       let asyncStyleConversionsStarted = 0;
       let asyncStyleConversionsCompleted = 0;
       let asyncStyleConversionsCancelled = 0;

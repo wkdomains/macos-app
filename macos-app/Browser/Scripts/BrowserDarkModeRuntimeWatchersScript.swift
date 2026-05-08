@@ -208,20 +208,20 @@ extension BrowserModel {
               inlineChanged = true;
             }
             if (SURFACE_MUTATION_ATTRIBUTES.has(mutation.attributeName)) {
-              clearCachedSourceFor(mutation.target);
-              if (
-                mutation.target.nodeType === Node.ELEMENT_NODE
-                && (
-                  mutation.target.matches(STYLE_OVERRIDE_SELECTOR)
-                  || mutation.target.querySelector?.(EDITABLE_CONTROL_SELECTOR)
-              )
-            ) {
-                const directQueued = queueElementApply(mutation.target, 0);
-                const subtreeQueued = queueElementSubtreeApply(mutation.target, 12);
-                if (!directQueued && subtreeQueued === 0) {
-                  markDirty(mutation.target);
+              const target = mutation.target;
+              if (target.nodeType === Node.ELEMENT_NODE && target.matches) {
+                const isKnownFallbackElement = ATTRIBUTES_OWNED_BY_DARK_MODE.some((attribute) => target.hasAttribute(attribute));
+                const isDirectSurfaceCandidate = target.matches(EDITABLE_CONTROL_SELECTOR)
+                  || target.matches(ACTION_SURFACE_SELECTOR)
+                  || target.matches(LIGHT_SURFACE_SELECTOR)
+                  || isKnownFallbackElement;
+                if (isDirectSurfaceCandidate) {
+                  clearCachedSourceFor(target);
+                  if (!queueElementApply(target, 0)) {
+                    markDirty(target);
+                  }
+                  inlineChanged = true;
                 }
-                inlineChanged = true;
               }
             }
             if (
