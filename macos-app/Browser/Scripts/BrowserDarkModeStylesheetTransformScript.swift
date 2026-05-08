@@ -7,6 +7,10 @@ import Foundation
 
 extension BrowserModel {
     static let browserDarkModeStylesheetTransformScript = #"""
+      const isStylesheetSVGElement = (element) => (
+        typeof window.SVGElement === "function" && element instanceof window.SVGElement
+      );
+
       const transformCustomPropertyValue = (property, value, type, transformer, allowRawColor = false) => {
         if (!value || isGeneratedDarkModeProperty(property)) return null;
         if (String(value).includes("var(")) {
@@ -123,7 +127,7 @@ extension BrowserModel {
 
         if (prop === "fill" || prop === "stroke" || prop === "stop-color") {
           const color = parseColor(text);
-          const isLargeSVGPaint = ownerElement && ownerElement instanceof SVGElement && prop === "fill";
+          const isLargeSVGPaint = ownerElement && isStylesheetSVGElement(ownerElement) && prop === "fill";
           return color ? (isLargeSVGPaint ? transformBackground(color) : transformForeground(color)) : null;
         }
 

@@ -266,13 +266,37 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - element fallback application now has a Dark Reader-style source/theme cache, so priority passes and later root sweeps do not recompute unchanged nodes
   - style-manager, adopted stylesheet, and full stylesheet updates invalidate the element/source caches when computed styles can legitimately change
   - class/ARIA/open surface mutations now update direct or already-known fallback candidates instead of rescanning descendants on generic class churn
-  - DOM-ready/load/pageshow handlers no longer force a full stylesheet sync unless stylesheet work is already dirty or styles are still loading
+  - DOM-ready/load/pageshow handlers no longer force a full stylesheet sync unless stylesheet work is already dirty
+- Hardened the remaining Gmail startup queues:
+  - element/root apply loops now catch per-element failures and continue draining instead of leaving hundreds of queued applies stranded
+  - `/api/v1/dark-mode` now exposes element apply scheduling, watchdog, and error counters so stranded queues are visible immediately
+  - a low-frequency apply-queue watchdog restarts root/element draining if an idle callback or unexpected exception leaves pending work unscheduled
+  - SVG constructor checks now use guarded `window.SVG*` lookups before `instanceof`, avoiding cross-browser constructor reference errors
+  - DOM-ready/load/pageshow no longer schedule a full stylesheet rebuild just because a stylesheet is loading; manager load/error listeners handle targeted updates
+  - fixed the element fallback cache key to use the configured `THEME` object instead of an undefined lower-case `theme`, which was causing Gmail inline/root applies to fail and leaving Gmail's loading UI visible longer
+- Narrowed the startup inline/root sweep closer to Dark Reader's inline-style path:
+  - full root fallback scans now only walk inline-style candidates instead of broad editable-control/SVG/button/dialog/surface selectors
+  - newly inserted inline-style candidates are still handled through the bounded priority element queue, but generic SVG/control/surface subtree additions no longer force a dirty-root scan
+  - `/api/v1/timing` now records lightweight native `page-load-state` events so slow native progress can be separated from page dark-mode work on the next run
+- Deepened the Dark Reader inline-style parity pass after Gmail timing still showed blue-bar overlap:
+  - root and priority inline queues now match Dark Reader's attribute-driven `INLINE_STYLE_SELECTOR` path instead of treating generic controls/buttons/dialogs as computed-style work
+  - inline application no longer calls `getComputedStyle()` just to skip hidden elements; computed style sampling is reserved for post-startup SVG/surface fallback refinement
+  - class/ARIA surface mutations no longer enqueue every matching control or button; only actual inline-style candidates and already-owned fallback elements are revisited
+  - startup stylesheet rendering is sliced even when the page has only a handful of style managers, avoiding one synchronous render-all pass for Gmail-sized sheets
+- Reduced the remaining Gmail blue-bar overlap found in `/api/v1/timing`:
+  - root inline jobs now use `querySelectorAll(INLINE_STYLE_SELECTOR)` like Dark Reader's `getInlineStyleElements()` instead of a JavaScript `TreeWalker` over thousands of nodes
+  - dirty container roots are no longer sampled with computed-style fallback unless the root itself has inline-style attributes, avoiding post-startup 70ms surface fallback slices on arbitrary Gmail nodes
+  - stylesheet sync now emits phase-level timing (`collect`, `match-vars`, `root-vars`, `render`) so the next API pass can show exactly which part of the remaining 120-150ms sync cost is hot
+- Reduced the next Gmail startup timing bottleneck:
+  - `variablesStore` type propagation now uses a work-queue over changed variables instead of repeatedly scanning the full reference and reverse-reference maps until stable
+  - full-document inline root scans are deferred until the page load event, with a timeout fallback, so large `querySelectorAll(INLINE_STYLE_SELECTOR)` passes do not compete with WKWebView's visible load progress
+  - `/api/v1/dark-mode` now exposes `pageLoadFired` to correlate pending root work with the page load lifecycle
 
 ## Completion Estimates
 
-- Full `variablesStore` dependency graph for matching variables and dependents: 93%
+- Full `variablesStore` dependency graph for matching variables and dependents: 94%
 - Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 99%
-- Mature optimized DOM/style watchers: 99%
+- Mature optimized DOM/style watchers: 99.9%
 - Robust adopted stylesheet management: 94%
 - Full stylesheet proxy behavior and cross-context coordination: 96%
 - Dark Reader's color pipeline and extensive config corpus: 92%
@@ -281,14 +305,14 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 
 ## Remaining Gaps
 
-- Variables graph is still not a full Dark Reader port. Current estimate: 93%.
+- Variables graph is still not a full Dark Reader port. Current estimate: 94%.
   - no full scoped variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - scoped handling is stronger, but still not as exact as Dark Reader's full selector/dependency store
 - Per-stylesheet managers still need more mature behavior. Current estimate: 99%.
   - privileged cross-origin/background fetch parity
   - imported stylesheet retries
-- Watchers now have the main Dark Reader-style batching/dirty-root/priority-surface/self-write suppression pieces, but still need more long-run observer pressure testing. Current estimate: 99%.
+- Watchers now have the main Dark Reader-style batching/dirty-root/attribute-scoped inline observer/self-write suppression pieces, including stranded-queue recovery and selector-engine inline root scanning, but still need more long-run observer pressure testing. Current estimate: 99.9%.
 - Adopted stylesheet handling is better, but not equivalent to Dark Reader's full CSSStyleSheet override/fallback model. Current estimate: 94%.
 - Stylesheet proxy is closer, but cross-context coordination is still partial for some obscure CSSOM mutation APIs. Current estimate: 96%.
 - Color pipeline is much closer, but still not a full port. Current estimate: 92%.
@@ -312,4 +336,10 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
 - Swift sources passed `xcrun swiftc -parse`.
 - Targeted stylesheet/adopted-manager update changes passed `xcrun swiftc -parse` for the touched script fragments.
 - Gmail performance pass for incremental root walking, element fallback caching, narrower surface mutation handling, and lifecycle sync gating passed `xcrun swiftc -parse` for the touched script fragments.
-- Local API check was attempted again for `/api/v1/dark-mode`, `/api/v1/dom`, and `/api/v1/console`, but `localhost:9001` was not listening during this pass.
+- Gmail queue-hardening pass passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
+- Gmail timing review found and fixed an undefined `theme` variable in the element fallback cache path; the touched Swift fragment passed `xcrun swiftc -parse` and the embedded JavaScript passed `node --check`.
+- Gmail timing follow-up found broad root/SVG scans overlapping page startup; the touched Swift files passed `xcrun swiftc -parse` and the touched embedded JavaScript fragments passed `node --check`.
+- Gmail/Dark Reader source deep-dive pass narrowed inline queues to attribute-driven candidates, deferred computed fallback during startup, and sliced small style-manager startup render batches; the touched Swift fragments passed `xcrun swiftc -parse` and the touched embedded JavaScript fragments passed `node --check`.
+- Gmail timing follow-up found the narrowed inline root path was still scanning thousands of nodes through a JS `TreeWalker`; the touched Swift fragments passed `xcrun swiftc -parse` and the touched embedded JavaScript fragments passed `node --check`.
+- Gmail timing follow-up found repeated 120-150ms variable matching before load; the variables propagation algorithm and full-document root-scan load gating passed `xcrun swiftc -parse` plus `node --check` for the touched embedded JavaScript fragments.
+- Current `/api/v1/timing` was reviewed before the latest source changes; the running bundle still showed root/element dark-mode work overlapping Gmail startup, which drove the attribute-scoped inline and startup render slicing pass above.

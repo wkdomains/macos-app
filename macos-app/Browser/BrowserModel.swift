@@ -42,6 +42,9 @@ final class BrowserModel: NSObject, ObservableObject {
     var consoleRecords: [ConsoleMessageRecord] = []
     var xhrRecords: [XHRRequestRecord] = []
     var xhrRecordIndexesByID: [String: Int] = [:]
+    var lastTimingPageURL: String?
+    var lastTimingIsLoading: Bool?
+    var lastTimingProgressBucket: Int?
     var screenshotPNG: Data?
     var screenshotCapturedVersion = -1
     var screenshotDirtyVersion = 0

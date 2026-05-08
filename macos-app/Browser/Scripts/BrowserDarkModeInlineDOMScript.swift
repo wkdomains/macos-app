@@ -23,6 +23,10 @@ extension BrowserModel {
       let priorityElementApplyBatches = 0;
       let priorityElementApplies = 0;
       let elementApplyCacheVersion = 0;
+      let elementApplyErrors = 0;
+      let lastElementApplyError = "";
+      let applyQueueWatchdogTimer = null;
+      let applyQueueWatchdogTicks = 0;
       const ROOT_APPLY_BUDGET_MS = 8;
       const ROOT_APPLY_STARTUP_BUDGET_MS = 4;
       const ROOT_APPLY_STARTUP_DELAY_MS = 32;
@@ -303,9 +307,8 @@ extension BrowserModel {
         "[class*='surface' i]",
         "[class*='sheet' i]"
       ].join(", ");
-      const SVG_SELECTOR = Array.from(SVG_TAGS).map((tag) => tag.toLowerCase()).join(", ");
-      const STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, EDITABLE_CONTROL_SELECTOR, ACTION_SURFACE_SELECTOR, SVG_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
-      const PRIORITY_STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, EDITABLE_CONTROL_SELECTOR, ACTION_SURFACE_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
+      const ROOT_STYLE_OVERRIDE_SELECTOR = INLINE_STYLE_SELECTOR;
+      const PRIORITY_STYLE_OVERRIDE_SELECTOR = INLINE_STYLE_SELECTOR;
       const FORM_SURFACE_DESCENDANT_SELECTOR = [
         "input",
         "textarea",
@@ -318,8 +321,7 @@ extension BrowserModel {
       const shouldSkipElement = (element) => {
         if (!element || !element.tagName || SKIP_TAGS.has(element.tagName.toUpperCase())) return true;
         if (element.classList && element.classList.contains(INLINE_CLASS)) return true;
-        const style = getComputedStyle(element);
-        return style.display === "none";
+        return false;
       };
 
       const captureSourceStyle = (element) => {
@@ -364,7 +366,7 @@ extension BrowserModel {
 
       const elementApplyCacheKeyFor = (element) => [
         elementApplyCacheVersion,
-        `${theme.mode}:${theme.brightness}:${theme.contrast}:${theme.grayscale}:${theme.sepia}`,
+        `${THEME.mode}:${THEME.brightness}:${THEME.contrast}:${THEME.grayscale}:${THEME.sepia}`,
         element.tagName || "",
         inlineCacheKeyFor(element),
         `class=${element.getAttribute("class") || ""}`,
@@ -505,6 +507,14 @@ extension BrowserModel {
           element.style.setProperty(declaration.property, declaration.value);
         }
       };
+
+      const hasConstructor = (name) => typeof window[name] === "function";
+      const isInstanceOfConstructor = (element, name) => (
+        hasConstructor(name) && element instanceof window[name]
+      );
+      const isSVGElementNode = (element) => isInstanceOfConstructor(element, "SVGElement");
+      const isSVGTextElementNode = (element) => isInstanceOfConstructor(element, "SVGTextElement");
+      const isSVGLineElementNode = (element) => isInstanceOfConstructor(element, "SVGLineElement");
 
       const describeElementForTiming = (element, reason = "") => {
         try {
@@ -687,11 +697,11 @@ extension BrowserModel {
           setInlineCustomProp(element, COLOR_ATTRIBUTE, "--wkdomains-forced-dark-color", "color", "color", value);
         }
 
-        if (element instanceof SVGElement) {
+        if (isSVGElementNode(element)) {
           if (element.hasAttribute("fill")) {
             const value = element.getAttribute("fill");
             if (value && value !== "none" && value !== "currentColor") {
-              setInlineCustomProp(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", "fill", element instanceof SVGTextElement ? "color" : "fill", value);
+              setInlineCustomProp(element, FILL_ATTRIBUTE, "--wkdomains-forced-dark-fill", "fill", isSVGTextElementNode(element) ? "color" : "fill", value);
             }
           }
           if (element.hasAttribute("stop-color")) {
@@ -700,7 +710,7 @@ extension BrowserModel {
         }
 
         if (element.hasAttribute("stroke")) {
-          setInlineCustomProp(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", "stroke", element instanceof SVGLineElement || element instanceof SVGTextElement ? "border-color" : "color", element.getAttribute("stroke"));
+          setInlineCustomProp(element, STROKE_ATTRIBUTE, "--wkdomains-forced-dark-stroke", "stroke", isSVGLineElementNode(element) || isSVGTextElementNode(element) ? "border-color" : "color", element.getAttribute("stroke"));
         }
 
         for (let index = 0; index < element.style.length; index += 1) {
@@ -792,17 +802,18 @@ extension BrowserModel {
 
         const isSVGElement = SVG_TAGS.has(tag);
         const isEditableControl = element.matches(EDITABLE_CONTROL_SELECTOR);
-        const needsActionFallback = !hasInlineColors && !isSVGElement && !isEditableControl
+        const allowComputedFallback = document.readyState === "complete" && !rootApplyInStartupWindow();
+        const needsActionFallback = allowComputedFallback && !hasInlineColors && !isSVGElement && !isEditableControl
           ? shouldApplyActionSurfaceFallback(element)
           : false;
-        const needsSurfaceFallback = !hasInlineColors && !isSVGElement && !isEditableControl && !needsActionFallback
+        const needsSurfaceFallback = allowComputedFallback && !hasInlineColors && !isSVGElement && !isEditableControl && !needsActionFallback
           ? shouldApplyLightSurfaceFallback(element)
           : false;
-        const shouldFallbackToComputedStyle = hasInlineColors
-          || isSVGElement
-          || isEditableControl
+        const shouldFallbackToComputedStyle = allowComputedFallback && (
+          isSVGElement
           || needsActionFallback
-          || needsSurfaceFallback;
+          || needsSurfaceFallback
+        );
         if (!shouldFallbackToComputedStyle) {
           elementApplyCache.set(element, cacheKey);
           timingReason = "inline-only";
@@ -815,11 +826,29 @@ extension BrowserModel {
           needsSurfaceFallback || needsActionFallback ? "surface" : "direct",
           { preserveBackgroundOverride: hasInlineBackground }
         );
-        if (isEditableControl) {
+        if (isEditableControl && hasInlineColors && allowComputedFallback) {
           applyLightSurfaceAncestors(element);
         }
         elementApplyCache.set(element, cacheKey);
         __wkdomainsDarkModePerf("apply-element", applyStartedAt, describeElementForTiming(element, timingReason), 18);
+      };
+
+      const safeApplyElement = (element) => {
+        const startedAt = __wkdomainsDarkModeNow();
+        try {
+          applyElement(element);
+          return true;
+        } catch (error) {
+          elementApplyErrors += 1;
+          lastElementApplyError = `${describeElementForTiming(element)} ${error && error.message ? error.message : String(error)}`;
+          try {
+            elementApplyCache.set(element, elementApplyCacheKeyFor(element));
+          } catch (_) {}
+          if (elementApplyErrors <= 20 || elementApplyErrors % 50 === 0) {
+            __wkdomainsDarkModePerf("apply-element-error", startedAt, lastElementApplyError, 0);
+          }
+          return false;
+        }
       };
 
       const elementApplyIsConnected = (element) => {
@@ -839,6 +868,7 @@ extension BrowserModel {
         pendingElementApplySet.add(element);
         pendingElementApplyQueue.push(element);
         scheduleQueuedElementApplies(delay);
+        scheduleApplyQueueWatchdog(800);
         return true;
       };
 
@@ -881,7 +911,7 @@ extension BrowserModel {
             const element = pendingElementApplyQueue.shift();
             pendingElementApplySet.delete(element);
             if (!elementApplyIsConnected(element)) continue;
-            applyElement(element);
+            safeApplyElement(element);
             applied += 1;
             priorityElementApplies += 1;
             if (
@@ -891,12 +921,17 @@ extension BrowserModel {
               break;
             }
           }
+        } catch (error) {
+          elementApplyErrors += 1;
+          lastElementApplyError = `flush-element ${error && error.message ? error.message : String(error)}`;
+          __wkdomainsDarkModePerf("apply-element-error", flushStartedAt, lastElementApplyError, 0);
         } finally {
           applying = wasApplying;
         }
 
         if (pendingElementApplyQueue.length > 0) {
           scheduleQueuedElementApplies(24);
+          scheduleApplyQueueWatchdog(400);
         }
         __wkdomainsDarkModePerf(
           "flush-element-applies",
@@ -910,17 +945,19 @@ extension BrowserModel {
         if (!root || !root.querySelectorAll) return;
 
         if (root.nodeType === Node.DOCUMENT_NODE) {
-          applyElement(document.documentElement);
-          if (document.body) applyElement(document.body);
+          safeApplyElement(document.documentElement);
+          if (document.body) safeApplyElement(document.body);
         } else if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && root.host) {
           createShadowStaticStyleOverrides(root);
           renderAdoptedStyleSheets(root);
         } else if (root.nodeType === Node.ELEMENT_NODE) {
-          applyElement(root);
+          if (root.matches && root.matches(ROOT_STYLE_OVERRIDE_SELECTOR)) {
+            safeApplyElement(root);
+          }
         }
 
-        for (const element of root.querySelectorAll(STYLE_OVERRIDE_SELECTOR)) {
-          applyElement(element);
+        for (const element of root.querySelectorAll(ROOT_STYLE_OVERRIDE_SELECTOR)) {
+          safeApplyElement(element);
         }
       };
 
@@ -933,6 +970,7 @@ extension BrowserModel {
       const createRootApplyJob = (root) => ({
         root,
         initialized: false,
+        waitingForPageLoad: false,
         walker: null,
         fallbackElements: null,
         index: 0,
@@ -944,6 +982,14 @@ extension BrowserModel {
       const initializeRootApplyWalker = (job, root) => {
         const walkerRoot = rootApplyWalkerRoot(root);
         if (!walkerRoot) return;
+        if (walkerRoot.querySelectorAll) {
+          try {
+            job.fallbackElements = Array.from(walkerRoot.querySelectorAll(ROOT_STYLE_OVERRIDE_SELECTOR));
+            return;
+          } catch (_) {
+            job.fallbackElements = [];
+          }
+        }
         if (document.createTreeWalker) {
           try {
             const showElement = window.NodeFilter ? NodeFilter.SHOW_ELEMENT : 1;
@@ -951,13 +997,6 @@ extension BrowserModel {
             return;
           } catch (_) {
             job.walker = null;
-          }
-        }
-        if (walkerRoot.querySelectorAll) {
-          try {
-            job.fallbackElements = Array.from(walkerRoot.querySelectorAll(STYLE_OVERRIDE_SELECTOR));
-          } catch (_) {
-            job.fallbackElements = [];
           }
         }
       };
@@ -972,7 +1011,7 @@ extension BrowserModel {
             if (
               node.nodeType === Node.ELEMENT_NODE
               && node.matches
-              && node.matches(STYLE_OVERRIDE_SELECTOR)
+              && node.matches(ROOT_STYLE_OVERRIDE_SELECTOR)
             ) {
               job.matched += 1;
               return node;
@@ -1008,19 +1047,36 @@ extension BrowserModel {
           job.done = true;
           return true;
         }
+        job.waitingForPageLoad = false;
 
         if (!job.initialized) {
           job.initialized = true;
           if (root.nodeType === Node.DOCUMENT_NODE) {
-            applyElement(document.documentElement);
-            if (document.body) applyElement(document.body);
+            safeApplyElement(document.documentElement);
+            if (document.body) safeApplyElement(document.body);
           } else if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && root.host) {
             createShadowStaticStyleOverrides(root);
             renderAdoptedStyleSheets(root);
           } else if (root.nodeType === Node.ELEMENT_NODE) {
-            applyElement(root);
+            if (root.matches && root.matches(ROOT_STYLE_OVERRIDE_SELECTOR)) {
+              safeApplyElement(root);
+            }
           }
 
+          if (root === document && !pageLoadFired && elapsedSinceInstall() < 7000) {
+            job.waitingForPageLoad = true;
+            return false;
+          }
+
+          initializeRootApplyWalker(job, root);
+        }
+
+        if (root === document && !pageLoadFired && elapsedSinceInstall() < 7000 && !job.walker && !job.fallbackElements) {
+          job.waitingForPageLoad = true;
+          return false;
+        }
+
+        if (!job.walker && !job.fallbackElements) {
           initializeRootApplyWalker(job, root);
         }
 
@@ -1030,7 +1086,7 @@ extension BrowserModel {
           if (node === undefined) return false;
           if (!node) break;
           if (elementApplyIsConnected(node)) {
-            applyElement(node);
+            safeApplyElement(node);
           }
           count += 1;
           if (
@@ -1064,7 +1120,14 @@ extension BrowserModel {
               job = createRootApplyJob(root);
               pendingRootApplyJobs.set(root, job);
             }
-            const done = processRootApplyJob(job, started);
+            let done = false;
+            try {
+              done = processRootApplyJob(job, started);
+            } catch (error) {
+              elementApplyErrors += 1;
+              lastElementApplyError = `root-job ${error && error.message ? error.message : String(error)}`;
+              __wkdomainsDarkModePerf("apply-element-error", flushStartedAt, lastElementApplyError, 0);
+            }
             if (done) {
               pendingRootApplyJobs.delete(root);
               pendingRootApplySet.delete(root);
@@ -1077,12 +1140,18 @@ extension BrowserModel {
               break;
             }
           }
+        } catch (error) {
+          elementApplyErrors += 1;
+          lastElementApplyError = `flush-root ${error && error.message ? error.message : String(error)}`;
+          __wkdomainsDarkModePerf("apply-element-error", flushStartedAt, lastElementApplyError, 0);
         } finally {
           applying = wasApplying;
         }
 
         if (pendingRootApplyQueue.length > 0) {
-          scheduleQueuedRootApplies(rootApplyRescheduleDelay());
+          const activeRootJob = pendingRootApplyJobs.size > 0 ? pendingRootApplyJobs.values().next().value : null;
+          scheduleQueuedRootApplies(activeRootJob && activeRootJob.waitingForPageLoad ? 240 : rootApplyRescheduleDelay());
+          scheduleApplyQueueWatchdog(400);
         }
         const activeRootJob = pendingRootApplyJobs.size > 0 ? pendingRootApplyJobs.values().next().value : null;
         __wkdomainsDarkModePerf(
@@ -1099,11 +1168,27 @@ extension BrowserModel {
         scheduleIdleTask(flushQueuedRootApplies, delay, 260);
       };
 
+      const scheduleApplyQueueWatchdog = (delay = 500) => {
+        if (applyQueueWatchdogTimer) return;
+        applyQueueWatchdogTimer = window.setTimeout(() => {
+          applyQueueWatchdogTimer = null;
+          const needsElementFlush = pendingElementApplyQueue.length > 0 && !elementApplyScheduled;
+          const needsRootFlush = pendingRootApplyQueue.length > 0 && !rootApplyScheduled;
+          if (needsElementFlush) scheduleQueuedElementApplies(0);
+          if (needsRootFlush) scheduleQueuedRootApplies(rootApplyRescheduleDelay());
+          if (needsElementFlush || needsRootFlush) {
+            applyQueueWatchdogTicks += 1;
+            scheduleApplyQueueWatchdog(700);
+          }
+        }, Math.max(0, Number(delay) || 0));
+      };
+
       const queueRootApply = (root, delay = 16) => {
         if (!root || pendingRootApplySet.has(root)) return;
         pendingRootApplySet.add(root);
         pendingRootApplyQueue.push(root);
         scheduleQueuedRootApplies(delay);
+        scheduleApplyQueueWatchdog(800);
       };
 
       const clearCachedSourceFor = (node) => {

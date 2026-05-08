@@ -93,11 +93,53 @@ extension BrowserModel {
 
         canGoBack = webView.canGoBack
         canGoForward = webView.canGoForward
-        estimatedProgress = webView.estimatedProgress
-        isLoading = webView.isLoading
+        let currentProgress = webView.estimatedProgress
+        let currentLoading = webView.isLoading
+        recordNavigationTimingIfNeeded(
+            url: webView.url,
+            isLoading: currentLoading,
+            estimatedProgress: currentProgress
+        )
+        estimatedProgress = currentProgress
+        isLoading = currentLoading
         hasAttemptedNavigation = tab.hasAttemptedNavigation
         errorMessage = tab.errorMessage
         refreshSiteIdentityState()
+    }
+
+    func recordNavigationTimingIfNeeded(
+        url: URL?,
+        isLoading currentLoading: Bool,
+        estimatedProgress progress: Double
+    ) {
+        let boundedProgress = min(1, max(0, progress))
+        let progressBucket = Int((boundedProgress * 20).rounded(.down))
+        let pageURL = url?.absoluteString
+
+        guard lastTimingPageURL != pageURL
+            || lastTimingIsLoading != currentLoading
+            || lastTimingProgressBucket != progressBucket else {
+            return
+        }
+
+        lastTimingPageURL = pageURL
+        lastTimingIsLoading = currentLoading
+        lastTimingProgressBucket = progressBucket
+
+        let detail = String(
+            format: "loading=%@ progress=%.3f bucket=%d",
+            currentLoading ? "true" : "false",
+            boundedProgress,
+            progressBucket
+        )
+        BrowserDebugLogging.recordTimingEvent(
+            category: "navigation",
+            label: "page-load-state",
+            message: "[wkdomains-timing] navigation \(detail)",
+            detail: detail,
+            pageURL: pageURL,
+            pageHost: url?.host
+        )
     }
 
     func syncWindowTitle(from webView: WKWebView) {

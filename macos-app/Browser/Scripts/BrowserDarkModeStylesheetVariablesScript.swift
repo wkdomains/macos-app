@@ -161,35 +161,45 @@ extension BrowserModel {
         };
 
         const propagateTypes = () => {
-          let changed = true;
-          let guard = 0;
-          while (changed && guard < 64) {
-            changed = false;
-            guard += 1;
-            for (const [owner, refs] of varRefs) {
-              const ownerType = varTypes.get(owner) || 0;
-              if (!ownerType) continue;
+          const queue = [];
+          const queued = new Set();
+          const enqueue = (name) => {
+            if (!name || queued.has(name)) return;
+            queued.add(name);
+            queue.push(name);
+          };
+          const assignType = (name, type) => {
+            if (!name || !type) return;
+            const before = varTypes.get(name) || 0;
+            const next = before | type;
+            if (next === before) return;
+            varTypes.set(name, next);
+            enqueue(name);
+          };
+          for (const [name, type] of varTypes) {
+            if (type) enqueue(name);
+          }
+          let queueIndex = 0;
+          while (queueIndex < queue.length) {
+            const name = queue[queueIndex];
+            queueIndex += 1;
+            queued.delete(name);
+            const type = varTypes.get(name) || 0;
+            if (!type) continue;
+
+            const refs = varRefs.get(name);
+            if (refs) {
               for (const ref of refs) {
-                const before = varTypes.get(ref) || 0;
-                const next = before | ownerType;
-                if (next !== before) {
-                  varTypes.set(ref, next);
-                  changed = true;
-                }
+                assignType(ref, type);
               }
             }
-            for (const [ref, owners] of reverseVarRefs) {
-              const refType = varTypes.get(ref) || 0;
-              if (!refType) continue;
+
+            const owners = reverseVarRefs.get(name);
+            if (owners) {
               for (const owner of owners) {
                 const ownerValue = String(varValues.get(owner) || "");
                 if (!shouldTreatCustomPropertyAsRawColor(owner) && (!ownerValue.includes("var(") || ownerValue.includes("url("))) continue;
-                const before = varTypes.get(owner) || 0;
-                const next = before | refType;
-                if (next !== before) {
-                  varTypes.set(owner, next);
-                  changed = true;
-                }
+                assignType(owner, type);
               }
             }
           }

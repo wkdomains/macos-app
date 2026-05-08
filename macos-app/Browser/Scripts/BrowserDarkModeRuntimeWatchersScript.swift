@@ -211,10 +211,7 @@ extension BrowserModel {
               const target = mutation.target;
               if (target.nodeType === Node.ELEMENT_NODE && target.matches) {
                 const isKnownFallbackElement = ATTRIBUTES_OWNED_BY_DARK_MODE.some((attribute) => target.hasAttribute(attribute));
-                const isDirectSurfaceCandidate = target.matches(EDITABLE_CONTROL_SELECTOR)
-                  || target.matches(ACTION_SURFACE_SELECTOR)
-                  || target.matches(LIGHT_SURFACE_SELECTOR)
-                  || isKnownFallbackElement;
+                const isDirectSurfaceCandidate = target.matches(INLINE_STYLE_SELECTOR) || isKnownFallbackElement;
                 if (isDirectSurfaceCandidate) {
                   clearCachedSourceFor(target);
                   if (!queueElementApply(target, 0)) {
@@ -247,12 +244,6 @@ extension BrowserModel {
             const queuedPriorityElements = queueElementSubtreeApply(node, 32);
             priorityQueuedCount += queuedPriorityElements;
             if (queuedPriorityElements > 0) {
-              inlineChanged = true;
-            } else if (
-              (node.nodeType === Node.ELEMENT_NODE && node.matches && node.matches(SVG_SELECTOR))
-              || (node.querySelector && node.querySelector(SVG_SELECTOR))
-            ) {
-              markDirty(node);
               inlineChanged = true;
             }
             discoverShadowRootsForAddedNode(node);

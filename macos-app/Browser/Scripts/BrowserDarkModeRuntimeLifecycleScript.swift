@@ -40,8 +40,15 @@ extension BrowserModel {
         pendingRootApplyJobs.clear();
         pendingElementApplySet.clear();
         pendingElementApplyQueue.splice(0);
+        if (applyQueueWatchdogTimer) {
+          window.clearTimeout(applyQueueWatchdogTimer);
+          applyQueueWatchdogTimer = null;
+        }
         fallbackWasCleared = false;
         elementApplyScheduled = false;
+        elementApplyErrors = 0;
+        lastElementApplyError = "";
+        applyQueueWatchdogTicks = 0;
         lightSurfaceFallbacksApplied = 0;
         lightSurfaceFallbacksCleared = 0;
         priorityElementApplyBatches = 0;

@@ -15,6 +15,10 @@ extension BrowserModel {
         asyncStyleConversionsCancelled += 1;
       };
 
+      const isSVGStyleElementNode = (element) => (
+        typeof window.SVGStyleElement === "function" && element instanceof window.SVGStyleElement
+      );
+
       const startupStyleSyncDelay = (delay = 30) => {
         const requestedDelay = Math.max(0, Number(delay) || 0);
         if (stylesheetSyncElapsedSinceInstall() >= STARTUP_STYLE_SYNC_WINDOW_MS) {
@@ -45,7 +49,7 @@ extension BrowserModel {
       const ensureStyleManager = (element) => {
         let manager = styleManagers.get(element);
         if (!manager) {
-          const syncStyle = element instanceof SVGStyleElement
+          const syncStyle = isSVGStyleElementNode(element)
             ? document.createElementNS("http://www.w3.org/2000/svg", "style")
             : document.createElement("style");
           syncStyle.classList.add(INLINE_CLASS, "darkreader", STYLE_SYNC_CLASS);
@@ -174,7 +178,7 @@ extension BrowserModel {
         element.href || "",
         element.media || "",
         element.disabled ? "disabled" : "",
-        element instanceof HTMLStyleElement || element instanceof SVGStyleElement
+        element instanceof HTMLStyleElement || isSVGStyleElementNode(element)
           ? hashString(element.textContent || "")
           : ""
       ].join(":");
@@ -732,7 +736,7 @@ extension BrowserModel {
 
       const shouldSliceStyleRendering = (styles) => {
         return stylesheetSyncElapsedSinceInstall() < STARTUP_STYLE_SYNC_WINDOW_MS
-          && ((styles && styles.length > STARTUP_STYLE_RENDER_MAX_PER_SLICE) || pendingStyleRenderJobs.length > 0);
+          && ((styles && styles.length > 1) || pendingStyleRenderJobs.length > 0);
       };
 
       const queueStyleRenderJob = (root, styles) => {
@@ -857,19 +861,27 @@ extension BrowserModel {
         const roots = work.roots;
         __wkdomainsDarkModeDebug(`sync-styles-roots:${roots.length}/${allRoots.length}`);
         const stylesByRoot = new Map();
+        const collectStartedAt = __wkdomainsDarkModeNow();
         for (const root of roots) {
           stylesByRoot.set(root, collectVariableInputs(root));
         }
+        __wkdomainsDarkModePerf("sync-all-styles-collect", collectStartedAt, `roots=${roots.length}/${allRoots.length}`, 12);
 
         __wkdomainsDarkModeDebug("sync-styles-match-vars");
+        const matchStartedAt = __wkdomainsDarkModeNow();
         variablesStore.matchVariablesAndDependents();
+        __wkdomainsDarkModePerf("sync-all-styles-match-vars", matchStartedAt, variablesStore.status ? JSON.stringify(variablesStore.status()) : "", 12);
         __wkdomainsDarkModeDebug("sync-styles-root-vars");
+        const rootVarsStartedAt = __wkdomainsDarkModeNow();
         updateRootVariableStyle();
+        __wkdomainsDarkModePerf("sync-all-styles-root-vars", rootVarsStartedAt, "", 12);
 
         __wkdomainsDarkModeDebug("sync-styles-render");
+        const renderStartedAt = __wkdomainsDarkModeNow();
         for (const root of roots) {
           renderManageableStyles(root, stylesByRoot.get(root) || []);
         }
+        __wkdomainsDarkModePerf("sync-all-styles-render", renderStartedAt, `pendingRender=${pendingStyleRenderJobs.length}`, 12);
 
         if (pendingStyleRenderJobs.length > 0) {
           schedulePendingStyleRenderJobs(0);

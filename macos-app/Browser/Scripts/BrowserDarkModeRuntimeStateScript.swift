@@ -13,6 +13,7 @@ extension BrowserModel {
       let applying = false;
       let readyFinalized = false;
       let readyFallbackTimer = null;
+      let pageLoadFired = document.readyState === "complete";
       let shadowDiscoveryScheduled = false;
       const shadowDiscoveryRoots = new Set();
       let prunedDisconnectedRoots = 0;
@@ -118,8 +119,13 @@ extension BrowserModel {
                 pendingRootApplies: pendingRootApplyQueue.length,
                 pendingRootApplyJobs: pendingRootApplyJobs.size,
                 pendingElementApplies: pendingElementApplyQueue.length,
+                elementApplyScheduled,
+                applyQueueWatchdogActive: Boolean(applyQueueWatchdogTimer),
+                applyQueueWatchdogTicks,
                 priorityElementApplyBatches,
                 priorityElementApplies,
+                elementApplyErrors,
+                lastElementApplyError,
                 lightSurfaceFallbacksApplied,
                 lightSurfaceFallbacksCleared,
                 rootApplyScheduled,
@@ -129,6 +135,7 @@ extension BrowserModel {
                 hiddenMutationDeferred,
                 hiddenMutationDeferrals,
                 mutationQueueOverflows,
+                pageLoadFired,
                 theme: themeDebugStatus(),
                 ready: document.documentElement?.getAttribute(READY_ATTRIBUTE) === "true"
               };

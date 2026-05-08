@@ -98,7 +98,7 @@ extension BrowserModel {
       };
 
       const scheduleLifecycleStyleRefresh = (delay = 120) => {
-        if (stylesheetSyncNeeded || loadingStyles.size > 0) {
+        if (stylesheetSyncNeeded) {
           scheduleStartupAwareStyleSync(delay);
         }
       };
@@ -113,6 +113,7 @@ extension BrowserModel {
 
       const handleWindowLoad = () => {
         __wkdomainsDarkModeDebug("window-load");
+        pageLoadFired = true;
         dirtyRoots.add(document);
         scheduleLifecycleStyleRefresh(120);
         schedule(40);
@@ -120,6 +121,7 @@ extension BrowserModel {
 
       const handlePageShow = () => {
         __wkdomainsDarkModeDebug("page-show");
+        if (document.readyState === "complete") pageLoadFired = true;
         dirtyRoots.add(document);
         scheduleLifecycleStyleRefresh(120);
         schedule(40);
