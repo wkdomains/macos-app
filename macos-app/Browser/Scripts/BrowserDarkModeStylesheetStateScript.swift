@@ -19,6 +19,9 @@ extension BrowserModel {
       let lastStylesheetSyncRootCount = 0;
       let lastStylesheetSyncTotalRootCount = 0;
       let finalStartupStyleSyncScheduled = false;
+      let asyncStyleConversionsStarted = 0;
+      let asyncStyleConversionsCompleted = 0;
+      let asyncStyleConversionsCancelled = 0;
       let stylesheetProxyActive = false;
       let loadingStylesCounter = 0;
       const loadingStyles = new Set();

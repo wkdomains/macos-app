@@ -365,6 +365,71 @@ extension BrowserModel {
         return chunks.join("\n");
       };
 
+      const CSS_RULE_CONVERSION_ASYNC_THRESHOLD = 180;
+      const CSS_RULE_CONVERSION_BUDGET_MS = 7;
+      const CSS_RULE_CONVERSION_MAX_PER_SLICE = 24;
+
+      const shouldConvertCSSRulesAsync = (rules) => {
+        const length = Number(rules && rules.length) || 0;
+        return length >= CSS_RULE_CONVERSION_ASYNC_THRESHOLD;
+      };
+
+      const convertCSSRulesAsync = (rules, callback) => {
+        if (!rules) {
+          callback("");
+          return () => {};
+        }
+
+        const seenRuleLists = new WeakSet();
+        if (seenRuleLists.has(rules)) {
+          callback("");
+          return () => {};
+        }
+        seenRuleLists.add(rules);
+
+        const chunks = [];
+        const length = Number(rules.length) || 0;
+        let index = 0;
+        let cancelled = false;
+
+        const now = () => {
+          try { return performance.now(); } catch (_) { return Date.now(); }
+        };
+
+        const step = () => {
+          if (cancelled) return;
+          const started = now();
+          let convertedInSlice = 0;
+
+          while (index < length) {
+            const converted = convertCSSRule(rules[index], 0, seenRuleLists);
+            if (converted) chunks.push(converted);
+            index += 1;
+            convertedInSlice += 1;
+
+            if (
+              convertedInSlice >= CSS_RULE_CONVERSION_MAX_PER_SLICE
+              || now() - started >= CSS_RULE_CONVERSION_BUDGET_MS
+            ) {
+              break;
+            }
+          }
+
+          if (cancelled) return;
+          if (index < length) {
+            window.setTimeout(step, 0);
+            return;
+          }
+
+          callback(chunks.join("\n"));
+        };
+
+        window.setTimeout(step, 0);
+        return () => {
+          cancelled = true;
+        };
+      };
+
       const hashString = (value) => {
         const text = String(value || "");
         let hash = 2166136261;

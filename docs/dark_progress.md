@@ -1,6 +1,6 @@
 # Dark Mode Progress
 
-Last updated: 2026-05-07
+Last updated: 2026-05-08
 
 ## Current Focus
 
@@ -134,17 +134,24 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - page-world global proxy changes are now grouped into 50ms bridge batches before notifying the isolated engine
   - per-root adopted stylesheet notifications are coalesced before dispatch
   - page-proxy status now reports dispatched bridge batches, dispatched root-event batches, and pending batch queues
+- Added more long-session/runtime pruning:
+  - disconnected shadow roots now drop their root observers, adopted stylesheet managers, dirty-root entries, and queued root-apply/discovery work
+  - `/api/v1/dark-mode` reports pruned root and observer counts so stale SPA churn is visible
+- Added incremental large-stylesheet conversion:
+  - top-level CSSRuleLists above the large-sheet threshold are converted in small timer slices instead of one synchronous render burst
+  - pending async conversions are cancelled when a stylesheet changes or is removed
+  - `/api/v1/dark-mode` reports async conversion started/completed/cancelled/pending counters
 
 ## Completion Estimates
 
 - Full `variablesStore` dependency graph for matching variables and dependents: 77%
-- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 89%
-- Mature optimized DOM/style watchers: 80%
-- Robust adopted stylesheet management: 80%
-- Full stylesheet proxy behavior and cross-context coordination: 84%
+- Per-stylesheet managers with loading lifecycle, fallback clearing, and two-pass updates: 91%
+- Mature optimized DOM/style watchers: 82%
+- Robust adopted stylesheet management: 81%
+- Full stylesheet proxy behavior and cross-context coordination: 85%
 - Dark Reader's color pipeline and extensive config corpus: 64%
 - Mature fix selection/config parser behavior across many sites: 65%
-- Extension-world isolation: 57%
+- Extension-world isolation: 58%
 
 ## Remaining Gaps
 
@@ -152,13 +159,13 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - no full variable sheet registration/release lifecycle
   - limited CSS parser behavior for unusual declarations
   - limited scoped variable handling
-- Per-stylesheet managers still need more mature behavior. Current estimate: 89%.
+- Per-stylesheet managers still need more mature behavior. Current estimate: 91%.
   - inaccessible/CORS sheets
   - imported stylesheet retries
-  - incremental large-sheet rendering
-- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 80%.
-- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 80%.
-- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 84%.
+  - deeper nested-rule async rendering
+- Watchers are improved but still less mature than Dark Reader's separated watch modules and throttling strategy. Current estimate: 82%.
+- Adopted stylesheet handling is better, but not equivalent to Dark Reader's CSSStyleSheet override/fallback model. Current estimate: 81%.
+- Stylesheet proxy is closer, but cross-context coordination is still partial. Current estimate: 85%.
 - Color pipeline is still a major gap. Current estimate: 64%.
   - no full Dark Reader palette/cache system
   - limited image analysis
@@ -168,7 +175,7 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - parser exists, but no bundled Dark Reader config corpus yet
   - no broad site corpus
   - only a small set of targeted fixes
-- Extension-world isolation is not solved. Current estimate: 57%.
+- Extension-world isolation is not solved. Current estimate: 58%.
   - the main engine is now isolated, but a page-world proxy is still required for page-owned stylesheet and shadow-root APIs
   - complex SPAs can still be perturbed more than they would be by Dark Reader's extension-world architecture
   - bridge behavior now has direct API visibility, startup work is chunked, and page-proxy events are batched, but it still needs runtime proving on Reddit, HN, and other noisy SPAs

@@ -15,7 +15,15 @@ extension BrowserModel {
             : document.createElement("style");
           syncStyle.classList.add(INLINE_CLASS, "darkreader", STYLE_SYNC_CLASS);
           syncStyle.media = "screen";
-          manager = { syncStyle, signature: "", revision: 0, observer: null, onSheetChange: null };
+          manager = {
+            syncStyle,
+            signature: "",
+            pendingSignature: "",
+            revision: 0,
+            observer: null,
+            onSheetChange: null,
+            cancelConversion: null
+          };
           const onSheetChange = () => {
             manager.revision += 1;
             scheduleStyleSync(0);
@@ -96,6 +104,62 @@ extension BrowserModel {
           }
           __wkdomainsDarkModeDebug("render-style-cached");
           return;
+        }
+
+        if (shouldConvertCSSRulesAsync(rules)) {
+          if (manager.pendingSignature === signature) {
+            __wkdomainsDarkModeDebug("render-style-pending");
+            return;
+          }
+          if (manager.cancelConversion) {
+            manager.cancelConversion();
+            manager.cancelConversion = null;
+            asyncStyleConversionsCancelled += 1;
+          }
+          manager.pendingSignature = signature;
+          asyncStyleConversionsStarted += 1;
+          __wkdomainsDarkModeDebug(`render-style-async:${rules.length}`);
+          manager.cancelConversion = convertCSSRulesAsync(rules, (css) => {
+            manager.cancelConversion = null;
+            if (manager.pendingSignature !== signature || !element.isConnected) {
+              if (manager.pendingSignature === signature) {
+                manager.pendingSignature = "";
+              }
+              asyncStyleConversionsCancelled += 1;
+              return;
+            }
+            manager.pendingSignature = "";
+            manager.signature = signature;
+            asyncStyleConversionsCompleted += 1;
+            withStylesheetProxyDisabled(() => {
+              manager.syncStyle.textContent = css;
+            });
+
+            if (!css) {
+              withStylesheetProxyDisabled(() => {
+                manager.syncStyle.remove();
+              });
+              __wkdomainsDarkModeDebug("render-style-async-empty");
+              return;
+            }
+
+            withStylesheetProxyDisabled(() => {
+              if (element.parentNode && manager.syncStyle.parentNode !== element.parentNode) {
+                element.parentNode.insertBefore(manager.syncStyle, element.nextSibling);
+              } else if (element.parentNode && manager.syncStyle.previousSibling !== element) {
+                element.parentNode.insertBefore(manager.syncStyle, element.nextSibling);
+              }
+            });
+            __wkdomainsDarkModeDebug("render-style-async-end");
+          });
+          return;
+        }
+
+        if (manager.cancelConversion) {
+          manager.cancelConversion();
+          manager.cancelConversion = null;
+          manager.pendingSignature = "";
+          asyncStyleConversionsCancelled += 1;
         }
 
         __wkdomainsDarkModeDebug(`render-style-convert:${rules.length}`);
@@ -228,6 +292,11 @@ extension BrowserModel {
         }
         markStyleLoaded(element);
         if (manager) {
+          if (manager.cancelConversion) {
+            manager.cancelConversion();
+            manager.cancelConversion = null;
+            asyncStyleConversionsCancelled += 1;
+          }
           element.removeEventListener(STYLE_UPDATE_EVENT, manager.onSheetChange);
           if (manager.observer) manager.observer.disconnect();
           withStylesheetProxyDisabled(() => {

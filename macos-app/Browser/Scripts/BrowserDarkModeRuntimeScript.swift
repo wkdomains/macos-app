@@ -15,6 +15,8 @@ extension BrowserModel {
       let readyFallbackTimer = null;
       let shadowDiscoveryScheduled = false;
       const shadowDiscoveryRoots = new Set();
+      let prunedDisconnectedRoots = 0;
+      let prunedRootObservers = 0;
       const rootObservers = new Map();
       const dirtyRoots = new Set();
       let shadowProxyActive = false;
@@ -65,10 +67,16 @@ extension BrowserModel {
                 lastStylesheetSyncRootCount,
                 lastStylesheetSyncTotalRootCount,
                 finalStartupStyleSyncScheduled,
+                asyncStyleConversionsStarted,
+                asyncStyleConversionsCompleted,
+                asyncStyleConversionsCancelled,
+                asyncStyleConversionsPending: Math.max(0, asyncStyleConversionsStarted - asyncStyleConversionsCompleted - asyncStyleConversionsCancelled),
                 loadingStyles: loadingStyles.size,
                 managedStyleElements: managedStyleElements.size,
                 managedAdoptedRoots: managedAdoptedRoots.size,
                 discoveredShadowRoots: discoveredShadowRoots.size,
+                prunedDisconnectedRoots,
+                prunedRootObservers,
                 pendingRootApplies: pendingRootApplyQueue.length,
                 rootApplyScheduled,
                 shadowDiscoveryScheduled,
@@ -415,7 +423,62 @@ extension BrowserModel {
         }
       };
 
+      const rootIsConnected = (root) => {
+        if (!root) return false;
+        if (root === document) return true;
+        if (root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && root.host) {
+          return root.host.isConnected;
+        }
+        return root.isConnected !== false;
+      };
+
+      const forgetQueuedRootApply = (root) => {
+        if (!root || !pendingRootApplySet.has(root)) return;
+        pendingRootApplySet.delete(root);
+        for (let index = pendingRootApplyQueue.length - 1; index >= 0; index -= 1) {
+          if (pendingRootApplyQueue[index] === root) {
+            pendingRootApplyQueue.splice(index, 1);
+          }
+        }
+      };
+
+      const forgetDisconnectedRoot = (root) => {
+        if (!root || root === document) return false;
+        let changed = false;
+        const observer = rootObservers.get(root);
+        if (observer) {
+          observer.disconnect();
+          rootObservers.delete(root);
+          prunedRootObservers += 1;
+          changed = true;
+        }
+        if (discoveredShadowRoots.delete(root)) changed = true;
+        if (shadowRootsWithOverrides.delete(root)) changed = true;
+        if (dirtyRoots.delete(root)) changed = true;
+        if (shadowDiscoveryRoots.delete(root)) changed = true;
+        forgetQueuedRootApply(root);
+        removeAdoptedStyleManager(root);
+        if (changed) prunedDisconnectedRoots += 1;
+        return changed;
+      };
+
+      const pruneDisconnectedRoots = () => {
+        let pruned = false;
+        for (const root of Array.from(discoveredShadowRoots)) {
+          if (!rootIsConnected(root)) {
+            pruned = forgetDisconnectedRoot(root) || pruned;
+          }
+        }
+        for (const root of Array.from(rootObservers.keys())) {
+          if (!rootIsConnected(root)) {
+            pruned = forgetDisconnectedRoot(root) || pruned;
+          }
+        }
+        return pruned;
+      };
+
       const normalizeDirtyRoots = () => {
+        pruneDisconnectedRoots();
         if (dirtyRoots.size === 0) return [document];
         if (dirtyRoots.has(document) || dirtyRoots.size > 80) return [document];
 
