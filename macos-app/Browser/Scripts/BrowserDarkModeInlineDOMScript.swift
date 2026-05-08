@@ -205,12 +205,18 @@ extension BrowserModel {
         "[role='spinbutton']",
         "[role='textbox']"
       ].join(", ");
+      const ACTION_SURFACE_SELECTOR = [
+        "button",
+        "[role='button']"
+      ].join(", ");
       const LIGHT_SURFACE_SELECTOR = [
         "dialog",
         "[popover]",
         "[aria-modal='true']",
         "[role='dialog']",
         "[role='alertdialog']",
+        "[role='region'][aria-label]",
+        "[role='form']",
         "[class*='modal' i]",
         "[class*='dialog' i]",
         "[class*='popover' i]",
@@ -221,8 +227,8 @@ extension BrowserModel {
         "[class*='sheet' i]"
       ].join(", ");
       const SVG_SELECTOR = Array.from(SVG_TAGS).map((tag) => tag.toLowerCase()).join(", ");
-      const STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, EDITABLE_CONTROL_SELECTOR, SVG_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
-      const PRIORITY_STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, EDITABLE_CONTROL_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
+      const STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, EDITABLE_CONTROL_SELECTOR, ACTION_SURFACE_SELECTOR, SVG_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
+      const PRIORITY_STYLE_OVERRIDE_SELECTOR = [INLINE_STYLE_SELECTOR, EDITABLE_CONTROL_SELECTOR, ACTION_SURFACE_SELECTOR, LIGHT_SURFACE_SELECTOR].join(", ");
 
       const shouldSkipElement = (element) => {
         if (!element || !element.tagName || SKIP_TAGS.has(element.tagName.toUpperCase())) return true;
@@ -269,7 +275,8 @@ extension BrowserModel {
         if (rect.width < 24 || rect.height < 18 || rect.area < 900) return false;
 
         const role = String(element.getAttribute("role") || "").toLowerCase();
-        if (["dialog", "alertdialog"].includes(role)) return true;
+        if (["dialog", "alertdialog", "form"].includes(role)) return true;
+        if (role === "region" && element.hasAttribute("aria-label")) return true;
         if (element.hasAttribute("popover") || element.getAttribute("aria-modal") === "true") return true;
         if (element.matches("dialog")) return true;
 
@@ -279,6 +286,21 @@ extension BrowserModel {
         }
 
         return false;
+      };
+
+      const shouldApplyActionSurfaceFallback = (element) => {
+        if (!element || !element.matches || !element.matches(ACTION_SURFACE_SELECTOR)) return false;
+        if (!element.tagName || SKIP_TAGS.has(element.tagName.toUpperCase())) return false;
+        const rect = visibleRectFor(element);
+        if (rect.width < 28 || rect.height < 24 || rect.area < 1000) return false;
+        if (rect.area > Math.max(1, innerWidth * innerHeight) * 0.12) return false;
+
+        const style = captureSourceStyle(element) || getComputedStyle(element);
+        if (!style || style.display === "none" || style.visibility === "hidden" || Number.parseFloat(style.opacity || "1") <= 0.02) return false;
+        const sourceBackground = parseColor(style.backgroundColor);
+        if (!sourceBackground || sourceBackground.a <= 0.08) return false;
+        if (relativeLuminance(sourceBackground) <= 0.68) return false;
+        return !hasMediaBackdrop(element, style, false);
       };
 
       const hasColorInlineSource = (element) => {
@@ -571,18 +593,22 @@ extension BrowserModel {
 
         const isSVGElement = SVG_TAGS.has(tag);
         const isEditableControl = element.matches(EDITABLE_CONTROL_SELECTOR);
-        const needsSurfaceFallback = !hasInlineColors && !isSVGElement && !isEditableControl
+        const needsActionFallback = !hasInlineColors && !isSVGElement && !isEditableControl
+          ? shouldApplyActionSurfaceFallback(element)
+          : false;
+        const needsSurfaceFallback = !hasInlineColors && !isSVGElement && !isEditableControl && !needsActionFallback
           ? shouldApplyLightSurfaceFallback(element)
           : false;
         const shouldFallbackToComputedStyle = hasInlineColors
           || isSVGElement
           || isEditableControl
+          || needsActionFallback
           || needsSurfaceFallback;
         if (!shouldFallbackToComputedStyle) {
           return;
         }
 
-        applyComputedStyleFallback(element, needsSurfaceFallback ? "surface" : "direct");
+        applyComputedStyleFallback(element, needsSurfaceFallback || needsActionFallback ? "surface" : "direct");
         if (isEditableControl) {
           applyLightSurfaceAncestors(element);
         }

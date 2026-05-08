@@ -216,6 +216,11 @@ Bring the WKWebView forced dark-mode injector closer to Dark Reader's dynamic-th
   - media-backdrop descendant scans are skipped for direct editable/control fallback and kept for real surface fallback
   - startup root application now uses smaller slices and longer reschedule delays so large mail-style DOMs yield to browser UI sooner
   - startup inline variable collection uses a bounded walker before the later full sync catches the remaining long tail
+- Improved generic compose/form surface recovery:
+  - labeled regions and form-like containers with editable fields now get Dark Reader-style dark form-surface treatment through generic `:has()` selectors
+  - action controls are back in the inline fallback path, but only when their original computed background is visibly light and their geometry looks like a real control surface
+  - direct action/control fallback avoids descendant media scans so large ARIA button trees do not create a new startup stall
+  - this replaces the previous need for Gmail-specific compose selectors with a broader modal/form surface rule
 - Improved stylesheet/adopted stylesheet behavior:
   - fetched stylesheet copies now expand same-CORS `@import` rules recursively before parsing
   - failed fetch-copy attempts now get a guarded retry instead of permanently marking a stylesheet unavailable
