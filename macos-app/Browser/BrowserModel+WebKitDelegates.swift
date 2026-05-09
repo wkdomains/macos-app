@@ -158,7 +158,12 @@ extension BrowserModel: WKNavigationDelegate {
         BrowserDebugLogging.log(
             "[wkdomains-debug] navigation policy prepare url=\(url.absoluteString) type=\(navigationAction.navigationType.rawValue)"
         )
-        BrowserWebExtension.shared.prepareForNavigation(to: url) {
+        guard let tab = tab(for: webView) else {
+            decisionHandler(.allow)
+            return
+        }
+
+        BrowserWebExtension.shared.prepareForNavigation(to: url, in: tab) {
             BrowserDebugLogging.log(
                 "[wkdomains-debug] navigation policy allow url=\(url.absoluteString) type=\(navigationAction.navigationType.rawValue)"
             )
@@ -430,7 +435,11 @@ final class BrowserWebExtension {
 
     func didActivateTab(_ tab: BrowserTabState, previousTab: BrowserTabState?) {
         guard let controller else { return }
+        if let browser = tab.browserModel ?? browser {
+            controller.didFocusWindow(browser)
+        }
         controller.didActivateTab(tab, previousActiveTab: previousTab)
+        controller.didSelectTabs([tab])
     }
 
     func didChangeTab(_ tab: BrowserTabState, properties: WKWebExtension.TabChangedProperties) {
@@ -444,19 +453,25 @@ final class BrowserWebExtension {
         log("updated-denied-sites count=\(disabledSites.count) patterns=\(context.deniedPermissionMatchPatterns.count)")
     }
 
-    func prepareForNavigation(to url: URL, completion: @escaping () -> Void) {
+    func prepareForNavigation(to url: URL, in tab: BrowserTabState, completion: @escaping () -> Void) {
         guard shouldPrepareDarkReader(for: url) else {
             completion()
             return
         }
 
+        syncNavigationState(for: tab, url: url, reason: "before-background")
         performWhenReady { [weak self] in
             guard let self else {
                 completion()
                 return
             }
 
-            self.loadBackgroundContent(reason: "navigation", url: url, completion: completion)
+            self.loadBackgroundContent(reason: "navigation", url: url) { [weak self, weak tab] in
+                if let self, let tab {
+                    self.syncNavigationState(for: tab, url: url, reason: "after-background")
+                }
+                completion()
+            }
         }
     }
 
@@ -563,8 +578,10 @@ final class BrowserWebExtension {
 
                 if let browser {
                     controller.didOpenWindow(browser)
+                    controller.didFocusWindow(browser)
                     browser.tabStates.forEach { controller.didOpenTab($0) }
                     controller.didActivateTab(browser.activeTab)
+                    controller.didSelectTabs([browser.activeTab])
                 }
 
                 self.loadBackgroundContent(reason: "initial-load", url: nil) { [weak self] in
@@ -590,6 +607,19 @@ final class BrowserWebExtension {
         }
 
         return true
+    }
+
+    private func syncNavigationState(for tab: BrowserTabState, url: URL, reason: String) {
+        guard let controller else { return }
+
+        tab.loadingURL = url
+        if let browser = tab.browserModel ?? browser {
+            controller.didFocusWindow(browser)
+            controller.didActivateTab(tab, previousActiveTab: nil)
+            controller.didSelectTabs([tab])
+        }
+        controller.didChangeTabProperties([.loading, .URL], for: tab)
+        log("navigation-state-synced reason=\(reason) tab=\(String(tab.id.uuidString.prefix(8))) url=\(url.absoluteString)")
     }
 
     private func loadBackgroundContent(reason: String, url: URL?, completion: @escaping () -> Void) {
@@ -648,16 +678,22 @@ final class BrowserWebExtension {
 
     private static var extensionBaseURL: URL? {
         let fileManager = FileManager.default
+        var fallbackURL: URL?
         for path in extensionCandidatePaths {
             let expandedPath = NSString(string: path).expandingTildeInPath
             let url = URL(fileURLWithPath: expandedPath, isDirectory: true)
             let manifestURL = url.appendingPathComponent("manifest.json", isDirectory: false)
             if fileManager.fileExists(atPath: manifestURL.path) {
-                return url
+                if manifestVersion(for: url) != 3 {
+                    return url
+                }
+                if fallbackURL == nil {
+                    fallbackURL = url
+                }
             }
         }
 
-        return nil
+        return fallbackURL
     }
 
     private static var extensionCandidatePaths: [String] {
@@ -684,6 +720,12 @@ final class BrowserWebExtension {
         let repoBuildURLs = [
             buildRoot
                 .appendingPathComponent("release", isDirectory: true)
+                .appendingPathComponent("chrome", isDirectory: true),
+            buildRoot
+                .appendingPathComponent("debug", isDirectory: true)
+                .appendingPathComponent("chrome", isDirectory: true),
+            buildRoot
+                .appendingPathComponent("release", isDirectory: true)
                 .appendingPathComponent("chrome-mv3", isDirectory: true),
             buildRoot
                 .appendingPathComponent("debug", isDirectory: true)
@@ -702,13 +744,7 @@ final class BrowserWebExtension {
     private static func manifestSummary(for extensionBaseURL: URL?) -> [String: Any]? {
         guard let extensionBaseURL else { return nil }
 
-        let manifestURL = extensionBaseURL.appendingPathComponent("manifest.json", isDirectory: false)
-        guard
-            let data = try? Data(contentsOf: manifestURL),
-            let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return nil
-        }
+        guard let manifest = manifestJSON(for: extensionBaseURL) else { return nil }
 
         return [
             "name": manifest["name"] as? String ?? NSNull(),
@@ -719,6 +755,22 @@ final class BrowserWebExtension {
             "contentScriptCount": (manifest["content_scripts"] as? [[String: Any]])?.count ?? 0,
             "hasBackground": manifest["background"] != nil
         ]
+    }
+
+    private static func manifestVersion(for extensionBaseURL: URL) -> Int? {
+        manifestJSON(for: extensionBaseURL)?["manifest_version"] as? Int
+    }
+
+    private static func manifestJSON(for extensionBaseURL: URL) -> [String: Any]? {
+        let manifestURL = extensionBaseURL.appendingPathComponent("manifest.json", isDirectory: false)
+        guard
+            let data = try? Data(contentsOf: manifestURL),
+            let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        return manifest
     }
 
     private static func deniedPermissionMatchPatterns(for disabledSites: [String]) -> [WKWebExtension.MatchPattern: Date] {
@@ -936,7 +988,7 @@ extension BrowserTabState: WKWebExtensionTab {
     }
 
     func isLoadingComplete(for context: WKWebExtensionContext) -> Bool {
-        !webView.isLoading
+        loadingURL == nil && !webView.isLoading
     }
 
     func loadURL(_ url: URL, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {

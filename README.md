@@ -78,15 +78,16 @@ cd ..
 git clone https://github.com/darkreader/darkreader.git
 cd darkreader
 npm install
-npm run build -- --chrome-mv3
+npm run build -- --chrome
 cd ../macos-app
 rm -rf DarkReaderWebExtension
-ditto ../darkreader/build/release/chrome-mv3 DarkReaderWebExtension
+ditto ../darkreader/build/release/chrome DarkReaderWebExtension
 ```
 
 `DarkReaderWebExtension/` is gitignored and copied into the app bundle by
 Xcode. Re-run the final `ditto` command whenever you rebuild or update Dark
-Reader.
+Reader. wkdomains prefers Dark Reader's `chrome` build because it matches
+WebKit's extension messaging model more reliably than the Chromium MV3 bundle.
 
 Dark mode is controlled by the `dark` setting:
 
