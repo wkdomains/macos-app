@@ -18,6 +18,7 @@ extension BrowserModel {
       const FORM_SURFACE_ATTRIBUTE = "data-wkdomains-forced-dark-form-surface";
       const BACKGROUND_IMAGE_ATTRIBUTE = "data-wkdomains-forced-dark-bg-image";
       const LEGACY_BACKGROUND_ATTRIBUTE = "data-wkdomains-forced-dark-legacy-bg";
+      const LEGACY_DESCENDANT_COLOR_ATTRIBUTE = "data-wkdomains-forced-dark-legacy-descendant-color";
       const LEGACY_TEXT_ATTRIBUTE = "data-wkdomains-forced-dark-legacy-text";
       const LEGACY_LINK_ATTRIBUTE = "data-wkdomains-forced-dark-legacy-link";
       const LEGACY_VISITED_LINK_ATTRIBUTE = "data-wkdomains-forced-dark-legacy-vlink";
@@ -82,6 +83,7 @@ extension BrowserModel {
         FORM_SURFACE_ATTRIBUTE,
         BACKGROUND_IMAGE_ATTRIBUTE,
         LEGACY_BACKGROUND_ATTRIBUTE,
+        LEGACY_DESCENDANT_COLOR_ATTRIBUTE,
         LEGACY_TEXT_ATTRIBUTE,
         LEGACY_LINK_ATTRIBUTE,
         LEGACY_VISITED_LINK_ATTRIBUTE,

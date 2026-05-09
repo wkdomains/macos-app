@@ -86,7 +86,7 @@ Inline DOM handling is intentionally narrower than the earlier broad fallback pa
 - Root and element application are time-budgeted, watchdog-protected, and visibility-aware.
 - Generated inline properties are ignored in cache keys so our own writes do not repeatedly retrigger conversion.
 - Inline style handling includes Dark Reader-style loop protection, the ProseMirror node-view-content guard, four-digit legacy `color` normalization, and small-SVG fill classification.
-- Legacy HTML background and body text/link attributes now get generic transformed fallbacks when old document markup would otherwise strand dark inherited/link text.
+- Legacy HTML background and body text/link attributes now get generic transformed fallbacks when old document markup would otherwise strand dark text; legacy-background descendants get an inherited safety color first, then a post-layout idle-batched source-color pass so link, domain, user, and metadata tones keep their own transformed differences.
 - Post-load computed fallback covers broader light header, titlebar, toolbar, and labeled region surfaces without adding app-specific selectors.
 
 Adopted stylesheet handling is solid for WebKit:

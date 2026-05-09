@@ -407,8 +407,12 @@ extension BrowserModel {
         pendingRootApplyJobs.clear();
         pendingElementApplySet.clear();
         pendingElementApplyQueue.splice(0);
+        legacyBackgroundDescendantQueue.splice(0);
+        legacyBackgroundDescendantQueued = new WeakSet();
+        legacyBackgroundDescendantRetries = new WeakMap();
         rootApplyScheduled = false;
         elementApplyScheduled = false;
+        legacyBackgroundDescendantScheduled = false;
         imageAnalysisCanvas = null;
         imageAnalysisContext = null;
       };

@@ -16,10 +16,17 @@ extension BrowserModel {
       const pendingRootApplyJobs = new Map();
       const pendingElementApplySet = new Set();
       const pendingElementApplyQueue = [];
+      const legacyBackgroundDescendantQueue = [];
+      let legacyBackgroundDescendantQueued = new WeakSet();
+      let legacyBackgroundDescendantRetries = new WeakMap();
       let rootApplyScheduled = false;
       let elementApplyScheduled = false;
+      let legacyBackgroundDescendantScheduled = false;
       let lightSurfaceFallbacksApplied = 0;
       let lightSurfaceFallbacksCleared = 0;
+      let legacyBackgroundDescendantBatches = 0;
+      let legacyBackgroundDescendantsApplied = 0;
+      let legacyBackgroundDescendantsCleared = 0;
       let priorityElementApplyBatches = 0;
       let priorityElementApplies = 0;
       let elementApplyCacheVersion = 0;
@@ -47,12 +54,18 @@ extension BrowserModel {
       const ELEMENT_APPLY_BUDGET_MS = 3;
       const ELEMENT_APPLY_MAX_PER_SLICE = 32;
       const ELEMENT_SUBTREE_QUEUE_LIMIT = 32;
+      const LEGACY_BACKGROUND_DESCENDANT_SELECTOR = "a, span, td, th, p, div, font, b, i, em, strong, small";
+      const LEGACY_BACKGROUND_DESCENDANT_BATCH_LIMIT = 96;
+      const LEGACY_BACKGROUND_DESCENDANT_SCAN_LIMIT = 1800;
+      const LEGACY_BACKGROUND_DESCENDANT_BUDGET_MS = 6;
+      const LEGACY_BACKGROUND_DESCENDANT_RETRY_LIMIT = 3;
       const LIGHT_SURFACE_ANCESTOR_LIMIT = 6;
       const MEDIA_BACKDROP_SCAN_LIMIT = 48;
       const MEDIA_BACKDROP_SCAN_BUDGET_MS = 2.5;
       const INLINE_LOOP_DETECTION_THRESHOLD_MS = 1000;
       const INLINE_LOOP_MAX_CYCLES = 10;
       const SMALL_SVG_THRESHOLD = 32;
+      let samplingAttributeDepth = 0;
 
       const rootApplyInStartupWindow = () => {
         try {
@@ -82,6 +95,47 @@ extension BrowserModel {
         }
 
         window.setTimeout(callback, 0);
+      };
+
+      const withDarkModeSampling = (action) => {
+        const root = document.documentElement;
+        if (!root) return action();
+
+        const shouldSet = samplingAttributeDepth === 0 && !root.hasAttribute(SAMPLING_ATTRIBUTE);
+        const disabledStyles = [];
+        let restoreApplying = false;
+        let wasApplying = false;
+        samplingAttributeDepth += 1;
+        if (shouldSet) root.setAttribute(SAMPLING_ATTRIBUTE, "");
+        try {
+          if (samplingAttributeDepth === 1 && typeof applying === "boolean") {
+            wasApplying = applying;
+            applying = true;
+            restoreApplying = true;
+          }
+        } catch (_) {}
+        if (samplingAttributeDepth === 1 && document.querySelectorAll) {
+          try {
+            for (const style of document.querySelectorAll(`style.${INLINE_CLASS}`)) {
+              if (!style || style.disabled) continue;
+              style.disabled = true;
+              disabledStyles.push(style);
+            }
+          } catch (_) {}
+        }
+
+        try {
+          return action();
+        } finally {
+          for (const style of disabledStyles) {
+            try { style.disabled = false; } catch (_) {}
+          }
+          if (restoreApplying) applying = wasApplying;
+          samplingAttributeDepth = Math.max(0, samplingAttributeDepth - 1);
+          if (shouldSet && samplingAttributeDepth === 0) {
+            root.removeAttribute(SAMPLING_ATTRIBUTE);
+          }
+        }
       };
 
       const setOverride = (element, attribute, property, value) => {

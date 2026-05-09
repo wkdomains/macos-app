@@ -175,6 +175,7 @@ extension BrowserModel {
         setOverride(element, BACKGROUND_IMAGE_ATTRIBUTE, "--wkdomains-forced-dark-bg-image", null);
         element.removeAttribute(LEGACY_BACKGROUND_ATTRIBUTE);
         if (element && element.style) element.style.removeProperty("--wkdomains-forced-dark-legacy-color");
+        setOverride(element, LEGACY_DESCENDANT_COLOR_ATTRIBUTE, "--wkdomains-forced-dark-legacy-descendant-color", null);
         setOverride(element, LEGACY_TEXT_ATTRIBUTE, "--wkdomains-forced-dark-legacy-text-color", null);
         setOverride(element, LEGACY_LINK_ATTRIBUTE, "--wkdomains-forced-dark-legacy-link-color", null);
         setOverride(element, LEGACY_VISITED_LINK_ATTRIBUTE, "--wkdomains-forced-dark-legacy-vlink-color", null);
@@ -240,29 +241,181 @@ extension BrowserModel {
           return text;
         };
 
+        const parseTransformedColorValue = (value) => {
+          const parsed = parseColor(value);
+          if (parsed) return parsed;
+          const text = String(value || "").trim();
+          if (!text.toLowerCase().startsWith("var(")) return null;
+          const reference = readCSSVariableReferenceAt(text, 0);
+          if (!reference || reference.end !== text.length || !reference.fallback) return null;
+          return parseTransformedColorValue(reference.fallback);
+        };
+
         const setLegacyBackgroundTextFallback = (element, sourceColorValue) => {
           const sourceBackground = parseColor(sourceColorValue);
-          const transformedBackground = sourceBackground ? parseColor(transformBackground(sourceBackground, element)) : null;
-          const sourceStyle = captureSourceStyle(element) || getComputedStyle(element);
+          const transformedBackground = sourceBackground ? parseTransformedColorValue(transformBackground(sourceBackground, element)) : null;
+          const sourceStyle = withDarkModeSampling(() => withElementOverridesDisabled(element, () => captureComputedStyleSnapshot(element)));
           const sourceColor = parseColor(sourceStyle.color) || DEFAULT_TEXT;
           const transformedColor = transformForeground(sourceColor) || toThemeRGBA(themeTextColor());
-          element.setAttribute(LEGACY_BACKGROUND_ATTRIBUTE, "");
-          if (
+          const needsFallback = (
             transformedBackground
             && relativeLuminance(transformedBackground) < 0.48
             && relativeLuminance(sourceColor) < 0.56
-          ) {
+          );
+          if (needsFallback) {
+            element.setAttribute(LEGACY_BACKGROUND_ATTRIBUTE, "");
             element.style.setProperty("--wkdomains-forced-dark-legacy-color", transformedColor);
           } else {
+            if (element.hasAttribute(LEGACY_BACKGROUND_ATTRIBUTE)) clearLegacyBackgroundDescendantFallbacks(element);
+            element.removeAttribute(LEGACY_BACKGROUND_ATTRIBUTE);
             element.style.removeProperty("--wkdomains-forced-dark-legacy-color");
+          }
+          return needsFallback ? transformedBackground : null;
+        };
+
+        const clearLegacyBackgroundDescendantFallbacks = (element) => {
+          if (!element || !element.querySelectorAll) return;
+          try {
+            for (const descendant of element.querySelectorAll(`[${LEGACY_DESCENDANT_COLOR_ATTRIBUTE}]`)) {
+              legacyBackgroundDescendantQueued.delete(descendant);
+              setOverride(descendant, LEGACY_DESCENDANT_COLOR_ATTRIBUTE, "--wkdomains-forced-dark-legacy-descendant-color", null);
+              legacyBackgroundDescendantsCleared += 1;
+            }
+          } catch (_) {}
+        };
+
+        const nearestLegacyBackgroundElement = (element) => {
+          let node = element && element.parentElement;
+          while (node && node.nodeType === Node.ELEMENT_NODE) {
+            if (node.hasAttribute && node.hasAttribute(LEGACY_BACKGROUND_ATTRIBUTE)) return node;
+            node = node.parentElement || (node.getRootNode && node.getRootNode().host) || null;
+          }
+          return null;
+        };
+
+        const applyLegacyBackgroundDescendantColorFromSource = (descendant) => {
+          if (!descendant || descendant.nodeType !== Node.ELEMENT_NODE) return false;
+          legacyBackgroundDescendantQueued.delete(descendant);
+
+          if (
+            !descendant.isConnected
+            || descendant.hasAttribute(COLOR_ATTRIBUTE)
+            || shouldSkipElement(descendant)
+            || !nearestLegacyBackgroundElement(descendant)
+          ) {
+            legacyBackgroundDescendantRetries.delete(descendant);
+            if (descendant.hasAttribute && descendant.hasAttribute(LEGACY_DESCENDANT_COLOR_ATTRIBUTE)) {
+              legacyBackgroundDescendantsCleared += 1;
+            }
+            setOverride(descendant, LEGACY_DESCENDANT_COLOR_ATTRIBUTE, "--wkdomains-forced-dark-legacy-descendant-color", null);
+            return false;
+          }
+
+          const rect = visibleRectFor(descendant);
+          if (rect.width < 3 || rect.height < 3 || rect.area <= 0) return null;
+
+          const style = withElementOverridesDisabled(descendant, () => captureComputedStyleSnapshot(descendant));
+          const sourceColor = parseColor(style && style.color);
+          const transformedColor = sourceColor ? transformForeground(sourceColor) : null;
+          if (!transformedColor) {
+            legacyBackgroundDescendantRetries.delete(descendant);
+            if (descendant.hasAttribute(LEGACY_DESCENDANT_COLOR_ATTRIBUTE)) {
+              legacyBackgroundDescendantsCleared += 1;
+            }
+            setOverride(descendant, LEGACY_DESCENDANT_COLOR_ATTRIBUTE, "--wkdomains-forced-dark-legacy-descendant-color", null);
+            return false;
+          }
+
+          legacyBackgroundDescendantRetries.delete(descendant);
+          setOverride(descendant, LEGACY_DESCENDANT_COLOR_ATTRIBUTE, "--wkdomains-forced-dark-legacy-descendant-color", transformedColor);
+          legacyBackgroundDescendantsApplied += 1;
+          return true;
+        };
+
+        const shouldRetryLegacyBackgroundDescendant = (descendant) => {
+          if (!descendant || !descendant.isConnected) return false;
+          const retries = legacyBackgroundDescendantRetries.get(descendant) || 0;
+          if (retries >= LEGACY_BACKGROUND_DESCENDANT_RETRY_LIMIT) {
+            legacyBackgroundDescendantRetries.delete(descendant);
+            return false;
+          }
+          legacyBackgroundDescendantRetries.set(descendant, retries + 1);
+          return true;
+        };
+
+        const flushLegacyBackgroundDescendantFallbacks = () => {
+          legacyBackgroundDescendantScheduled = false;
+          if (legacyBackgroundDescendantQueue.length === 0) return;
+
+          const started = performance.now();
+          let processed = 0;
+          const retry = [];
+          legacyBackgroundDescendantBatches += 1;
+          withDarkModeSampling(() => {
+            while (legacyBackgroundDescendantQueue.length > 0) {
+              const descendant = legacyBackgroundDescendantQueue.shift();
+              const result = applyLegacyBackgroundDescendantColorFromSource(descendant);
+              if (result === null && shouldRetryLegacyBackgroundDescendant(descendant)) {
+                retry.push(descendant);
+              }
+              processed += 1;
+              if (
+                processed >= LEGACY_BACKGROUND_DESCENDANT_BATCH_LIMIT
+                || performance.now() - started > LEGACY_BACKGROUND_DESCENDANT_BUDGET_MS
+              ) {
+                break;
+              }
+            }
+          });
+          for (const descendant of retry) {
+            queueLegacyBackgroundDescendant(descendant);
+          }
+
+          if (legacyBackgroundDescendantQueue.length > 0) {
+            scheduleLegacyBackgroundDescendantFallbacks(retry.length > 0 ? 80 : 16);
+          }
+        };
+
+        const scheduleLegacyBackgroundDescendantFallbacks = (delay = 16) => {
+          if (legacyBackgroundDescendantScheduled) return;
+          legacyBackgroundDescendantScheduled = true;
+          scheduleIdleTask(flushLegacyBackgroundDescendantFallbacks, delay, 260);
+        };
+
+        const queueLegacyBackgroundDescendant = (descendant) => {
+          if (!descendant || legacyBackgroundDescendantQueued.has(descendant)) return false;
+          legacyBackgroundDescendantQueued.add(descendant);
+          legacyBackgroundDescendantQueue.push(descendant);
+          return true;
+        };
+
+        const applyLegacyBackgroundDescendantFallbacks = (element, transformedBackground) => {
+          if (!element || !element.querySelectorAll || !transformedBackground) return;
+          let scanned = 0;
+          withDarkModeSampling(() => {
+            try {
+              for (const descendant of element.querySelectorAll(LEGACY_BACKGROUND_DESCENDANT_SELECTOR)) {
+                if (scanned >= LEGACY_BACKGROUND_DESCENDANT_SCAN_LIMIT) break;
+                if (!descendant || descendant.hasAttribute(COLOR_ATTRIBUTE) || shouldSkipElement(descendant)) continue;
+                if (scanned < 64) {
+                  applyLegacyBackgroundDescendantColorFromSource(descendant);
+                }
+                queueLegacyBackgroundDescendant(descendant);
+                scanned += 1;
+              }
+            } catch (_) {}
+          });
+          if (legacyBackgroundDescendantQueue.length > 0) {
+            scheduleLegacyBackgroundDescendantFallbacks(80);
           }
         };
 
         if (element.hasAttribute("bgcolor")) {
           const value = normalizeLegacyColorValue(element.getAttribute("bgcolor") || "");
           setInlineCustomProp(element, BACKGROUND_ATTRIBUTE, "--wkdomains-forced-dark-bg", "background-color", "background-color", value);
-          setLegacyBackgroundTextFallback(element, value);
+          applyLegacyBackgroundDescendantFallbacks(element, setLegacyBackgroundTextFallback(element, value));
         } else {
+          if (element.hasAttribute(LEGACY_BACKGROUND_ATTRIBUTE)) clearLegacyBackgroundDescendantFallbacks(element);
           element.removeAttribute(LEGACY_BACKGROUND_ATTRIBUTE);
           element.style.removeProperty("--wkdomains-forced-dark-legacy-color");
         }

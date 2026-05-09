@@ -40,17 +40,24 @@ extension BrowserModel {
         pendingRootApplyJobs.clear();
         pendingElementApplySet.clear();
         pendingElementApplyQueue.splice(0);
+        legacyBackgroundDescendantQueue.splice(0);
+        legacyBackgroundDescendantQueued = new WeakSet();
+        legacyBackgroundDescendantRetries = new WeakMap();
         if (applyQueueWatchdogTimer) {
           window.clearTimeout(applyQueueWatchdogTimer);
           applyQueueWatchdogTimer = null;
         }
         fallbackWasCleared = false;
         elementApplyScheduled = false;
+        legacyBackgroundDescendantScheduled = false;
         elementApplyErrors = 0;
         lastElementApplyError = "";
         applyQueueWatchdogTicks = 0;
         lightSurfaceFallbacksApplied = 0;
         lightSurfaceFallbacksCleared = 0;
+        legacyBackgroundDescendantBatches = 0;
+        legacyBackgroundDescendantsApplied = 0;
+        legacyBackgroundDescendantsCleared = 0;
         priorityElementApplyBatches = 0;
         priorityElementApplies = 0;
         deferredStartupStyleSyncs = 0;

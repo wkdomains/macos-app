@@ -127,25 +127,38 @@ extension BrowserModel {
           `  ${cssProperty}: var(${property}) !important;`,
           "}"
         ].join("\n"));
+        const legacyBackgroundDescendantSelectors = ["a", "span", "td", "th", "p", "div", "font", "b", "i", "em", "strong", "small"];
 
         overrideRules.push([
           `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${LEGACY_BACKGROUND_ATTRIBUTE}]:not([${COLOR_ATTRIBUTE}]) {`,
           `  color: var(--wkdomains-forced-dark-legacy-color) !important;`,
+          `  -webkit-text-fill-color: var(--wkdomains-forced-dark-legacy-color) !important;`,
           "}",
-          `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${LEGACY_BACKGROUND_ATTRIBUTE}]:not([${COLOR_ATTRIBUTE}]) :where(a, span, td, th, p, div, font, b, i, em, strong, small):not([${COLOR_ATTRIBUTE}]) {`,
-          `  color: var(--wkdomains-forced-dark-legacy-color) !important;`,
+          ...legacyBackgroundDescendantSelectors.map((selector) => [
+            `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${LEGACY_BACKGROUND_ATTRIBUTE}]:not([${COLOR_ATTRIBUTE}]) ${selector}:not([${COLOR_ATTRIBUTE}]):not([${LEGACY_DESCENDANT_COLOR_ATTRIBUTE}]) {`,
+            `  color: var(--wkdomains-forced-dark-legacy-color) !important;`,
+            `  -webkit-text-fill-color: var(--wkdomains-forced-dark-legacy-color) !important;`,
+            "}"
+          ].join("\n")),
+          `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) [${LEGACY_DESCENDANT_COLOR_ATTRIBUTE}]:not([${COLOR_ATTRIBUTE}]) {`,
+          `  color: var(--wkdomains-forced-dark-legacy-descendant-color) !important;`,
+          `  -webkit-text-fill-color: var(--wkdomains-forced-dark-legacy-descendant-color) !important;`,
           "}",
           `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body[${LEGACY_TEXT_ATTRIBUTE}] {`,
           `  color: var(--wkdomains-forced-dark-legacy-text-color) !important;`,
+          `  -webkit-text-fill-color: var(--wkdomains-forced-dark-legacy-text-color) !important;`,
           "}",
           `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body[${LEGACY_LINK_ATTRIBUTE}] a:link:not([${COLOR_ATTRIBUTE}]) {`,
           `  color: var(--wkdomains-forced-dark-legacy-link-color) !important;`,
+          `  -webkit-text-fill-color: var(--wkdomains-forced-dark-legacy-link-color) !important;`,
           "}",
           `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body[${LEGACY_VISITED_LINK_ATTRIBUTE}] a:visited:not([${COLOR_ATTRIBUTE}]) {`,
           `  color: var(--wkdomains-forced-dark-legacy-vlink-color) !important;`,
+          `  -webkit-text-fill-color: var(--wkdomains-forced-dark-legacy-vlink-color) !important;`,
           "}",
           `:root[${ROOT_ATTRIBUTE}]:not([${SAMPLING_ATTRIBUTE}]) body[${LEGACY_ACTIVE_LINK_ATTRIBUTE}] a:active:not([${COLOR_ATTRIBUTE}]) {`,
           `  color: var(--wkdomains-forced-dark-legacy-alink-color) !important;`,
+          `  -webkit-text-fill-color: var(--wkdomains-forced-dark-legacy-alink-color) !important;`,
           "}"
         ].join("\n"));
 
