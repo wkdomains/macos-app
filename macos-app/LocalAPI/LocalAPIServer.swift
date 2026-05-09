@@ -106,6 +106,40 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/navigate" || request.path == "/api/v1/navgiate" {
+            guard request.method == "POST" else {
+                sendError(status: .methodNotAllowed, message: "Use POST for navigation requests.", on: connection)
+                return
+            }
+
+            guard request.originIsAllowed else {
+                sendError(status: .badRequest, message: "Origin is not allowed.", on: connection)
+                return
+            }
+
+            guard let jsonObject = try? JSONSerialization.jsonObject(with: request.body),
+                  let body = jsonObject as? [String: Any],
+                  let url = body["url"] as? String
+            else {
+                sendError(status: .badRequest, message: InspectionError.invalidNavigationRequest.localizedDescription, on: connection)
+                return
+            }
+
+            let mode = body["mode"] as? String
+            BrowserDebugLogging.log("[wkdomains-debug] local-api navigate start id=\(debugID) mode=\(mode ?? "auto") url=\(url)")
+            dataReader.navigate(to: url, mode: mode) { [weak self] result in
+                switch result {
+                case .success(let response):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api navigate done id=\(debugID)")
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api navigate fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .badRequest, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
         guard request.method == "GET" else {
             sendError(status: .methodNotAllowed, message: "Only GET is supported.", on: connection)
             return

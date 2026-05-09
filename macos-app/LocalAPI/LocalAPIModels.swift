@@ -10,6 +10,9 @@ enum InspectionError: LocalizedError {
     case noPageLoaded
     case couldNotDecodePageJSON
     case couldNotEncodeDiagnosticJSON
+    case invalidNavigationRequest
+    case invalidNavigationURL
+    case softNavigationRequiresSameOrigin
     case xhrIndexOutOfRange(Int)
     case invalidXHRURL
     case xhrReplayReturnedEmptyBody(Int?)
@@ -23,6 +26,12 @@ enum InspectionError: LocalizedError {
             return "Could not decode page inspection JSON."
         case .couldNotEncodeDiagnosticJSON:
             return "Could not encode diagnostic JSON."
+        case .invalidNavigationRequest:
+            return "Provide a JSON body with a url string and optional mode: auto, hard, or soft."
+        case .invalidNavigationURL:
+            return "Navigation URL must resolve to an http or https URL."
+        case .softNavigationRequiresSameOrigin:
+            return "Soft navigation is only available for same-origin URLs."
         case .xhrIndexOutOfRange(let index):
             return "No observed XHR request exists at index \(index)."
         case .invalidXHRURL:
