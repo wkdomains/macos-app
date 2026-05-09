@@ -76,10 +76,7 @@ final class BrowserModel: NSObject, ObservableObject {
             } else {
                 webViewDataStore = Self.websiteDataStore(for: identityID)
             }
-            let webView = Self.makeWebView(
-                dataStore: webViewDataStore,
-                usesDarkMode: settingsStore.usesDarkMode(for: startupURL)
-            )
+            let webView = Self.makeWebView(dataStore: webViewDataStore)
 
             return BrowserTabState(
                 webView: webView,
@@ -136,15 +133,13 @@ final class BrowserModel: NSObject, ObservableObject {
     private static let defaultWebsiteDataStore = WKWebsiteDataStore.default()
     private static var websiteDataStoresByIdentityID: [UUID: WKWebsiteDataStore] = [:]
 
-    static func makeWebView(dataStore: WKWebsiteDataStore, usesDarkMode: Bool) -> BrowserWKWebView {
+    static func makeWebView(dataStore: WKWebsiteDataStore) -> BrowserWKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         configuration.applicationNameForUserAgent = safariApplicationNameForUserAgent
         BrowserWebExtensionPrototype.configure(configuration)
 
-        let webView = BrowserWKWebView(frame: .zero, configuration: configuration)
-        webView.configureForcedDarkPageBackground(usesDarkMode)
-        return webView
+        return BrowserWKWebView(frame: .zero, configuration: configuration)
     }
 
     private static var safariApplicationNameForUserAgent: String {
@@ -401,7 +396,9 @@ final class BrowserModel: NSObject, ObservableObject {
     }
 
     var canToggleDarkThemeForCurrentSite: Bool {
-        settingsStore.isGlobalDarkModeEnabled && webView.url?.host != nil
+        settingsStore.isGlobalDarkModeEnabled
+            && BrowserWebExtensionPrototype.shared.isAvailable
+            && webView.url?.host != nil
     }
 
     var currentSiteIsExcludedFromDarkTheme: Bool {
@@ -416,8 +413,7 @@ final class BrowserModel: NSObject, ObservableObject {
         }
 
         settingsStore.toggleDarkModeDisabled(for: currentURL)
-        refreshDarkModeState(for: currentURL)
-        reinstallPageTrackingUserScripts()
+        BrowserWebExtensionPrototype.shared.updateDeniedSites(settingsStore.darkDisabledSites)
         webView.reload()
     }
 
@@ -526,7 +522,6 @@ final class BrowserModel: NSObject, ObservableObject {
         isSecurePage = url.scheme?.lowercased() == "https"
         navigationFallbacks = fallbackURLs
         resetXHRTracking(for: url)
-        refreshDarkModeState(for: url)
         refreshPublishedTabs()
         persistOpenTabs()
     }
@@ -558,10 +553,7 @@ final class BrowserModel: NSObject, ObservableObject {
         isLoading = false
         hasAttemptedNavigation = true
 
-        let nextWebView = Self.makeWebView(
-            dataStore: Self.websiteDataStore(for: identityID),
-            usesDarkMode: settingsStore.usesDarkMode(for: url)
-        )
+        let nextWebView = Self.makeWebView(dataStore: Self.websiteDataStore(for: identityID))
         tab.webView = nextWebView
         configure(tab)
         webView = nextWebView
@@ -629,9 +621,6 @@ final class BrowserModel: NSObject, ObservableObject {
         userContentController.removeScriptMessageHandler(forName: "wkdomainsXHR")
         userContentController.removeScriptMessageHandler(forName: "wkdomainsRender")
         userContentController.removeScriptMessageHandler(forName: "wkdomainsConsole")
-        if Self.darkModeUsesIsolatedContentWorld {
-            userContentController.removeScriptMessageHandler(forName: "wkdomainsConsole", contentWorld: Self.darkModeContentWorld)
-        }
         userContentController.removeScriptMessageHandler(forName: "wkdomainsLogin")
     }
 
@@ -755,10 +744,6 @@ final class BrowserModel: NSObject, ObservableObject {
 
     private func syncBookmarkState() {
         bookmarkURLs = settingsStore.bookmarkURLs
-    }
-
-    func refreshDarkModeState(for url: URL?) {
-        webView.configureForcedDarkPageBackground(settingsStore.usesDarkMode(for: url))
     }
 
     static func xhrResponseByteSortKey(_ record: XHRRequestRecord) -> Int {

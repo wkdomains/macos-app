@@ -190,136 +190,6 @@ final class WebsiteDataReader {
         }
     }
 
-    func readDarkModeStatus(completion: @escaping (Result<Any, Error>) -> Void) {
-        guard browser.webView.url != nil else {
-            completion(.failure(InspectionError.noPageLoaded))
-            return
-        }
-
-        let script = """
-        JSON.stringify((() => {
-            const callStatus = (name) => {
-                try {
-                    const fn = window[name];
-                    return typeof fn === "function" ? fn() : null;
-                } catch (error) {
-                    return { error: String(error && error.message || error) };
-                }
-            };
-
-            return {
-                url: location.href,
-                title: document.title,
-                readyState: document.readyState,
-                pageWorldFlags: {
-                    darkModeInstalled: !!window.__wkdomainsDarkModeInstalled,
-                    pageProxyInstalled: !!window.__wkdomainsDarkModePageProxyInstalled
-                },
-                engine: callStatus("__wkdomainsDarkModeStatus"),
-                pageProxy: callStatus("__wkdomainsDarkModePageProxyStatus")
-            };
-        })())
-        """
-
-        let startedAt = Date()
-        BrowserDebugLogging.log("[wkdomains-debug] local-api dark-mode start \(pageStateDescription())")
-
-        var pageWorldObject: Any?
-        var defaultClientObject: Any?
-        var darkModeWorldObject: Any?
-        var pageWorldError: String?
-        var defaultClientError: String?
-        var darkModeWorldError: String?
-        var pending = 3
-
-        let decodeStatusObject = { (value: Any?) -> Any? in
-            guard let json = value as? String,
-                  let data = json.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data)
-            else {
-                return nil
-            }
-
-            return object
-        }
-
-        let finishIfReady = {
-            pending -= 1
-            guard pending == 0 else { return }
-
-            var response: [String: Any] = [
-                "url": self.browser.webView.url?.absoluteString ?? NSNull(),
-                "host": self.browser.webView.url?.host ?? NSNull(),
-                "title": self.browser.webView.title ?? NSNull(),
-                "isLoading": self.browser.webView.isLoading,
-                "estimatedProgress": self.browser.webView.estimatedProgress,
-                "contentWorlds": [
-                    "page": pageWorldObject ?? ["error": pageWorldError ?? "No page-world status returned."],
-                    "defaultClient": defaultClientObject ?? ["error": defaultClientError ?? "No default-client status returned."],
-                    BrowserModel.darkModeContentWorldName: darkModeWorldObject ?? ["error": darkModeWorldError ?? "No dark-mode content-world status returned."]
-                ]
-            ]
-
-            if let pageWorldError {
-                response["pageWorldError"] = pageWorldError
-            }
-            if let defaultClientError {
-                response["defaultClientError"] = defaultClientError
-            }
-            if let darkModeWorldError {
-                response["darkModeWorldError"] = darkModeWorldError
-            }
-
-            BrowserDebugLogging.log("[wkdomains-debug] local-api dark-mode done elapsed=\(Self.formatElapsed(since: startedAt)) \(self.pageStateDescription())")
-            completion(.success(response))
-        }
-
-        browser.webView.evaluateJavaScript(script) { value, error in
-            Task { @MainActor in
-                if let error {
-                    pageWorldError = error.localizedDescription
-                } else if let object = decodeStatusObject(value) {
-                    pageWorldObject = object
-                } else {
-                    pageWorldError = InspectionError.couldNotDecodePageJSON.localizedDescription
-                }
-                finishIfReady()
-            }
-        }
-
-        browser.webView.evaluateJavaScript(script, in: nil, in: .defaultClient) { result in
-            Task { @MainActor in
-                switch result {
-                case .success(let value):
-                    if let object = decodeStatusObject(value) {
-                        defaultClientObject = object
-                    } else {
-                        defaultClientError = InspectionError.couldNotDecodePageJSON.localizedDescription
-                    }
-                case .failure(let error):
-                    defaultClientError = error.localizedDescription
-                }
-                finishIfReady()
-            }
-        }
-
-        browser.webView.evaluateJavaScript(script, in: nil, in: BrowserModel.darkModeContentWorld) { result in
-            Task { @MainActor in
-                switch result {
-                case .success(let value):
-                    if let object = decodeStatusObject(value) {
-                        darkModeWorldObject = object
-                    } else {
-                        darkModeWorldError = InspectionError.couldNotDecodePageJSON.localizedDescription
-                    }
-                case .failure(let error):
-                    darkModeWorldError = error.localizedDescription
-                }
-                finishIfReady()
-            }
-        }
-    }
-
     func readDarkReaderStatus(completion: @escaping (Result<Any, Error>) -> Void) {
         guard browser.webView.url != nil else {
             completion(.failure(InspectionError.noPageLoaded))
@@ -348,6 +218,7 @@ final class WebsiteDataReader {
                 darkReader: {
                     mode: root ? root.getAttribute("data-darkreader-mode") : null,
                     scheme: root ? root.getAttribute("data-darkreader-scheme") : null,
+                    documentClasses: root ? Array.from(root.classList) : [],
                     styleCount: darkReaderStyles.length,
                     styles: darkReaderStyles,
                     hasMeta: !!meta,
@@ -359,10 +230,6 @@ final class WebsiteDataReader {
                         selectionBackground: rootStyle.getPropertyValue("--darkreader-selection-background").trim() || null,
                         selectionText: rootStyle.getPropertyValue("--darkreader-selection-text").trim() || null
                     } : null
-                },
-                wkdomains: {
-                    darkModeInstalled: !!window.__wkdomainsDarkModeInstalled,
-                    pageProxyInstalled: !!window.__wkdomainsDarkModePageProxyInstalled
                 },
                 computedColors: {
                     rootBackground: rootStyle ? rootStyle.backgroundColor : null,

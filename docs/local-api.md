@@ -119,18 +119,20 @@ Probes common machine-readable files for the current domain:
 Responses include status, content type, sampled byte count, and a short
 `bodyPreview` for text, JSON, and XML resources.
 
-## Dark mode status
+## Dark Reader status
 
 ```sh
-curl http://localhost:9001/api/v1/dark-mode | jq .
+curl http://localhost:9001/api/v1/dark-reader | jq .
 ```
 
-Returns forced dark-mode runtime state from the page world, default client
-world, and named dark-mode engine world:
+Returns Dark Reader WebExtension diagnostics for the current page:
 
-- `contentWorlds.wkdomainsDarkMode.engine`: isolated dynamic-theme engine status
-- `contentWorlds.page.pageProxy`: page-world proxy status
-- bridge event counts, proxy config, stylesheet sync state, and manager counts
+- `prototype.enabled`: whether wkdomains tried to enable Dark Reader
+- `prototype.loaded`: whether the WebExtension context loaded successfully
+- `prototype.globalDarkSetting`: the `dark` setting from `settings.json`
+- `prototype.disabledSites`: hosts excluded with the context menu
+- `darkReader.styleCount`: Dark Reader styles currently present in the page
+- `darkReader.documentClasses`: Dark Reader classes on the document element
 
 ## XHR and fetch calls
 

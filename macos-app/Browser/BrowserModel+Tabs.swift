@@ -90,7 +90,6 @@ extension BrowserModel {
         if let url = webView.url {
             displayAddressText = url.absoluteString
             isSecurePage = url.scheme?.lowercased() == "https"
-            refreshDarkModeState(for: url)
         }
 
         canGoBack = webView.canGoBack
@@ -308,10 +307,7 @@ extension BrowserModel {
 
     func makeTab(initialURL: URL?) -> BrowserTabState {
         let identityID = initialURL.flatMap { settingsStore.activeIdentityID(for: $0) }
-        let webView = Self.makeWebView(
-            dataStore: Self.websiteDataStore(for: identityID),
-            usesDarkMode: settingsStore.usesDarkMode(for: initialURL)
-        )
+        let webView = Self.makeWebView(dataStore: Self.websiteDataStore(for: identityID))
         let tab = BrowserTabState(
             webView: webView,
             cookiePersistence: BrowserCookiePersistence(directoryURL: settingsStore.directoryURL),

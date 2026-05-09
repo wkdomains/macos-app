@@ -88,12 +88,11 @@ ditto ../darkreader/build/release/chrome-mv3 DarkReaderWebExtension
 Xcode. Re-run the final `ditto` command whenever you rebuild or update Dark
 Reader.
 
-For the current prototype, keep the legacy custom dark-mode engine disabled so
-it does not interfere with the extension:
+Dark mode is controlled by the `dark` setting:
 
 ```json
 {
-  "dark": false
+  "dark": true
 }
 ```
 
@@ -102,6 +101,12 @@ That setting lives in:
 ```sh
 ~/.config/wkdomains/settings.json
 ```
+
+When `dark` is `true` and `DarkReaderWebExtension/` exists, wkdomains loads the
+Dark Reader WebExtension. When `dark` is `false`, no dark-mode extension is
+loaded. The right-click "Exclude from Dark" item stores the current host in
+`darkDisabledSites` and reloads the page with Dark Reader access denied for that
+site.
 
 You can verify what is active on the current page with:
 

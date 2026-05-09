@@ -190,7 +190,6 @@ final class BrowserWKWebView: WKWebView {
     private var isHandlingDirectUserFocus = false
     private var contextMenuLinkURL: String?
     private var contextMenuLoginField: LoginFieldTarget?
-    private var usesForcedDarkPageBackground = false
     var titlebarTabsAccessory: BrowserTabsTitlebarAccessoryViewController?
     weak var titlebarTabsWindow: NSWindow?
 
@@ -213,7 +212,6 @@ final class BrowserWKWebView: WKWebView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         hideWindowTitle()
-        configureDescendantScrollViewBackgrounds()
         updateTitlebarTabsAccessory()
     }
 
@@ -240,25 +238,6 @@ final class BrowserWKWebView: WKWebView {
                 x: xPosition,
                 y: superview.bounds.height - 29
             ))
-        }
-    }
-
-    func configureForcedDarkPageBackground(_ enabled: Bool) {
-        usesForcedDarkPageBackground = enabled
-
-        let darkBackground = NSColor(
-            calibratedRed: 24 / 255,
-            green: 26 / 255,
-            blue: 27 / 255,
-            alpha: 1
-        )
-
-        wantsLayer = true
-        layer?.backgroundColor = enabled ? darkBackground.cgColor : NSColor.clear.cgColor
-        configureDescendantScrollViewBackgrounds()
-
-        if #available(macOS 12.0, *) {
-            underPageBackgroundColor = enabled ? darkBackground : nil
         }
     }
 
@@ -332,20 +311,6 @@ final class BrowserWKWebView: WKWebView {
         isHandlingDirectUserFocus = true
         action()
         isHandlingDirectUserFocus = false
-    }
-
-    private func configureDescendantScrollViewBackgrounds() {
-        setScrollViewBackgrounds(in: self)
-    }
-
-    private func setScrollViewBackgrounds(in view: NSView) {
-        if let scrollView = view as? NSScrollView {
-            scrollView.drawsBackground = !usesForcedDarkPageBackground
-        }
-
-        for subview in view.subviews {
-            setScrollViewBackgrounds(in: subview)
-        }
     }
 
     private func showBrowserContextMenu(with event: NSEvent) {

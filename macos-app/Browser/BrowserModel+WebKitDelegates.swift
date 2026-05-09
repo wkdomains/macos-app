@@ -144,12 +144,9 @@ extension BrowserModel: WKNavigationDelegate {
             return
         }
 
-        if let browserWebView = webView as? BrowserWKWebView {
-            browserWebView.configureForcedDarkPageBackground(settingsStore.usesDarkMode(for: url))
-        }
         if navigationAction.targetFrame?.isMainFrame != false {
             BrowserDebugLogging.log(
-                "[wkdomains-debug] navigation policy allow url=\(url.absoluteString) type=\(navigationAction.navigationType.rawValue) dark=\(settingsStore.usesDarkMode(for: url))"
+                "[wkdomains-debug] navigation policy allow url=\(url.absoluteString) type=\(navigationAction.navigationType.rawValue)"
             )
         }
         decisionHandler(.allow)
@@ -373,6 +370,10 @@ final class BrowserWebExtensionPrototype {
         configuration.webExtensionController = controller
     }
 
+    var isAvailable: Bool {
+        Self.extensionBaseURL != nil
+    }
+
     func attach(browser: BrowserModel) {
         guard let controller else { return }
 
@@ -402,9 +403,17 @@ final class BrowserWebExtensionPrototype {
         controller.didChangeTabProperties(properties, for: tab)
     }
 
+    func updateDeniedSites(_ disabledSites: [String]) {
+        guard let context else { return }
+        context.deniedPermissionMatchPatterns = Self.deniedPermissionMatchPatterns(for: disabledSites)
+        log("updated-denied-sites count=\(disabledSites.count) patterns=\(context.deniedPermissionMatchPatterns.count)")
+    }
+
     var status: [String: Any] {
         var response: [String: Any] = [
             "enabled": Self.isEnabled,
+            "globalDarkSetting": AppSettingsStore.shared.isGlobalDarkModeEnabled,
+            "disabledSites": AppSettingsStore.shared.darkDisabledSites,
             "selectedExtensionPath": Self.extensionBaseURL?.path ?? NSNull(),
             "candidateExtensionPaths": Self.extensionCandidatePaths,
             "manifest": Self.manifestSummary(for: Self.extensionBaseURL) ?? NSNull(),
@@ -429,6 +438,7 @@ final class BrowserWebExtensionPrototype {
             }
             response["currentPermissions"] = context.currentPermissions.map(\.rawValue).sorted()
             response["currentPermissionMatchPatterns"] = context.currentPermissionMatchPatterns.map { $0.string }.sorted()
+            response["deniedPermissionMatchPatterns"] = context.deniedPermissionMatchPatterns.keys.map { $0.string }.sorted()
 
             let webExtension = context.webExtension
             response["webExtension"] = [
@@ -465,6 +475,9 @@ final class BrowserWebExtensionPrototype {
                 context.grantedPermissionMatchPatterns = Dictionary(
                     uniqueKeysWithValues: webExtension.allRequestedMatchPatterns.map { ($0, Date.distantFuture) }
                 )
+                context.deniedPermissionMatchPatterns = Self.deniedPermissionMatchPatterns(
+                    for: AppSettingsStore.shared.darkDisabledSites
+                )
 
                 try controller.load(context)
                 self.context = context
@@ -490,7 +503,7 @@ final class BrowserWebExtensionPrototype {
             return false
         }
 
-        guard AppSettingsStore.shared.isGlobalDarkModeEnabled == false else {
+        guard AppSettingsStore.shared.isGlobalDarkModeEnabled else {
             return false
         }
 
@@ -570,6 +583,40 @@ final class BrowserWebExtensionPrototype {
             "contentScriptCount": (manifest["content_scripts"] as? [[String: Any]])?.count ?? 0,
             "hasBackground": manifest["background"] != nil
         ]
+    }
+
+    private static func deniedPermissionMatchPatterns(for disabledSites: [String]) -> [WKWebExtension.MatchPattern: Date] {
+        var deniedPatterns: [WKWebExtension.MatchPattern: Date] = [:]
+        for site in disabledSites {
+            for pattern in disabledSiteMatchPatterns(for: site) {
+                deniedPatterns[pattern] = Date.distantFuture
+            }
+        }
+        return deniedPatterns
+    }
+
+    private static func disabledSiteMatchPatterns(for site: String) -> [WKWebExtension.MatchPattern] {
+        let host = site
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !host.isEmpty else { return [] }
+
+        var patterns: [WKWebExtension.MatchPattern] = []
+        if let exactPattern = try? WKWebExtension.MatchPattern(scheme: "*", host: host, path: "/*") {
+            patterns.append(exactPattern)
+        }
+
+        if host != "localhost",
+           !host.contains(":"),
+           host.rangeOfCharacter(from: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz")) != nil
+        {
+            if let wildcardPattern = try? WKWebExtension.MatchPattern(scheme: "*", host: "*.\(host)", path: "/*") {
+                patterns.append(wildcardPattern)
+            }
+        }
+
+        return patterns
     }
 
     private static let storageIdentifier = UUID(uuidString: "8A4EA12B-CE67-4B78-8C79-7F16C3975B4D")!

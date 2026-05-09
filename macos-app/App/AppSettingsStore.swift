@@ -177,10 +177,6 @@ final class AppSettingsStore {
         cachedSettings.dark
     }
 
-    func usesDarkMode(for url: URL?) -> Bool {
-        cachedSettings.dark && !isDarkModeDisabled(for: url)
-    }
-
     func isDarkModeDisabled(for url: URL?) -> Bool {
         guard let host = url.flatMap(Self.normalizedHost(for:)) else { return false }
         return cachedSettings.darkDisabledSites.contains { disabledSite in
