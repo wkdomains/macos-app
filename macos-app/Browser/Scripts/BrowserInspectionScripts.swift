@@ -116,6 +116,7 @@ extension BrowserModel {
         }
         if (tag === "summary") return "button";
         if (tag === "form") return "form";
+        if (tag === "dialog") return "dialog";
         if (tag === "table") return "table";
 
         return tag;
@@ -172,6 +173,7 @@ extension BrowserModel {
           href: element.href || null,
           action: element.action || null,
           method: element.method ? element.method.toUpperCase() : null,
+          modal: element.getAttribute("aria-modal") === "true" ? true : null,
           disabled: !!(element.disabled || element.getAttribute("aria-disabled") === "true"),
           required: !!(element.required || element.hasAttribute("required")),
           checked: typeof element.checked === "boolean" ? element.checked : null,
@@ -191,10 +193,14 @@ extension BrowserModel {
         "textarea",
         "select",
         "summary",
+        "dialog",
         "form",
         "table",
         "[contenteditable='true']",
+        "[aria-modal='true']",
+        "[role='alertdialog']",
         "[role='button']",
+        "[role='dialog']",
         "[role='link']",
         "[role='menuitem']",
         "[role='tab']",
