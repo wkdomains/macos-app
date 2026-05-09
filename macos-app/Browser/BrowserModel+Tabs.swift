@@ -28,6 +28,7 @@ final class BrowserTabState: NSObject {
     var isCookieStoreReady = false
     var pendingLoadRequest: (url: URL, fallbackURLs: [URL])?
     var loadingURL: URL?
+    var darkReaderFallbackRecoveryAttemptsByURL: [String: Int] = [:]
     var hasAttemptedNavigation = false
     var displayAddressText = ""
     var errorMessage: String?
