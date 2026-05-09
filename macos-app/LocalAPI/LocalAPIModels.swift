@@ -9,6 +9,7 @@ import Foundation
 enum InspectionError: LocalizedError {
     case noPageLoaded
     case couldNotDecodePageJSON
+    case couldNotEncodeDiagnosticJSON
     case xhrIndexOutOfRange(Int)
     case invalidXHRURL
     case xhrReplayReturnedEmptyBody(Int?)
@@ -20,6 +21,8 @@ enum InspectionError: LocalizedError {
             return "No page is loaded."
         case .couldNotDecodePageJSON:
             return "Could not decode page inspection JSON."
+        case .couldNotEncodeDiagnosticJSON:
+            return "Could not encode diagnostic JSON."
         case .xhrIndexOutOfRange(let index):
             return "No observed XHR request exists at index \(index)."
         case .invalidXHRURL:

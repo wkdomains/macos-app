@@ -320,6 +320,77 @@ final class WebsiteDataReader {
         }
     }
 
+    func readDarkReaderStatus(completion: @escaping (Result<Any, Error>) -> Void) {
+        guard browser.webView.url != nil else {
+            completion(.failure(InspectionError.noPageLoaded))
+            return
+        }
+
+        let script = """
+        JSON.stringify((() => {
+            const root = document.documentElement;
+            const bodyStyle = document.body ? getComputedStyle(document.body) : null;
+            const rootStyle = root ? getComputedStyle(root) : null;
+            const darkReaderStyles = Array.from(document.querySelectorAll(".darkreader")).map((element) => ({
+                tag: element.tagName.toLowerCase(),
+                className: element.className || null,
+                media: element.media || null,
+                textLength: element.textContent ? element.textContent.length : 0
+            }));
+            const meta = document.querySelector('meta[name="darkreader"]');
+            const lock = document.querySelector('meta[name="darkreader-lock"]');
+
+            return {
+                prototype: __WKDOMAINS_DARK_READER_PROTOTYPE_STATUS__,
+                url: location.href,
+                title: document.title,
+                readyState: document.readyState,
+                darkReader: {
+                    mode: root ? root.getAttribute("data-darkreader-mode") : null,
+                    scheme: root ? root.getAttribute("data-darkreader-scheme") : null,
+                    styleCount: darkReaderStyles.length,
+                    styles: darkReaderStyles,
+                    hasMeta: !!meta,
+                    hasLock: !!lock,
+                    metaContent: meta ? meta.content || null : null,
+                    cssVariables: rootStyle ? {
+                        neutralBackground: rootStyle.getPropertyValue("--darkreader-neutral-background").trim() || null,
+                        neutralText: rootStyle.getPropertyValue("--darkreader-neutral-text").trim() || null,
+                        selectionBackground: rootStyle.getPropertyValue("--darkreader-selection-background").trim() || null,
+                        selectionText: rootStyle.getPropertyValue("--darkreader-selection-text").trim() || null
+                    } : null
+                },
+                wkdomains: {
+                    darkModeInstalled: !!window.__wkdomainsDarkModeInstalled,
+                    pageProxyInstalled: !!window.__wkdomainsDarkModePageProxyInstalled
+                },
+                computedColors: {
+                    rootBackground: rootStyle ? rootStyle.backgroundColor : null,
+                    rootColor: rootStyle ? rootStyle.color : null,
+                    bodyBackground: bodyStyle ? bodyStyle.backgroundColor : null,
+                    bodyColor: bodyStyle ? bodyStyle.color : null
+                },
+                colorScheme: rootStyle ? rootStyle.colorScheme : null,
+                prefersColorSchemeDark: !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
+            };
+        })())
+        """
+
+        guard
+            let prototypeData = try? JSONSerialization.data(withJSONObject: BrowserWebExtensionPrototype.shared.status),
+            let prototypeJSON = String(data: prototypeData, encoding: .utf8)
+        else {
+            completion(.failure(InspectionError.couldNotEncodeDiagnosticJSON))
+            return
+        }
+
+        evaluateJSONScript(
+            script.replacingOccurrences(of: "__WKDOMAINS_DARK_READER_PROTOTYPE_STATUS__", with: prototypeJSON),
+            label: "dark-reader",
+            completion: completion
+        )
+    }
+
     func readPendingBotRequests() -> [[String: Any]] {
         browser.pendingBotRequests().map(Self.dictionary(from:))
     }

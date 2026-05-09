@@ -6,8 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		00C324572FA6BEEF00FF317A /* DarkReaderWebExtension in Resources */ = {isa = PBXBuildFile; fileRef = 00C324582FA6BEEF00FF317A /* DarkReaderWebExtension */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		00C324482FA6900200FF317A /* wkdomains.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = wkdomains.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		00C324582FA6BEEF00FF317A /* DarkReaderWebExtension */ = {isa = PBXFileReference; lastKnownFileType = folder; path = DarkReaderWebExtension; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -33,6 +38,7 @@
 			isa = PBXGroup;
 			children = (
 				00C3244A2FA6900200FF317A /* macos-app */,
+				00C324582FA6BEEF00FF317A /* DarkReaderWebExtension */,
 				00C324492FA6900200FF317A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -109,6 +115,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				00C324572FA6BEEF00FF317A /* DarkReaderWebExtension in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

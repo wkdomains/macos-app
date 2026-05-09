@@ -104,6 +104,7 @@ final class BrowserModel: NSObject, ObservableObject {
         for tab in tabStates {
             attachCookiePersistence(to: tab)
         }
+        BrowserWebExtensionPrototype.shared.attach(browser: self)
     }
 
     static func websiteDataStore(for identityID: UUID?) -> WKWebsiteDataStore {
@@ -139,6 +140,7 @@ final class BrowserModel: NSObject, ObservableObject {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         configuration.applicationNameForUserAgent = safariApplicationNameForUserAgent
+        BrowserWebExtensionPrototype.configure(configuration)
 
         let webView = BrowserWKWebView(frame: .zero, configuration: configuration)
         webView.configureForcedDarkPageBackground(usesDarkMode)
@@ -174,6 +176,7 @@ final class BrowserModel: NSObject, ObservableObject {
 
     func configure(_ tab: BrowserTabState) {
         let webView = tab.webView
+        tab.browserModel = self
         webView.allowsBackForwardNavigationGestures = true
         webView.browserContextMenuDelegate = self
         webView.selectTab = { [weak self] tabID in

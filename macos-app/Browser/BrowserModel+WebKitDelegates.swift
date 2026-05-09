@@ -349,3 +349,462 @@ extension BrowserModel: WKUIDelegate {
         frame.request.url?.host ?? webView.url?.host ?? "this page"
     }
 }
+
+final class BrowserWebExtensionPrototype {
+    static let shared = BrowserWebExtensionPrototype()
+
+    private(set) var controller: WKWebExtensionController?
+    private var context: WKWebExtensionContext?
+    private weak var browser: BrowserModel?
+    private var isLoadingExtension = false
+    private var lastLoadError: String?
+
+    private init() {
+        guard Self.isEnabled else { return }
+
+        let configuration = WKWebExtensionController.Configuration(identifier: Self.storageIdentifier)
+        configuration.defaultWebsiteDataStore = WKWebsiteDataStore.default()
+        controller = WKWebExtensionController(configuration: configuration)
+        log("controller-created path=\(Self.extensionBaseURL?.path ?? "nil")")
+    }
+
+    static func configure(_ configuration: WKWebViewConfiguration) {
+        guard let controller = shared.controller else { return }
+        configuration.webExtensionController = controller
+    }
+
+    func attach(browser: BrowserModel) {
+        guard let controller else { return }
+
+        self.browser = browser
+        controller.delegate = browser
+        browser.tabStates.forEach { $0.browserModel = browser }
+        loadExtensionIfNeeded()
+    }
+
+    func didOpenTab(_ tab: BrowserTabState) {
+        guard let controller else { return }
+        controller.didOpenTab(tab)
+    }
+
+    func didCloseTab(_ tab: BrowserTabState) {
+        guard let controller else { return }
+        controller.didCloseTab(tab)
+    }
+
+    func didActivateTab(_ tab: BrowserTabState, previousTab: BrowserTabState?) {
+        guard let controller else { return }
+        controller.didActivateTab(tab, previousActiveTab: previousTab)
+    }
+
+    func didChangeTab(_ tab: BrowserTabState, properties: WKWebExtension.TabChangedProperties) {
+        guard let controller else { return }
+        controller.didChangeTabProperties(properties, for: tab)
+    }
+
+    var status: [String: Any] {
+        var response: [String: Any] = [
+            "enabled": Self.isEnabled,
+            "selectedExtensionPath": Self.extensionBaseURL?.path ?? NSNull(),
+            "candidateExtensionPaths": Self.extensionCandidatePaths,
+            "manifest": Self.manifestSummary(for: Self.extensionBaseURL) ?? NSNull(),
+            "controllerCreated": controller != nil,
+            "controllerExtensionContextCount": controller?.extensionContexts.count ?? 0,
+            "isLoadingExtension": isLoadingExtension,
+            "loaded": context?.isLoaded ?? false,
+            "lastLoadError": lastLoadError ?? NSNull()
+        ]
+
+        if let context {
+            response["baseURL"] = context.baseURL.absoluteString
+            response["uniqueIdentifier"] = context.uniqueIdentifier
+            response["isInspectable"] = context.isInspectable
+            response["contextErrors"] = context.errors.map { error in
+                let nsError = error as NSError
+                return [
+                    "domain": nsError.domain,
+                    "code": nsError.code,
+                    "message": nsError.localizedDescription
+                ] as [String: Any]
+            }
+            response["currentPermissions"] = context.currentPermissions.map(\.rawValue).sorted()
+            response["currentPermissionMatchPatterns"] = context.currentPermissionMatchPatterns.map { $0.string }.sorted()
+
+            let webExtension = context.webExtension
+            response["webExtension"] = [
+                "displayName": webExtension.displayName ?? NSNull(),
+                "version": webExtension.version ?? NSNull(),
+                "requestedPermissions": webExtension.requestedPermissions.map(\.rawValue).sorted(),
+                "requestedPermissionMatchPatterns": webExtension.requestedPermissionMatchPatterns.map { $0.string }.sorted(),
+                "allRequestedMatchPatterns": webExtension.allRequestedMatchPatterns.map { $0.string }.sorted()
+            ] as [String: Any]
+        } else {
+            response["contextErrors"] = []
+        }
+
+        return response
+    }
+
+    private func loadExtensionIfNeeded() {
+        guard context == nil, !isLoadingExtension else { return }
+        guard let controller, let extensionBaseURL = Self.extensionBaseURL else { return }
+
+        isLoadingExtension = true
+        lastLoadError = nil
+        Task { @MainActor in
+            do {
+                let webExtension = try await WKWebExtension(resourceBaseURL: extensionBaseURL)
+                let context = WKWebExtensionContext(for: webExtension)
+                context.uniqueIdentifier = "com.wkdomains.darkreader.prototype"
+                context.baseURL = URL(string: "webkit-extension://darkreader.wkdomains")!
+                context.isInspectable = true
+                context.inspectionName = "Dark Reader prototype"
+                context.grantedPermissions = Dictionary(
+                    uniqueKeysWithValues: webExtension.requestedPermissions.map { ($0, Date.distantFuture) }
+                )
+                context.grantedPermissionMatchPatterns = Dictionary(
+                    uniqueKeysWithValues: webExtension.allRequestedMatchPatterns.map { ($0, Date.distantFuture) }
+                )
+
+                try controller.load(context)
+                self.context = context
+                self.isLoadingExtension = false
+                self.log("loaded name=\(webExtension.displayName ?? "Dark Reader") permissions=\(webExtension.requestedPermissions.count) patterns=\(webExtension.allRequestedMatchPatterns.count)")
+
+                if let browser {
+                    controller.didOpenWindow(browser)
+                    browser.tabStates.forEach { controller.didOpenTab($0) }
+                    controller.didActivateTab(browser.activeTab)
+                }
+            } catch {
+                self.isLoadingExtension = false
+                self.lastLoadError = error.localizedDescription
+                self.log("load-failed error=\(error.localizedDescription)")
+            }
+        }
+    }
+
+    private static var isEnabled: Bool {
+        let defaults = UserDefaults.standard
+        if let value = defaults.object(forKey: "wkdomains.darkReaderWebExtensionPrototype") as? Bool, !value {
+            return false
+        }
+
+        guard AppSettingsStore.shared.isGlobalDarkModeEnabled == false else {
+            return false
+        }
+
+        return extensionBaseURL != nil
+    }
+
+    private static var extensionBaseURL: URL? {
+        let fileManager = FileManager.default
+        for path in extensionCandidatePaths {
+            let expandedPath = NSString(string: path).expandingTildeInPath
+            let url = URL(fileURLWithPath: expandedPath, isDirectory: true)
+            let manifestURL = url.appendingPathComponent("manifest.json", isDirectory: false)
+            if fileManager.fileExists(atPath: manifestURL.path) {
+                return url
+            }
+        }
+
+        return nil
+    }
+
+    private static var extensionCandidatePaths: [String] {
+        let rawPaths = [
+            ProcessInfo.processInfo.environment["WKDOMAINS_DARK_READER_EXTENSION_PATH"],
+            UserDefaults.standard.string(forKey: "wkdomains.darkReaderWebExtensionPath")
+        ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) } + defaultExtensionBaseURLs.map(\.path)
+
+        var seenPaths = Set<String>()
+        return rawPaths.filter { path in
+            !path.isEmpty && seenPaths.insert(path).inserted
+        }
+    }
+
+    private static var defaultExtensionBaseURLs: [URL] {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let buildRoot = repoRoot
+            .deletingLastPathComponent()
+            .appendingPathComponent("darkreader/build", isDirectory: true)
+
+        let repoBuildURLs = [
+            buildRoot
+                .appendingPathComponent("release", isDirectory: true)
+                .appendingPathComponent("chrome-mv3", isDirectory: true),
+            buildRoot
+                .appendingPathComponent("debug", isDirectory: true)
+                .appendingPathComponent("chrome-mv3", isDirectory: true)
+        ]
+
+        guard let resourceURL = Bundle.main.resourceURL else {
+            return repoBuildURLs
+        }
+
+        return [
+            resourceURL.appendingPathComponent("DarkReaderWebExtension", isDirectory: true)
+        ] + repoBuildURLs
+    }
+
+    private static func manifestSummary(for extensionBaseURL: URL?) -> [String: Any]? {
+        guard let extensionBaseURL else { return nil }
+
+        let manifestURL = extensionBaseURL.appendingPathComponent("manifest.json", isDirectory: false)
+        guard
+            let data = try? Data(contentsOf: manifestURL),
+            let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+
+        return [
+            "name": manifest["name"] as? String ?? NSNull(),
+            "version": manifest["version"] as? String ?? NSNull(),
+            "manifestVersion": manifest["manifest_version"] as? Int ?? NSNull(),
+            "permissions": manifest["permissions"] as? [String] ?? [],
+            "hostPermissions": manifest["host_permissions"] as? [String] ?? [],
+            "contentScriptCount": (manifest["content_scripts"] as? [[String: Any]])?.count ?? 0,
+            "hasBackground": manifest["background"] != nil
+        ]
+    }
+
+    private static let storageIdentifier = UUID(uuidString: "8A4EA12B-CE67-4B78-8C79-7F16C3975B4D")!
+
+    private func log(_ message: String) {
+        BrowserDebugLogging.log("[wkdomains-debug] darkreader-webextension \(message)")
+    }
+}
+
+extension BrowserModel: WKWebExtensionControllerDelegate, WKWebExtensionWindow {
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        openWindowsFor extensionContext: WKWebExtensionContext
+    ) -> [any WKWebExtensionWindow] {
+        [self]
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        focusedWindowFor extensionContext: WKWebExtensionContext
+    ) -> (any WKWebExtensionWindow)? {
+        self
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        openNewTabUsing configuration: WKWebExtension.TabConfiguration,
+        for extensionContext: WKWebExtensionContext,
+        completionHandler: @escaping ((any WKWebExtensionTab)?, Error?) -> Void
+    ) {
+        let tab = makeTab(initialURL: configuration.url)
+        tab.isPinned = configuration.shouldBePinned
+        tabStates.append(tab)
+        attachCookiePersistence(to: tab)
+
+        if let url = configuration.url {
+            load(url, in: tab, fallbackURLs: [])
+        }
+
+        if configuration.shouldBeActive {
+            selectTab(tab.id)
+        } else {
+            refreshPublishedTabs()
+            persistOpenTabs()
+        }
+
+        BrowserWebExtensionPrototype.shared.didOpenTab(tab)
+        completionHandler(tab, nil)
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        openNewWindowUsing configuration: WKWebExtension.WindowConfiguration,
+        for extensionContext: WKWebExtensionContext,
+        completionHandler: @escaping ((any WKWebExtensionWindow)?, Error?) -> Void
+    ) {
+        if let url = configuration.tabURLs.first {
+            addTab(loading: url)
+        } else {
+            addEmptyTab()
+        }
+        completionHandler(self, nil)
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        openOptionsPageFor extensionContext: WKWebExtensionContext,
+        completionHandler: @escaping (Error?) -> Void
+    ) {
+        if let url = extensionContext.optionsPageURL {
+            addTab(loading: url)
+        }
+        completionHandler(nil)
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        promptForPermissions permissions: Set<WKWebExtension.Permission>,
+        in tab: (any WKWebExtensionTab)?,
+        for extensionContext: WKWebExtensionContext,
+        completionHandler: @escaping (Set<WKWebExtension.Permission>, Date?) -> Void
+    ) {
+        completionHandler(permissions, nil)
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        promptForPermissionToAccess urls: Set<URL>,
+        in tab: (any WKWebExtensionTab)?,
+        for extensionContext: WKWebExtensionContext,
+        completionHandler: @escaping (Set<URL>, Date?) -> Void
+    ) {
+        completionHandler(urls, nil)
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        promptForPermissionMatchPatterns matchPatterns: Set<WKWebExtension.MatchPattern>,
+        in tab: (any WKWebExtensionTab)?,
+        for extensionContext: WKWebExtensionContext,
+        completionHandler: @escaping (Set<WKWebExtension.MatchPattern>, Date?) -> Void
+    ) {
+        completionHandler(matchPatterns, nil)
+    }
+
+    func tabs(for context: WKWebExtensionContext) -> [any WKWebExtensionTab] {
+        tabStates.map { $0 as any WKWebExtensionTab }
+    }
+
+    func activeTab(for context: WKWebExtensionContext) -> (any WKWebExtensionTab)? {
+        activeTab
+    }
+
+    func windowType(for context: WKWebExtensionContext) -> WKWebExtension.WindowType {
+        .normal
+    }
+
+    func windowState(for context: WKWebExtensionContext) -> WKWebExtension.WindowState {
+        guard let window = webView.window else { return .normal }
+        if window.styleMask.contains(.fullScreen) { return .fullscreen }
+        if window.isMiniaturized { return .minimized }
+        if window.isZoomed { return .maximized }
+        return .normal
+    }
+
+    func isPrivate(for context: WKWebExtensionContext) -> Bool {
+        false
+    }
+
+    func screenFrame(for context: WKWebExtensionContext) -> CGRect {
+        webView.window?.screen?.frame ?? .null
+    }
+
+    func frame(for context: WKWebExtensionContext) -> CGRect {
+        webView.window?.frame ?? .null
+    }
+
+    func focus(for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        webView.window?.makeKeyAndOrderFront(nil)
+        completionHandler(nil)
+    }
+}
+
+extension BrowserTabState: WKWebExtensionTab {
+    func window(for context: WKWebExtensionContext) -> (any WKWebExtensionWindow)? {
+        browserModel
+    }
+
+    func indexInWindow(for context: WKWebExtensionContext) -> Int {
+        browserModel?.tabStates.firstIndex { $0 === self } ?? NSNotFound
+    }
+
+    func webView(for context: WKWebExtensionContext) -> WKWebView? {
+        guard webView.configuration.webExtensionController === context.webExtensionController else { return nil }
+        return webView
+    }
+
+    func title(for context: WKWebExtensionContext) -> String? {
+        title
+    }
+
+    func isPinned(for context: WKWebExtensionContext) -> Bool {
+        isPinned
+    }
+
+    func setPinned(_ pinned: Bool, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        browserModel?.setTab(id, pinned: pinned)
+        completionHandler(nil)
+    }
+
+    func size(for context: WKWebExtensionContext) -> CGSize {
+        webView.bounds.size
+    }
+
+    func url(for context: WKWebExtensionContext) -> URL? {
+        webView.url
+    }
+
+    func pendingURL(for context: WKWebExtensionContext) -> URL? {
+        pendingLoadRequest?.url ?? (webView.isLoading ? webView.url : nil)
+    }
+
+    func isLoadingComplete(for context: WKWebExtensionContext) -> Bool {
+        !webView.isLoading
+    }
+
+    func loadURL(_ url: URL, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        browserModel?.load(url, in: self, fallbackURLs: [])
+        completionHandler(nil)
+    }
+
+    func reload(fromOrigin: Bool, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        if fromOrigin {
+            webView.reloadFromOrigin()
+        } else {
+            webView.reload()
+        }
+        completionHandler(nil)
+    }
+
+    func goBack(for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        if webView.canGoBack {
+            webView.goBack()
+        }
+        completionHandler(nil)
+    }
+
+    func goForward(for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        if webView.canGoForward {
+            webView.goForward()
+        }
+        completionHandler(nil)
+    }
+
+    func activate(for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        browserModel?.selectTab(id)
+        completionHandler(nil)
+    }
+
+    func isSelected(for context: WKWebExtensionContext) -> Bool {
+        browserModel?.activeTabID == id
+    }
+
+    func setSelected(_ selected: Bool, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        if selected {
+            browserModel?.selectTab(id)
+        }
+        completionHandler(nil)
+    }
+
+    func shouldGrantPermissionsOnUserGesture(for context: WKWebExtensionContext) -> Bool {
+        true
+    }
+
+    func shouldBypassPermissions(for context: WKWebExtensionContext) -> Bool {
+        true
+    }
+}

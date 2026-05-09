@@ -65,6 +65,50 @@ The toolbar supports three viewport modes:
 Selecting a mobile viewport changes what `/api/v1/screenshot`, `/api/v1/page`,
 and the visible DOM describe.
 
+## Optional Dark Reader support
+
+wkdomains can use Dark Reader as a bundled WebExtension for dark mode. This is
+optional: the app still builds and runs without it, but Dark Reader support is
+only available when the generated extension folder is present.
+
+Set it up next to this repo:
+
+```sh
+cd ..
+git clone https://github.com/darkreader/darkreader.git
+cd darkreader
+npm install
+npm run build -- --chrome-mv3
+cd ../macos-app
+rm -rf DarkReaderWebExtension
+ditto ../darkreader/build/release/chrome-mv3 DarkReaderWebExtension
+```
+
+`DarkReaderWebExtension/` is gitignored and copied into the app bundle by
+Xcode. Re-run the final `ditto` command whenever you rebuild or update Dark
+Reader.
+
+For the current prototype, keep the legacy custom dark-mode engine disabled so
+it does not interfere with the extension:
+
+```json
+{
+  "dark": false
+}
+```
+
+That setting lives in:
+
+```sh
+~/.config/wkdomains/settings.json
+```
+
+You can verify what is active on the current page with:
+
+```sh
+curl http://localhost:9001/api/v1/dark-reader | jq .
+```
+
 ## Agent terminal
 
 The memory-chip icon in the upper-right toolbar opens the agent terminal. The

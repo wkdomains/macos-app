@@ -18,10 +18,11 @@ struct BrowserTabItem: Identifiable, Equatable {
     var hasAttemptedNavigation: Bool
 }
 
-final class BrowserTabState {
+final class BrowserTabState: NSObject {
     let id: UUID
     var webView: BrowserWKWebView
     let cookiePersistence: BrowserCookiePersistence
+    weak var browserModel: BrowserModel?
     var identityID: UUID?
     var observations: [NSKeyValueObservation] = []
     var isCookieStoreReady = false
@@ -45,6 +46,7 @@ final class BrowserTabState {
         self.cookiePersistence = cookiePersistence
         self.identityID = identityID
         self.isPinned = isPinned
+        super.init()
     }
 }
 
@@ -168,6 +170,7 @@ extension BrowserModel {
             return
         }
 
+        let previousTab = activeTab
         webView.blocksProgrammaticFocus = false
         webView.isActiveBrowserTab = false
         activeTabID = tab.id
@@ -189,11 +192,13 @@ extension BrowserModel {
         refreshPublishedTabs()
         syncTitlebarTabState()
         persistOpenTabs()
+        BrowserWebExtensionPrototype.shared.didActivateTab(tab, previousTab: previousTab)
     }
 
     func addEmptyTab() {
         let tab = makeTab(initialURL: nil)
         tabStates.append(tab)
+        BrowserWebExtensionPrototype.shared.didOpenTab(tab)
         attachCookiePersistence(to: tab)
         selectTab(tab.id)
     }
@@ -201,6 +206,7 @@ extension BrowserModel {
     func addTab(loading url: URL) {
         let tab = makeTab(initialURL: url)
         tabStates.append(tab)
+        BrowserWebExtensionPrototype.shared.didOpenTab(tab)
         load(url, in: tab, fallbackURLs: [])
         attachCookiePersistence(to: tab)
         selectTab(tab.id)
@@ -234,6 +240,7 @@ extension BrowserModel {
         closingTab.cookiePersistence.saveNow()
         detach(closingTab.webView)
         closingTab.observations.removeAll()
+        BrowserWebExtensionPrototype.shared.didCloseTab(closingTab)
         tabStates.remove(at: closingIndex)
         selectTab(nextTabID)
         persistOpenTabs()
