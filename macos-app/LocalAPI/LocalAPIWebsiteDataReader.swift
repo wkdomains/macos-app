@@ -418,7 +418,7 @@ final class WebsiteDataReader {
             return
         }
 
-        guard let urlData = try? JSONSerialization.data(withJSONObject: url.absoluteString),
+        guard let urlData = try? JSONEncoder().encode(url.absoluteString),
               let urlJSON = String(data: urlData, encoding: .utf8)
         else {
             completion(.failure(InspectionError.couldNotEncodeDiagnosticJSON))
