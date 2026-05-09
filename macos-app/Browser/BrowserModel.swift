@@ -101,7 +101,7 @@ final class BrowserModel: NSObject, ObservableObject {
         for tab in tabStates {
             attachCookiePersistence(to: tab)
         }
-        BrowserWebExtensionPrototype.shared.attach(browser: self)
+        BrowserWebExtension.shared.attach(browser: self)
     }
 
     static func websiteDataStore(for identityID: UUID?) -> WKWebsiteDataStore {
@@ -137,7 +137,7 @@ final class BrowserModel: NSObject, ObservableObject {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         configuration.applicationNameForUserAgent = safariApplicationNameForUserAgent
-        BrowserWebExtensionPrototype.configure(configuration)
+        BrowserWebExtension.configure(configuration)
 
         return BrowserWKWebView(frame: .zero, configuration: configuration)
     }
@@ -397,7 +397,7 @@ final class BrowserModel: NSObject, ObservableObject {
 
     var canToggleDarkThemeForCurrentSite: Bool {
         settingsStore.isGlobalDarkModeEnabled
-            && BrowserWebExtensionPrototype.shared.isAvailable
+            && BrowserWebExtension.shared.isAvailable
             && webView.url?.host != nil
     }
 
@@ -413,7 +413,7 @@ final class BrowserModel: NSObject, ObservableObject {
         }
 
         settingsStore.toggleDarkModeDisabled(for: currentURL)
-        BrowserWebExtensionPrototype.shared.updateDeniedSites(settingsStore.darkDisabledSites)
+        BrowserWebExtension.shared.updateDeniedSites(settingsStore.darkDisabledSites)
         webView.reload()
     }
 

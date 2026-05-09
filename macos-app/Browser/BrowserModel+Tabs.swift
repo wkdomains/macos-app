@@ -191,13 +191,13 @@ extension BrowserModel {
         refreshPublishedTabs()
         syncTitlebarTabState()
         persistOpenTabs()
-        BrowserWebExtensionPrototype.shared.didActivateTab(tab, previousTab: previousTab)
+        BrowserWebExtension.shared.didActivateTab(tab, previousTab: previousTab)
     }
 
     func addEmptyTab() {
         let tab = makeTab(initialURL: nil)
         tabStates.append(tab)
-        BrowserWebExtensionPrototype.shared.didOpenTab(tab)
+        BrowserWebExtension.shared.didOpenTab(tab)
         attachCookiePersistence(to: tab)
         selectTab(tab.id)
     }
@@ -205,7 +205,7 @@ extension BrowserModel {
     func addTab(loading url: URL) {
         let tab = makeTab(initialURL: url)
         tabStates.append(tab)
-        BrowserWebExtensionPrototype.shared.didOpenTab(tab)
+        BrowserWebExtension.shared.didOpenTab(tab)
         load(url, in: tab, fallbackURLs: [])
         attachCookiePersistence(to: tab)
         selectTab(tab.id)
@@ -239,7 +239,7 @@ extension BrowserModel {
         closingTab.cookiePersistence.saveNow()
         detach(closingTab.webView)
         closingTab.observations.removeAll()
-        BrowserWebExtensionPrototype.shared.didCloseTab(closingTab)
+        BrowserWebExtension.shared.didCloseTab(closingTab)
         tabStates.remove(at: closingIndex)
         selectTab(nextTabID)
         persistOpenTabs()

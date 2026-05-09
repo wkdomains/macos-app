@@ -347,8 +347,8 @@ extension BrowserModel: WKUIDelegate {
     }
 }
 
-final class BrowserWebExtensionPrototype {
-    static let shared = BrowserWebExtensionPrototype()
+final class BrowserWebExtension {
+    static let shared = BrowserWebExtension()
 
     private(set) var controller: WKWebExtensionController?
     private var context: WKWebExtensionContext?
@@ -465,10 +465,10 @@ final class BrowserWebExtensionPrototype {
             do {
                 let webExtension = try await WKWebExtension(resourceBaseURL: extensionBaseURL)
                 let context = WKWebExtensionContext(for: webExtension)
-                context.uniqueIdentifier = "com.wkdomains.darkreader.prototype"
+                context.uniqueIdentifier = "com.wkdomains.darkreader"
                 context.baseURL = URL(string: "webkit-extension://darkreader.wkdomains")!
                 context.isInspectable = true
-                context.inspectionName = "Dark Reader prototype"
+                context.inspectionName = "Dark Reader"
                 context.grantedPermissions = Dictionary(
                     uniqueKeysWithValues: webExtension.requestedPermissions.map { ($0, Date.distantFuture) }
                 )
@@ -498,11 +498,6 @@ final class BrowserWebExtensionPrototype {
     }
 
     private static var isEnabled: Bool {
-        let defaults = UserDefaults.standard
-        if let value = defaults.object(forKey: "wkdomains.darkReaderWebExtensionPrototype") as? Bool, !value {
-            return false
-        }
-
         guard AppSettingsStore.shared.isGlobalDarkModeEnabled else {
             return false
         }
@@ -663,7 +658,7 @@ extension BrowserModel: WKWebExtensionControllerDelegate, WKWebExtensionWindow {
             persistOpenTabs()
         }
 
-        BrowserWebExtensionPrototype.shared.didOpenTab(tab)
+        BrowserWebExtension.shared.didOpenTab(tab)
         completionHandler(tab, nil)
     }
 

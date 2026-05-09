@@ -211,7 +211,7 @@ final class WebsiteDataReader {
             const lock = document.querySelector('meta[name="darkreader-lock"]');
 
             return {
-                prototype: __WKDOMAINS_DARK_READER_PROTOTYPE_STATUS__,
+                extension: __WKDOMAINS_DARK_READER_EXTENSION_STATUS__,
                 url: location.href,
                 title: document.title,
                 readyState: document.readyState,
@@ -244,15 +244,15 @@ final class WebsiteDataReader {
         """
 
         guard
-            let prototypeData = try? JSONSerialization.data(withJSONObject: BrowserWebExtensionPrototype.shared.status),
-            let prototypeJSON = String(data: prototypeData, encoding: .utf8)
+            let extensionData = try? JSONSerialization.data(withJSONObject: BrowserWebExtension.shared.status),
+            let extensionJSON = String(data: extensionData, encoding: .utf8)
         else {
             completion(.failure(InspectionError.couldNotEncodeDiagnosticJSON))
             return
         }
 
         evaluateJSONScript(
-            script.replacingOccurrences(of: "__WKDOMAINS_DARK_READER_PROTOTYPE_STATUS__", with: prototypeJSON),
+            script.replacingOccurrences(of: "__WKDOMAINS_DARK_READER_EXTENSION_STATUS__", with: extensionJSON),
             label: "dark-reader",
             completion: completion
         )

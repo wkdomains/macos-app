@@ -127,10 +127,10 @@ curl http://localhost:9001/api/v1/dark-reader | jq .
 
 Returns Dark Reader WebExtension diagnostics for the current page:
 
-- `prototype.enabled`: whether wkdomains tried to enable Dark Reader
-- `prototype.loaded`: whether the WebExtension context loaded successfully
-- `prototype.globalDarkSetting`: the `dark` setting from `settings.json`
-- `prototype.disabledSites`: hosts excluded with the context menu
+- `extension.enabled`: whether wkdomains tried to enable Dark Reader
+- `extension.loaded`: whether the WebExtension context loaded successfully
+- `extension.globalDarkSetting`: the `dark` setting from `settings.json`
+- `extension.disabledSites`: hosts excluded with the context menu
 - `darkReader.styleCount`: Dark Reader styles currently present in the page
 - `darkReader.documentClasses`: Dark Reader classes on the document element
 
