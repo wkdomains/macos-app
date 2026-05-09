@@ -177,6 +177,36 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/snapshot" {
+            BrowserDebugLogging.log("[wkdomains-debug] local-api snapshot start id=\(debugID)")
+            dataReader.readSnapshot { [weak self] result in
+                switch result {
+                case .success(let response):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api snapshot done id=\(debugID) type=\(String(describing: type(of: response)))")
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api snapshot fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
+        if request.path == "/api/v1/observe" {
+            BrowserDebugLogging.log("[wkdomains-debug] local-api observe start id=\(debugID)")
+            dataReader.readObserve { [weak self] result in
+                switch result {
+                case .success(let response):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api observe done id=\(debugID)")
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api observe fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
         if request.path == "/api/v1/console" {
             let response = dataReader.readConsoleMessages()
             BrowserDebugLogging.log("[wkdomains-debug] local-api console done id=\(debugID) messages=\(response.messages.count)")

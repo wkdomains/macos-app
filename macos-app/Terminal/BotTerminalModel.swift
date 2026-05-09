@@ -224,6 +224,8 @@ final class BotTerminalModel: ObservableObject {
 
             Use wkdomains local endpoints if available:
             \(context.localAPIBaseURL)/api/v1/page
+            \(context.localAPIBaseURL)/api/v1/observe
+            \(context.localAPIBaseURL)/api/v1/snapshot
             \(context.localAPIBaseURL)/api/v1/dom
             \(context.localAPIBaseURL)/api/v1/links
             \(context.localAPIBaseURL)/api/v1/console

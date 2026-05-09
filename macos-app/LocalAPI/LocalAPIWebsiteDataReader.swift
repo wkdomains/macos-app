@@ -156,6 +156,40 @@ final class WebsiteDataReader {
         )
     }
 
+    func readSnapshot(completion: @escaping (Result<Any, Error>) -> Void) {
+        evaluateJSONScript(BrowserModel.snapshotInspectionScript, label: "snapshot", completion: completion)
+    }
+
+    func readObserve(completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        guard browser.webView.url != nil else {
+            completion(.failure(InspectionError.noPageLoaded))
+            return
+        }
+
+        readSnapshot { [weak self] snapshotResult in
+            guard let self else { return }
+
+            switch snapshotResult {
+            case .failure(let error):
+                completion(.failure(error))
+            case .success(let snapshot):
+                self.readCookieAuthShapeForCurrentPage { auth in
+                    self.readResources { resources in
+                        completion(
+                            .success(
+                                self.observeResponse(
+                                    snapshot: snapshot,
+                                    resources: resources,
+                                    auth: auth
+                                )
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     func readDOM(completion: @escaping (Result<Any, Error>) -> Void) {
         evaluateJSONScript(BrowserModel.domInspectionScript, label: "dom", completion: completion)
     }
@@ -287,6 +321,70 @@ final class WebsiteDataReader {
         return response
     }
 
+    private func observeResponse(
+        snapshot: Any,
+        resources: DomainResourcesResponse,
+        auth: [String: Any]
+    ) -> [String: Any] {
+        let page = readPage()
+        let console = readConsoleMessages()
+        let xhr = (try? currentPageDomain()).map(readXHRRequests(for:))
+
+        return [
+            "generatedAt": Self.iso8601Formatter.string(from: Date()),
+            "page": pageDictionary(from: page),
+            "screenshot": [
+                "available": browser.webView.url != nil,
+                "endpoint": "/api/v1/screenshot",
+                "contentType": "image/png",
+                "scope": "current visible viewport"
+            ],
+            "snapshot": snapshot,
+            "console": consoleDictionary(from: console),
+            "xhr": xhr.map(xhrDictionary(from:)) ?? [
+                "hostname": NSNull(),
+                "activePageURL": Self.json(browser.webView.url?.absoluteString),
+                "activePageHost": Self.json(browser.webView.url?.host),
+                "requests": [Any]()
+            ],
+            "resources": resourcesDictionary(from: resources),
+            "auth": auth
+        ]
+    }
+
+    private func readCookieAuthShapeForCurrentPage(completion: @escaping ([String: Any]) -> Void) {
+        guard let domain = try? currentPageDomain() else {
+            completion([
+                "cookieCount": 0,
+                "cookies": [Any](),
+                "note": "No page is loaded."
+            ])
+            return
+        }
+
+        let dataStore = browser.webView.configuration.websiteDataStore
+        dataStore.httpCookieStore.getAllCookies { cookies in
+            Task { @MainActor in
+                let matchingCookies = cookies
+                    .filter { Self.cookie($0, matches: domain.host) }
+                    .sorted { left, right in
+                        if left.domain == right.domain {
+                            return left.name < right.name
+                        }
+
+                        return left.domain < right.domain
+                    }
+
+                completion([
+                    "domain": domain.host,
+                    "cookieCount": matchingCookies.count,
+                    "cookies": matchingCookies.map(Self.safeCookieDictionary(from:)),
+                    "note": "Cookie values are intentionally omitted from observe."
+                ])
+            }
+        }
+    }
+
     private func currentPageDomain() throws -> RequestedDomain {
         guard let url = browser.webView.url,
               let domain = RequestedDomain(url: url)
@@ -295,6 +393,120 @@ final class WebsiteDataReader {
         }
 
         return domain
+    }
+
+    private func pageDictionary(from page: PageResponse) -> [String: Any] {
+        [
+            "url": Self.json(page.url),
+            "title": Self.json(page.title),
+            "host": Self.json(page.host),
+            "domain": Self.json(page.domain),
+            "origin": Self.json(page.origin),
+            "viewportMode": page.viewportMode,
+            "viewportWidth": page.viewportWidth,
+            "viewportHeight": page.viewportHeight,
+            "isLoading": page.isLoading,
+            "canGoBack": page.canGoBack,
+            "canGoForward": page.canGoForward
+        ]
+    }
+
+    private func consoleDictionary(from console: ConsoleMessagesResponse) -> [String: Any] {
+        [
+            "activePageURL": Self.json(console.activePageURL),
+            "activePageHost": Self.json(console.activePageHost),
+            "captureScope": console.captureScope,
+            "capturedLevels": console.capturedLevels,
+            "messages": console.messages.suffix(50).map { message in
+                [
+                    "id": message.id.uuidString,
+                    "level": message.level,
+                    "message": message.message,
+                    "arguments": message.arguments,
+                    "pageURL": Self.json(message.pageURL),
+                    "pageHost": Self.json(message.pageHost),
+                    "stack": Self.json(message.stack),
+                    "createdAt": Self.iso8601Formatter.string(from: message.createdAt)
+                ] as [String: Any]
+            }
+        ]
+    }
+
+    private func xhrDictionary(from xhr: XHRRequestsResponse) -> [String: Any] {
+        [
+            "hostname": xhr.hostname,
+            "activePageURL": Self.json(xhr.activePageURL),
+            "activePageHost": Self.json(xhr.activePageHost),
+            "requests": xhr.requests.prefix(80).map { request in
+                [
+                    "id": request.id,
+                    "kind": request.kind,
+                    "method": request.method,
+                    "url": request.url,
+                    "host": Self.json(request.host),
+                    "pageURL": Self.json(request.pageURL),
+                    "pageHost": Self.json(request.pageHost),
+                    "startedAt": Self.iso8601Formatter.string(from: request.startedAt),
+                    "completedAt": Self.json(request.completedAt.map(Self.iso8601Formatter.string(from:))),
+                    "status": Self.json(request.status),
+                    "responseURL": Self.json(request.responseURL),
+                    "responseBytes": Self.json(request.responseBytes),
+                    "jsonType": Self.json(request.jsonType),
+                    "jsonItems": Self.json(request.jsonItems),
+                    "jsonShape": Self.json(request.jsonShape),
+                    "error": Self.json(request.error)
+                ] as [String: Any]
+            }
+        ]
+    }
+
+    private func resourcesDictionary(from resources: DomainResourcesResponse) -> [String: Any] {
+        [
+            "domain": Self.json(resources.domain),
+            "pageHost": Self.json(resources.pageHost),
+            "resources": resources.resources.map { resource in
+                [
+                    "url": resource.url,
+                    "path": resource.path,
+                    "status": Self.json(resource.status),
+                    "found": resource.found,
+                    "contentType": Self.json(resource.contentType),
+                    "contentLength": Self.json(resource.contentLength),
+                    "sampledBytes": resource.sampledBytes,
+                    "bodyPreview": Self.json(resource.bodyPreview),
+                    "error": Self.json(resource.error)
+                ] as [String: Any]
+            }
+        ]
+    }
+
+    private static func safeCookieDictionary(from cookie: HTTPCookie) -> [String: Any] {
+        [
+            "name": cookie.name,
+            "domain": cookie.domain,
+            "path": cookie.path,
+            "expiresAt": Self.json(cookie.expiresDate.map(Self.iso8601Formatter.string(from:))),
+            "isSecure": cookie.isSecure,
+            "isHTTPOnly": cookie.isHTTPOnly,
+            "sameSitePolicy": Self.json(cookie.sameSitePolicy?.rawValue),
+            "hasValue": !cookie.value.isEmpty
+        ]
+    }
+
+    private static func json(_ value: String?) -> Any {
+        if let value {
+            return value
+        }
+
+        return NSNull()
+    }
+
+    private static func json(_ value: Int?) -> Any {
+        if let value {
+            return value
+        }
+
+        return NSNull()
     }
 
     private func evaluateJSONScript(_ script: String, label: String, completion: @escaping (Result<Any, Error>) -> Void) {
