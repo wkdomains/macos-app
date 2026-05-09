@@ -413,8 +413,20 @@ final class BrowserModel: NSObject, ObservableObject {
         }
 
         settingsStore.toggleDarkModeDisabled(for: currentURL)
+        let isDisabled = settingsStore.isDarkModeDisabled(for: currentURL)
         BrowserWebExtension.shared.updateDeniedSites(settingsStore.darkDisabledSites)
-        webView.reload()
+        refreshPageTrackingUserScripts()
+        webView.evaluateJavaScript(Self.darkReaderToggleCleanupScript(isDisabled: isDisabled)) { [weak self, weak webView] _, _ in
+            DispatchQueue.main.async {
+                guard let self,
+                      let webView,
+                      self.webView === webView
+                else {
+                    return
+                }
+                webView.reload()
+            }
+        }
     }
 
     var canBookmarkCurrentPage: Bool {
