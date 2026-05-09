@@ -107,7 +107,6 @@ extension BrowserModel: WKNavigationDelegate {
 
         if activeTabID == tab.id {
             markScreenshotDirty(scheduleAfter: 0.25)
-            scheduleDarkReaderFallbackRecovery(for: tab)
             botTerminal.refreshIfOpen(
                 currentURL: webView.url,
                 pageTitle: webView.title,
@@ -191,99 +190,6 @@ extension BrowserModel: WKNavigationDelegate {
 
         BrowserWebExtension.shared.didChangeTab(tab, properties: [.loading, .URL])
         refreshPublishedTabs()
-    }
-
-    private func scheduleDarkReaderFallbackRecovery(for tab: BrowserTabState) {
-        guard BrowserWebExtension.shared.isLoaded,
-              settingsStore.isGlobalDarkModeEnabled,
-              let url = tab.webView.url,
-              !settingsStore.isDarkModeDisabled(for: url),
-              ["http", "https"].contains(url.scheme?.lowercased() ?? "")
-        else {
-            return
-        }
-
-        let urlString = url.absoluteString
-        guard tab.darkReaderFallbackRecoveryAttemptsByURL[urlString, default: 0] < 2 else {
-            return
-        }
-
-        let webView = tab.webView
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self, weak tab, weak webView] in
-            guard let self,
-                  let tab,
-                  let webView,
-                  self.activeTabID == tab.id,
-                  tab.webView === webView,
-                  webView.url?.absoluteString == urlString
-            else {
-                return
-            }
-
-            let script = """
-            JSON.stringify((() => {
-              const root = document.documentElement;
-              const styles = Array.from(document.querySelectorAll(".darkreader"));
-              const fallbackStyles = styles.filter((style) => style.classList.contains("darkreader--fallback"));
-              const nonFallbackStyles = styles.filter((style) => !style.classList.contains("darkreader--fallback"));
-              return {
-                mode: root ? root.getAttribute("data-darkreader-mode") : null,
-                scheme: root ? root.getAttribute("data-darkreader-scheme") : null,
-                readyState: document.readyState,
-                styleCount: styles.length,
-                fallbackStyleCount: fallbackStyles.length,
-                fallbackTextLength: fallbackStyles.reduce((sum, style) => sum + (style.textContent || "").trim().length, 0),
-                nonFallbackStyleCount: nonFallbackStyles.length,
-                nonFallbackTextLength: nonFallbackStyles.reduce((sum, style) => sum + (style.textContent || "").trim().length, 0)
-              };
-            })())
-            """
-
-            webView.evaluateJavaScript(script) { [weak self, weak tab, weak webView] value, _ in
-                DispatchQueue.main.async {
-                    guard let self,
-                          let tab,
-                          let webView,
-                          self.activeTabID == tab.id,
-                          tab.webView === webView,
-                          webView.url?.absoluteString == urlString,
-                          let json = value as? String,
-                          let data = json.data(using: .utf8),
-                          let status = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                    else {
-                        return
-                    }
-
-                    let mode = status["mode"] as? String
-                    let fallbackTextLength = Self.intValue(status["fallbackTextLength"])
-                    let fallbackStyleCount = Self.intValue(status["fallbackStyleCount"])
-                    let nonFallbackTextLength = Self.intValue(status["nonFallbackTextLength"])
-                    let nonFallbackStyleCount = Self.intValue(status["nonFallbackStyleCount"])
-                    let isFallbackOnly = mode == nil
-                        && fallbackStyleCount > 0
-                        && fallbackTextLength > 0
-                        && nonFallbackStyleCount == 0
-                        && nonFallbackTextLength == 0
-
-                    guard isFallbackOnly else { return }
-
-                    let attempts = tab.darkReaderFallbackRecoveryAttemptsByURL[urlString, default: 0] + 1
-                    tab.darkReaderFallbackRecoveryAttemptsByURL[urlString] = attempts
-                    BrowserDebugLogging.log("[wkdomains-debug] darkreader-webextension fallback-only-reload attempt=\(attempts) url=\(urlString)")
-                    webView.reload()
-                }
-            }
-        }
-    }
-
-    private static func intValue(_ value: Any?) -> Int {
-        if let value = value as? Int {
-            return value
-        }
-        if let value = value as? NSNumber {
-            return value.intValue
-        }
-        return 0
     }
 
     private func loadNextFallback(after error: Error, in webView: WKWebView) -> Bool {
@@ -458,7 +364,10 @@ final class BrowserWebExtension {
     private var context: WKWebExtensionContext?
     private weak var browser: BrowserModel?
     private var isLoadingExtension = false
+    private var isLoadingBackgroundContent = false
+    private var isBackgroundContentLoaded = false
     private var lastLoadError: String?
+    private var lastBackgroundLoadError: String?
     private var readyCallbacks: [() -> Void] = []
 
     private init() {
@@ -481,6 +390,14 @@ final class BrowserWebExtension {
 
     var isLoaded: Bool {
         context?.isLoaded == true
+    }
+
+    private var isReady: Bool {
+        guard controller != nil else { return true }
+        guard lastLoadError == nil, lastBackgroundLoadError == nil else { return true }
+        return context?.isLoaded == true
+            && !isLoadingExtension
+            && isBackgroundContentLoaded
     }
 
     func attach(browser: BrowserModel) {
@@ -524,7 +441,7 @@ final class BrowserWebExtension {
             return
         }
 
-        guard context == nil, lastLoadError == nil else {
+        guard !isReady else {
             callback()
             return
         }
@@ -544,8 +461,12 @@ final class BrowserWebExtension {
             "controllerCreated": controller != nil,
             "controllerExtensionContextCount": controller?.extensionContexts.count ?? 0,
             "isLoadingExtension": isLoadingExtension,
+            "isLoadingBackgroundContent": isLoadingBackgroundContent,
+            "backgroundContentLoaded": isBackgroundContentLoaded,
+            "ready": isReady,
             "loaded": context?.isLoaded ?? false,
-            "lastLoadError": lastLoadError ?? NSNull()
+            "lastLoadError": lastLoadError ?? NSNull(),
+            "lastBackgroundLoadError": lastBackgroundLoadError ?? NSNull()
         ]
 
         if let context {
@@ -581,10 +502,17 @@ final class BrowserWebExtension {
 
     private func loadExtensionIfNeeded() {
         guard context == nil, !isLoadingExtension else { return }
-        guard let controller, let extensionBaseURL = Self.extensionBaseURL else { return }
+        guard let controller, let extensionBaseURL = Self.extensionBaseURL else {
+            lastLoadError = "Dark Reader extension not found"
+            flushReadyCallbacks()
+            return
+        }
 
         isLoadingExtension = true
+        isLoadingBackgroundContent = false
+        isBackgroundContentLoaded = false
         lastLoadError = nil
+        lastBackgroundLoadError = nil
         Task { @MainActor in
             do {
                 let webExtension = try await WKWebExtension(resourceBaseURL: extensionBaseURL)
@@ -614,9 +542,20 @@ final class BrowserWebExtension {
                     controller.didActivateTab(browser.activeTab)
                 }
 
+                self.isLoadingBackgroundContent = true
+                do {
+                    try await context.loadBackgroundContent()
+                    self.isBackgroundContentLoaded = true
+                    self.log("background-loaded")
+                } catch {
+                    self.lastBackgroundLoadError = error.localizedDescription
+                    self.log("background-load-failed error=\(error.localizedDescription)")
+                }
+                self.isLoadingBackgroundContent = false
                 self.flushReadyCallbacks()
             } catch {
                 self.isLoadingExtension = false
+                self.isLoadingBackgroundContent = false
                 self.lastLoadError = error.localizedDescription
                 self.log("load-failed error=\(error.localizedDescription)")
                 self.flushReadyCallbacks()
