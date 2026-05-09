@@ -150,12 +150,20 @@ extension BrowserModel: WKNavigationDelegate {
             return
         }
 
-        if navigationAction.targetFrame?.isMainFrame != false {
+        guard navigationAction.targetFrame?.isMainFrame != false else {
+            decisionHandler(.allow)
+            return
+        }
+
+        BrowserDebugLogging.log(
+            "[wkdomains-debug] navigation policy prepare url=\(url.absoluteString) type=\(navigationAction.navigationType.rawValue)"
+        )
+        BrowserWebExtension.shared.prepareForNavigation(to: url) {
             BrowserDebugLogging.log(
                 "[wkdomains-debug] navigation policy allow url=\(url.absoluteString) type=\(navigationAction.navigationType.rawValue)"
             )
+            decisionHandler(.allow)
         }
-        decisionHandler(.allow)
     }
 
     private func logNavigationEvent(_ event: String, webView: WKWebView, tab: BrowserTabState) {
@@ -369,6 +377,7 @@ final class BrowserWebExtension {
     private var lastLoadError: String?
     private var lastBackgroundLoadError: String?
     private var readyCallbacks: [() -> Void] = []
+    private var backgroundLoadCallbacks: [() -> Void] = []
 
     private init() {
         guard Self.isEnabled else { return }
@@ -433,6 +442,22 @@ final class BrowserWebExtension {
         guard let context else { return }
         context.deniedPermissionMatchPatterns = Self.deniedPermissionMatchPatterns(for: disabledSites)
         log("updated-denied-sites count=\(disabledSites.count) patterns=\(context.deniedPermissionMatchPatterns.count)")
+    }
+
+    func prepareForNavigation(to url: URL, completion: @escaping () -> Void) {
+        guard shouldPrepareDarkReader(for: url) else {
+            completion()
+            return
+        }
+
+        performWhenReady { [weak self] in
+            guard let self else {
+                completion()
+                return
+            }
+
+            self.loadBackgroundContent(reason: "navigation", url: url, completion: completion)
+        }
     }
 
     func performWhenReady(_ callback: @escaping () -> Void) {
@@ -542,17 +567,9 @@ final class BrowserWebExtension {
                     controller.didActivateTab(browser.activeTab)
                 }
 
-                self.isLoadingBackgroundContent = true
-                do {
-                    try await context.loadBackgroundContent()
-                    self.isBackgroundContentLoaded = true
-                    self.log("background-loaded")
-                } catch {
-                    self.lastBackgroundLoadError = error.localizedDescription
-                    self.log("background-load-failed error=\(error.localizedDescription)")
+                self.loadBackgroundContent(reason: "initial-load", url: nil) { [weak self] in
+                    self?.flushReadyCallbacks()
                 }
-                self.isLoadingBackgroundContent = false
-                self.flushReadyCallbacks()
             } catch {
                 self.isLoadingExtension = false
                 self.isLoadingBackgroundContent = false
@@ -561,6 +578,51 @@ final class BrowserWebExtension {
                 self.flushReadyCallbacks()
             }
         }
+    }
+
+    private func shouldPrepareDarkReader(for url: URL) -> Bool {
+        guard controller != nil,
+              Self.isEnabled,
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              !AppSettingsStore.shared.isDarkModeDisabled(for: url)
+        else {
+            return false
+        }
+
+        return true
+    }
+
+    private func loadBackgroundContent(reason: String, url: URL?, completion: @escaping () -> Void) {
+        guard let context else {
+            completion()
+            return
+        }
+
+        backgroundLoadCallbacks.append(completion)
+        guard !isLoadingBackgroundContent else { return }
+
+        isLoadingBackgroundContent = true
+        Task { @MainActor in
+            do {
+                try await context.loadBackgroundContent()
+                self.isBackgroundContentLoaded = true
+                self.lastBackgroundLoadError = nil
+                self.log("background-loaded reason=\(reason) url=\(url?.absoluteString ?? "nil")")
+            } catch {
+                self.isBackgroundContentLoaded = false
+                self.lastBackgroundLoadError = error.localizedDescription
+                self.log("background-load-failed reason=\(reason) url=\(url?.absoluteString ?? "nil") error=\(error.localizedDescription)")
+            }
+
+            self.isLoadingBackgroundContent = false
+            self.flushBackgroundLoadCallbacks()
+        }
+    }
+
+    private func flushBackgroundLoadCallbacks() {
+        let callbacks = backgroundLoadCallbacks
+        backgroundLoadCallbacks.removeAll()
+        callbacks.forEach { $0() }
     }
 
     private func flushReadyCallbacks(after delay: TimeInterval = 0) {
