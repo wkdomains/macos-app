@@ -501,7 +501,7 @@ final class BrowserModel: NSObject, ObservableObject {
             return
         }
 
-        tab.webView.load(URLRequest(url: url))
+        loadWhenDarkReaderIsReady(url, in: tab)
     }
 
     private func prepareForLoad(_ url: URL, in tab: BrowserTabState, fallbackURLs: [URL]) {
@@ -509,6 +509,8 @@ final class BrowserModel: NSObject, ObservableObject {
         tab.errorMessage = nil
         tab.displayAddressText = url.absoluteString
         tab.navigationFallbacks = fallbackURLs
+        tab.loadingURL = url
+        BrowserWebExtension.shared.didChangeTab(tab, properties: [.loading, .URL])
 
         guard activeTabID == tab.id else {
             refreshPublishedTabs()
@@ -568,7 +570,24 @@ final class BrowserModel: NSObject, ObservableObject {
                 return
             }
 
-            nextWebView.load(URLRequest(url: url))
+            self.loadWhenDarkReaderIsReady(url, in: tab)
+        }
+    }
+
+    private func loadWhenDarkReaderIsReady(_ url: URL, in tab: BrowserTabState) {
+        let webView = tab.webView
+        BrowserWebExtension.shared.performWhenReady { [weak self, weak webView] in
+            guard let self,
+                  let webView,
+                  self.tabStates.contains(where: { $0 === tab }),
+                  tab.webView === webView
+            else {
+                return
+            }
+
+            tab.loadingURL = url
+            BrowserWebExtension.shared.didChangeTab(tab, properties: [.loading, .URL])
+            webView.load(URLRequest(url: url))
         }
     }
 
@@ -596,11 +615,7 @@ final class BrowserModel: NSObject, ObservableObject {
                 guard let pendingLoadRequest = tab.pendingLoadRequest else { return }
                 tab.pendingLoadRequest = nil
 
-                if self.activeTabID == tab.id {
-                    self.load(pendingLoadRequest.url, fallbackURLs: pendingLoadRequest.fallbackURLs)
-                } else {
-                    webView.load(URLRequest(url: pendingLoadRequest.url))
-                }
+                self.loadWhenDarkReaderIsReady(pendingLoadRequest.url, in: tab)
             }
         }
     }

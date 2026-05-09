@@ -54,6 +54,7 @@ extension BrowserModel: WKNavigationDelegate {
 
         tab.errorMessage = nil
         tab.hasAttemptedNavigation = true
+        tab.loadingURL = webView.url ?? tab.loadingURL
 
         if activeTabID == tab.id {
             errorMessage = nil
@@ -64,6 +65,7 @@ extension BrowserModel: WKNavigationDelegate {
             resetXHRTracking(for: webView.url)
         }
 
+        BrowserWebExtension.shared.didChangeTab(tab, properties: [.loading, .URL])
         syncPageState(from: webView)
     }
 
@@ -73,12 +75,14 @@ extension BrowserModel: WKNavigationDelegate {
 
         tab.errorMessage = nil
         tab.navigationFallbacks = []
+        tab.loadingURL = webView.url ?? tab.loadingURL
 
         if activeTabID == tab.id {
             errorMessage = nil
             navigationFallbacks = []
         }
 
+        BrowserWebExtension.shared.didChangeTab(tab, properties: [.loading, .URL])
         syncPageState(from: webView)
 
         if let url = webView.url {
@@ -91,12 +95,14 @@ extension BrowserModel: WKNavigationDelegate {
         logNavigationEvent("didFinish", webView: webView, tab: tab)
 
         tab.errorMessage = nil
+        tab.loadingURL = nil
 
         if activeTabID == tab.id {
             errorMessage = nil
             estimatedProgress = 1
         }
 
+        BrowserWebExtension.shared.didChangeTab(tab, properties: [.loading, .title, .URL])
         syncPageState(from: webView)
 
         if activeTabID == tab.id {
@@ -172,6 +178,7 @@ extension BrowserModel: WKNavigationDelegate {
         guard let tab = tab(for: webView) else { return }
         tab.navigationFallbacks = []
         tab.errorMessage = error.localizedDescription
+        tab.loadingURL = nil
 
         if activeTabID == tab.id {
             navigationFallbacks = []
@@ -181,6 +188,7 @@ extension BrowserModel: WKNavigationDelegate {
             finishScreenshotWaiters(with: .failure(error))
         }
 
+        BrowserWebExtension.shared.didChangeTab(tab, properties: [.loading, .URL])
         refreshPublishedTabs()
     }
 
@@ -196,6 +204,7 @@ extension BrowserModel: WKNavigationDelegate {
         let nextURL = tab.navigationFallbacks.removeFirst()
         tab.errorMessage = nil
         tab.displayAddressText = nextURL.absoluteString
+        tab.loadingURL = nextURL
 
         if activeTabID == tab.id {
             navigationFallbacks = tab.navigationFallbacks
@@ -205,6 +214,7 @@ extension BrowserModel: WKNavigationDelegate {
             resetXHRTracking(for: nextURL)
         }
 
+        BrowserWebExtension.shared.didChangeTab(tab, properties: [.loading, .URL])
         webView.load(URLRequest(url: nextURL))
         return true
     }
@@ -355,6 +365,7 @@ final class BrowserWebExtension {
     private weak var browser: BrowserModel?
     private var isLoadingExtension = false
     private var lastLoadError: String?
+    private var readyCallbacks: [() -> Void] = []
 
     private init() {
         guard Self.isEnabled else { return }
@@ -407,6 +418,21 @@ final class BrowserWebExtension {
         guard let context else { return }
         context.deniedPermissionMatchPatterns = Self.deniedPermissionMatchPatterns(for: disabledSites)
         log("updated-denied-sites count=\(disabledSites.count) patterns=\(context.deniedPermissionMatchPatterns.count)")
+    }
+
+    func performWhenReady(_ callback: @escaping () -> Void) {
+        guard controller != nil else {
+            callback()
+            return
+        }
+
+        guard context == nil, lastLoadError == nil else {
+            callback()
+            return
+        }
+
+        readyCallbacks.append(callback)
+        loadExtensionIfNeeded()
     }
 
     var status: [String: Any] {
@@ -489,11 +515,27 @@ final class BrowserWebExtension {
                     browser.tabStates.forEach { controller.didOpenTab($0) }
                     controller.didActivateTab(browser.activeTab)
                 }
+
+                self.flushReadyCallbacks(after: 0.15)
             } catch {
                 self.isLoadingExtension = false
                 self.lastLoadError = error.localizedDescription
                 self.log("load-failed error=\(error.localizedDescription)")
+                self.flushReadyCallbacks()
             }
+        }
+    }
+
+    private func flushReadyCallbacks(after delay: TimeInterval = 0) {
+        let callbacks = readyCallbacks
+        readyCallbacks.removeAll()
+        guard delay > 0 else {
+            callbacks.forEach { $0() }
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            callbacks.forEach { $0() }
         }
     }
 
@@ -791,7 +833,7 @@ extension BrowserTabState: WKWebExtensionTab {
     }
 
     func pendingURL(for context: WKWebExtensionContext) -> URL? {
-        pendingLoadRequest?.url ?? (webView.isLoading ? webView.url : nil)
+        pendingLoadRequest?.url ?? loadingURL ?? (webView.isLoading ? webView.url : nil)
     }
 
     func isLoadingComplete(for context: WKWebExtensionContext) -> Bool {

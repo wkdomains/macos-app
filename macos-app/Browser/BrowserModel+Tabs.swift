@@ -27,6 +27,7 @@ final class BrowserTabState: NSObject {
     var observations: [NSKeyValueObservation] = []
     var isCookieStoreReady = false
     var pendingLoadRequest: (url: URL, fallbackURLs: [URL])?
+    var loadingURL: URL?
     var hasAttemptedNavigation = false
     var displayAddressText = ""
     var errorMessage: String?
@@ -69,6 +70,7 @@ extension BrowserModel {
         }
 
         refreshPublishedTabs()
+        BrowserWebExtension.shared.didChangeTab(tab, properties: [.loading, .title, .URL])
 
         guard activeTabID == tab.id else { return }
         syncPageState(from: webView)
@@ -84,6 +86,7 @@ extension BrowserModel {
         tab.title = tabTitle(for: webView)
         persistOpenTabs()
         refreshPublishedTabs()
+        BrowserWebExtension.shared.didChangeTab(tab, properties: [.loading, .title, .URL])
 
         guard activeTabID == tab.id else { return }
 
@@ -148,6 +151,7 @@ extension BrowserModel {
 
         tab.title = tabTitle(for: webView)
         refreshPublishedTabs()
+        BrowserWebExtension.shared.didChangeTab(tab, properties: [.title])
 
         guard activeTabID == tab.id else { return }
         self.webView.browserWindowTitle = BrowserWKWebView.defaultWindowTitle
