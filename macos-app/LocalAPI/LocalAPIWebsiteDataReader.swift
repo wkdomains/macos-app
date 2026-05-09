@@ -173,12 +173,18 @@ final class WebsiteDataReader {
             case .failure(let error):
                 completion(.failure(error))
             case .success(let snapshot):
-                self.readCookieAuthShapeForCurrentPage { auth in
-                    self.readResources { resources in
+                guard let snapshotDomain = Self.domain(fromSnapshot: snapshot) else {
+                    completion(.failure(InspectionError.noPageLoaded))
+                    return
+                }
+
+                self.readCookieAuthShape(for: snapshotDomain) { auth in
+                    self.readResources(for: snapshotDomain.host) { resources in
                         completion(
                             .success(
                                 self.observeResponse(
                                     snapshot: snapshot,
+                                    domain: snapshotDomain,
                                     resources: resources,
                                     auth: auth
                                 )
@@ -204,6 +210,10 @@ final class WebsiteDataReader {
             return
         }
 
+        readResources(for: host, completion: completion)
+    }
+
+    private func readResources(for host: String, completion: @escaping (DomainResourcesResponse) -> Void) {
         let domain = DomainUtilities.registrableDomain(from: host)
         let candidates = Self.resourceCandidates(for: domain)
 
@@ -323,16 +333,16 @@ final class WebsiteDataReader {
 
     private func observeResponse(
         snapshot: Any,
+        domain: RequestedDomain,
         resources: DomainResourcesResponse,
         auth: [String: Any]
     ) -> [String: Any] {
-        let page = readPage()
         let console = readConsoleMessages()
-        let xhr = (try? currentPageDomain()).map(readXHRRequests(for:))
+        let xhr = readXHRRequests(for: domain)
 
         return [
             "generatedAt": Self.iso8601Formatter.string(from: Date()),
-            "page": pageDictionary(from: page),
+            "page": pageDictionary(fromSnapshot: snapshot),
             "screenshot": [
                 "available": browser.webView.url != nil,
                 "endpoint": "/api/v1/screenshot",
@@ -341,12 +351,7 @@ final class WebsiteDataReader {
             ],
             "snapshot": snapshot,
             "console": consoleDictionary(from: console),
-            "xhr": xhr.map(xhrDictionary(from:)) ?? [
-                "hostname": NSNull(),
-                "activePageURL": Self.json(browser.webView.url?.absoluteString),
-                "activePageHost": Self.json(browser.webView.url?.host),
-                "requests": [Any]()
-            ],
+            "xhr": xhrDictionary(from: xhr),
             "resources": resourcesDictionary(from: resources),
             "auth": auth
         ]
@@ -362,6 +367,10 @@ final class WebsiteDataReader {
             return
         }
 
+        readCookieAuthShape(for: domain, completion: completion)
+    }
+
+    private func readCookieAuthShape(for domain: RequestedDomain, completion: @escaping ([String: Any]) -> Void) {
         let dataStore = browser.webView.configuration.websiteDataStore
         dataStore.httpCookieStore.getAllCookies { cookies in
             Task { @MainActor in
@@ -395,19 +404,25 @@ final class WebsiteDataReader {
         return domain
     }
 
-    private func pageDictionary(from page: PageResponse) -> [String: Any] {
-        [
-            "url": Self.json(page.url),
-            "title": Self.json(page.title),
-            "host": Self.json(page.host),
-            "domain": Self.json(page.domain),
-            "origin": Self.json(page.origin),
-            "viewportMode": page.viewportMode,
-            "viewportWidth": page.viewportWidth,
-            "viewportHeight": page.viewportHeight,
-            "isLoading": page.isLoading,
-            "canGoBack": page.canGoBack,
-            "canGoForward": page.canGoForward
+    private func pageDictionary(fromSnapshot snapshot: Any) -> [String: Any] {
+        let snapshotDictionary = snapshot as? [String: Any]
+        let urlString = snapshotDictionary?["url"] as? String
+        let url = urlString.flatMap(URL.init(string:))
+        let host = url?.host?.lowercased()
+        let viewport = snapshotDictionary?["viewport"] as? [String: Any]
+
+        return [
+            "url": Self.json(urlString),
+            "title": Self.json(snapshotDictionary?["title"] as? String),
+            "host": Self.json(host),
+            "domain": Self.json(host.map(DomainUtilities.registrableDomain(from:))),
+            "origin": Self.json(url.map(Self.originString(from:))),
+            "viewportMode": browser.viewportMode.rawValue,
+            "viewportWidth": viewport?["width"] as? Int ?? Int(browser.webView.bounds.width.rounded()),
+            "viewportHeight": viewport?["height"] as? Int ?? Int(browser.webView.bounds.height.rounded()),
+            "isLoading": browser.webView.isLoading,
+            "canGoBack": browser.webView.canGoBack,
+            "canGoForward": browser.webView.canGoForward
         ]
     }
 
@@ -491,6 +506,17 @@ final class WebsiteDataReader {
             "sameSitePolicy": Self.json(cookie.sameSitePolicy?.rawValue),
             "hasValue": !cookie.value.isEmpty
         ]
+    }
+
+    private static func domain(fromSnapshot snapshot: Any) -> RequestedDomain? {
+        guard let dictionary = snapshot as? [String: Any],
+              let urlString = dictionary["url"] as? String,
+              let url = URL(string: urlString)
+        else {
+            return nil
+        }
+
+        return RequestedDomain(url: url)
     }
 
     private static func json(_ value: String?) -> Any {
