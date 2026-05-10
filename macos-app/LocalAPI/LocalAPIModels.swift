@@ -3,6 +3,7 @@
 //  macos-app
 //
 
+import AppKit
 import Foundation
 @preconcurrency import WebKit
 
@@ -13,6 +14,10 @@ enum InspectionError: LocalizedError {
     case invalidNavigationRequest
     case invalidNavigationURL
     case softNavigationRequiresSameOrigin
+    case invalidViewportRequest
+    case invalidElementRef
+    case captureTimedOut
+    case captureFailed
     case xhrIndexOutOfRange(Int)
     case invalidXHRURL
     case xhrReplayReturnedEmptyBody(Int?)
@@ -32,6 +37,14 @@ enum InspectionError: LocalizedError {
             return "Navigation URL must resolve to an http or https URL."
         case .softNavigationRequiresSameOrigin:
             return "Soft navigation is only available for same-origin URLs."
+        case .invalidViewportRequest:
+            return "Provide a viewport mode or positive width and height values."
+        case .invalidElementRef:
+            return "Provide an element ref such as @e12."
+        case .captureTimedOut:
+            return "Timed out waiting for the viewport capture."
+        case .captureFailed:
+            return "Could not capture the viewport."
         case .xhrIndexOutOfRange(let index):
             return "No observed XHR request exists at index \(index)."
         case .invalidXHRURL:
@@ -49,6 +62,210 @@ enum InspectionError: LocalizedError {
 
             return "The replayed XHR did not return JSON."
         }
+    }
+}
+
+struct ViewportCaptureOutput {
+    let id: String
+    let name: String
+    let requestedWidth: Int
+    let requestedHeight: Int
+    let page: Any
+    let snapshot: Any
+    let diagnostics: Any
+    let screenshotPNG: Data?
+}
+
+@MainActor
+final class WebKitViewportCaptureSession: NSObject, WKNavigationDelegate {
+    private let id: String
+    private let name: String
+    private let url: URL
+    private let includeScreenshot: Bool
+    private let completion: (Result<ViewportCaptureOutput, Error>) -> Void
+    private let webView: WKWebView
+    private var completed = false
+    private var timeoutTask: Task<Void, Never>?
+
+    init(
+        id: String,
+        name: String,
+        url: URL,
+        width: Int,
+        height: Int,
+        dataStore: WKWebsiteDataStore,
+        includeScreenshot: Bool,
+        completion: @escaping (Result<ViewportCaptureOutput, Error>) -> Void
+    ) {
+        self.id = id
+        self.name = name
+        self.url = url
+        self.includeScreenshot = includeScreenshot
+        self.completion = completion
+
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = dataStore
+        webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)),
+            configuration: configuration
+        )
+
+        super.init()
+
+        webView.navigationDelegate = self
+    }
+
+    func start() {
+        timeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            self?.finish(.failure(InspectionError.captureTimedOut))
+        }
+
+        webView.load(URLRequest(url: url))
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            self?.capture()
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finish(.failure(error))
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finish(.failure(error))
+    }
+
+    private func capture() {
+        guard !completed else { return }
+
+        evaluateJSONScript(BrowserModel.pageInspectionScript) { [weak self] pageResult in
+            guard let self else { return }
+
+            switch pageResult {
+            case .failure(let error):
+                self.finish(.failure(error))
+            case .success(let page):
+                self.evaluateJSONScript(BrowserModel.snapshotInspectionScript) { [weak self] snapshotResult in
+                    guard let self else { return }
+
+                    switch snapshotResult {
+                    case .failure(let error):
+                        self.finish(.failure(error))
+                    case .success(let snapshot):
+                        self.evaluateJSONScript(BrowserModel.layoutDiagnosticsInspectionScript) { [weak self] diagnosticsResult in
+                            guard let self else { return }
+
+                            switch diagnosticsResult {
+                            case .failure(let error):
+                                self.finish(.failure(error))
+                            case .success(let diagnostics):
+                                self.captureScreenshotIfNeeded(page: page, snapshot: snapshot, diagnostics: diagnostics)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func captureScreenshotIfNeeded(page: Any, snapshot: Any, diagnostics: Any) {
+        guard includeScreenshot else {
+            finish(
+                .success(
+                    ViewportCaptureOutput(
+                        id: id,
+                        name: name,
+                        requestedWidth: Int(webView.bounds.width.rounded()),
+                        requestedHeight: Int(webView.bounds.height.rounded()),
+                        page: page,
+                        snapshot: snapshot,
+                        diagnostics: diagnostics,
+                        screenshotPNG: nil
+                    )
+                )
+            )
+            return
+        }
+
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = webView.bounds
+
+        webView.takeSnapshot(with: configuration) { [weak self] image, error in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+
+                if let error {
+                    self.finish(.failure(error))
+                    return
+                }
+
+                guard let image,
+                      let screenshotPNG = Self.pngData(from: image)
+                else {
+                    self.finish(.failure(InspectionError.captureFailed))
+                    return
+                }
+
+                self.finish(
+                    .success(
+                        ViewportCaptureOutput(
+                            id: self.id,
+                            name: self.name,
+                            requestedWidth: Int(self.webView.bounds.width.rounded()),
+                            requestedHeight: Int(self.webView.bounds.height.rounded()),
+                            page: page,
+                            snapshot: snapshot,
+                            diagnostics: diagnostics,
+                            screenshotPNG: screenshotPNG
+                        )
+                    )
+                )
+            }
+        }
+    }
+
+    private func evaluateJSONScript(_ script: String, completion: @escaping (Result<Any, Error>) -> Void) {
+        webView.evaluateJavaScript(script) { value, error in
+            Task { @MainActor in
+                if let error {
+                    completion(.failure(error))
+                    return
+                }
+
+                guard let json = value as? String,
+                      let data = json.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data)
+                else {
+                    completion(.failure(InspectionError.couldNotDecodePageJSON))
+                    return
+                }
+
+                completion(.success(object))
+            }
+        }
+    }
+
+    private func finish(_ result: Result<ViewportCaptureOutput, Error>) {
+        guard !completed else { return }
+        completed = true
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        webView.stopLoading()
+        completion(result)
+    }
+
+    private static func pngData(from image: NSImage) -> Data? {
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData)
+        else {
+            return nil
+        }
+
+        return bitmap.representation(using: .png, properties: [:])
     }
 }
 

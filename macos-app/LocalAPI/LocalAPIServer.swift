@@ -16,6 +16,8 @@ final class LocalAPIServer {
     private let queue = DispatchQueue.main
     private var listener: NWListener?
     private var debugRequestCounter = 0
+    private var captureScreenshots: [String: Data] = [:]
+    private var captureScreenshotOrder: [String] = []
 
     init(browser: BrowserModel, settings: AppSettings) {
         dataReader = WebsiteDataReader(browser: browser)
@@ -140,8 +142,104 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/viewport" {
+            if request.method == "GET" {
+                sendJSONObject(dataReader.readViewport(), contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                return
+            }
+
+            guard request.method == "POST" else {
+                sendError(status: .methodNotAllowed, message: "Use GET or POST for viewport requests.", on: connection)
+                return
+            }
+
+            guard request.originIsAllowed else {
+                sendError(status: .badRequest, message: "Origin is not allowed.", on: connection)
+                return
+            }
+
+            guard let body = jsonBody(from: request) else {
+                sendError(status: .badRequest, message: InspectionError.invalidViewportRequest.localizedDescription, on: connection)
+                return
+            }
+
+            switch dataReader.setViewport(arguments: body) {
+            case .success(let response):
+                sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+            case .failure(let error):
+                sendError(status: .badRequest, message: error.localizedDescription, on: connection)
+            }
+            return
+        }
+
+        if request.path == "/api/v1/capture" {
+            guard request.method == "POST" else {
+                sendError(status: .methodNotAllowed, message: "Use POST for capture requests.", on: connection)
+                return
+            }
+
+            guard request.originIsAllowed else {
+                sendError(status: .badRequest, message: "Origin is not allowed.", on: connection)
+                return
+            }
+
+            let body = jsonBody(from: request) ?? [:]
+            dataReader.captureViewport(arguments: body) { [weak self] result in
+                switch result {
+                case .success(let output):
+                    self?.sendJSONObject(self?.capturePayload(from: output) ?? [:], contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
+        if request.path == "/api/v1/qa/viewports" {
+            guard request.method == "POST" else {
+                sendError(status: .methodNotAllowed, message: "Use POST for viewport QA requests.", on: connection)
+                return
+            }
+
+            guard request.originIsAllowed else {
+                sendError(status: .badRequest, message: "Origin is not allowed.", on: connection)
+                return
+            }
+
+            let body = jsonBody(from: request) ?? [:]
+            dataReader.captureViewports(arguments: body) { [weak self] result in
+                switch result {
+                case .success(let outputs):
+                    let captures = outputs.map { self?.capturePayload(from: $0) ?? [:] }
+                    self?.sendJSONObject(
+                        [
+                            "generatedAt": ISO8601DateFormatter().string(from: Date()),
+                            "count": captures.count,
+                            "captures": captures
+                        ],
+                        contentType: "application/json; charset=utf-8",
+                        status: .ok,
+                        on: connection
+                    )
+                case .failure(let error):
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
         guard request.method == "GET" else {
             sendError(status: .methodNotAllowed, message: "Only GET is supported.", on: connection)
+            return
+        }
+
+        if let captureScreenshotID = captureScreenshotID(from: request.path) {
+            guard let screenshot = captureScreenshots[captureScreenshotID] else {
+                sendError(status: .notFound, message: "Capture screenshot not found.", on: connection)
+                return
+            }
+
+            sendData(screenshot, contentType: "image/png", status: .ok, on: connection)
             return
         }
 
@@ -198,6 +296,37 @@ final class LocalAPIServer {
                     self?.sendData(pngData, contentType: "image/png", status: .ok, on: connection)
                 case .failure(let error):
                     BrowserDebugLogging.log("[wkdomains-debug] local-api screenshot fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
+        if request.path == "/api/v1/layout" {
+            BrowserDebugLogging.log("[wkdomains-debug] local-api layout start id=\(debugID)")
+            dataReader.readLayoutDiagnostics { [weak self] result in
+                switch result {
+                case .success(let response):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api layout done id=\(debugID)")
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api layout fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
+        if request.path.hasPrefix("/api/v1/element/") {
+            let ref = String(request.path.dropFirst("/api/v1/element/".count))
+            BrowserDebugLogging.log("[wkdomains-debug] local-api element start id=\(debugID) ref=\(ref)")
+            dataReader.readElementXRay(ref: ref) { [weak self] result in
+                switch result {
+                case .success(let response):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api element done id=\(debugID) ref=\(ref)")
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api element fail id=\(debugID) ref=\(ref) error=\(error.localizedDescription)")
                     self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
                 }
             }
@@ -536,6 +665,75 @@ final class LocalAPIServer {
             sendMCPToolResult(id: id, value: dataReader.readCurrentPage(), on: connection)
         default:
             sendMCPError(id: id, code: -32602, message: "Unknown tool.", on: connection)
+        }
+    }
+
+    private func jsonBody(from request: HTTPRequest) -> [String: Any]? {
+        guard !request.body.isEmpty,
+              let jsonObject = try? JSONSerialization.jsonObject(with: request.body)
+        else {
+            return nil
+        }
+
+        return jsonObject as? [String: Any]
+    }
+
+    private func captureScreenshotID(from path: String) -> String? {
+        let prefix = "/api/v1/captures/"
+        let suffix = "/screenshot"
+        guard path.hasPrefix(prefix), path.hasSuffix(suffix) else {
+            return nil
+        }
+
+        let start = path.index(path.startIndex, offsetBy: prefix.count)
+        let end = path.index(path.endIndex, offsetBy: -suffix.count)
+        guard start < end else {
+            return nil
+        }
+
+        return String(path[start..<end])
+    }
+
+    private func capturePayload(from output: ViewportCaptureOutput) -> [String: Any] {
+        let screenshot: [String: Any]
+        if let screenshotPNG = output.screenshotPNG {
+            storeCaptureScreenshot(id: output.id, data: screenshotPNG)
+            screenshot = [
+                "available": true,
+                "endpoint": "/api/v1/captures/\(output.id)/screenshot",
+                "contentType": "image/png",
+                "bytes": screenshotPNG.count
+            ]
+        } else {
+            screenshot = [
+                "available": false,
+                "endpoint": NSNull(),
+                "contentType": "image/png"
+            ]
+        }
+
+        return [
+            "id": output.id,
+            "name": output.name,
+            "requestedViewport": [
+                "width": output.requestedWidth,
+                "height": output.requestedHeight
+            ],
+            "page": output.page,
+            "screenshot": screenshot,
+            "snapshot": output.snapshot,
+            "diagnostics": output.diagnostics
+        ]
+    }
+
+    private func storeCaptureScreenshot(id: String, data: Data) {
+        captureScreenshots[id] = data
+        captureScreenshotOrder.removeAll { $0 == id }
+        captureScreenshotOrder.append(id)
+
+        while captureScreenshotOrder.count > 24 {
+            let removedID = captureScreenshotOrder.removeFirst()
+            captureScreenshots.removeValue(forKey: removedID)
         }
     }
 

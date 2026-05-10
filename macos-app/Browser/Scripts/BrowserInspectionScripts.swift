@@ -5,6 +5,8 @@
 //  Created by aa on 5/2/26.
 //
 
+import Foundation
+
 extension BrowserModel {
     static let snapshotInspectionScript = """
     (() => {
@@ -14,8 +16,10 @@ extension BrowserModel {
       const viewport = window.visualViewport || {};
       const state = window.__wkdomainsSnapshotRefs || {
         next: 0,
-        refs: new WeakMap()
+        refs: new WeakMap(),
+        elements: new Map()
       };
+      if (!state.elements) state.elements = new Map();
       window.__wkdomainsSnapshotRefs = state;
 
       const truncate = (value, limit = MAX_TEXT) => {
@@ -29,7 +33,9 @@ extension BrowserModel {
           state.next += 1;
         }
 
-        return state.refs.get(element);
+        const ref = state.refs.get(element);
+        state.elements.set(ref, element);
+        return ref;
       };
 
       const rectFor = (element) => {
@@ -242,6 +248,474 @@ extension BrowserModel {
       });
     })();
     """
+
+    static let layoutDiagnosticsInspectionScript = """
+    (() => {
+      const MAX_ITEMS = 80;
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const doc = document.documentElement;
+      const body = document.body;
+
+      const truncate = (value, limit = 160) => {
+        const text = String(value || "").replace(/\\s+/g, " ").trim();
+        return text.length > limit ? `${text.slice(0, limit)}...` : text;
+      };
+
+      const rectFor = (element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          top: Math.round(rect.top),
+          right: Math.round(rect.right),
+          bottom: Math.round(rect.bottom),
+          left: Math.round(rect.left)
+        };
+      };
+
+      const isVisible = (element) => {
+        if (!element || !element.getBoundingClientRect) return false;
+        const style = getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) return false;
+        return rect.bottom >= 0 && rect.right >= 0 && rect.top <= viewportHeight && rect.left <= viewportWidth;
+      };
+
+      const labelFor = (element) => truncate(
+        element.getAttribute("aria-label")
+          || element.innerText
+          || element.textContent
+          || element.getAttribute("title")
+          || element.getAttribute("placeholder")
+          || element.tagName.toLowerCase(),
+        100
+      );
+
+      const selectorHintFor = (element) => {
+        if (element.id) return `#${element.id}`;
+        const testID = element.getAttribute("data-testid") || element.getAttribute("data-test") || element.getAttribute("data-cy");
+        if (testID) return `[data-testid="${testID}"]`;
+        const name = element.getAttribute("name");
+        if (name) return `${element.tagName.toLowerCase()}[name="${name}"]`;
+        return element.tagName.toLowerCase();
+      };
+
+      const summaryFor = (element, extra = {}) => ({
+        tag: element.tagName.toLowerCase(),
+        role: element.getAttribute("role") || null,
+        label: labelFor(element),
+        selectorHint: selectorHintFor(element),
+        rect: rectFor(element),
+        ...extra
+      });
+
+      const all = Array.from(document.querySelectorAll("body *")).filter(isVisible);
+      const interactiveSelector = [
+        "a[href]",
+        "button",
+        "input:not([type='hidden'])",
+        "textarea",
+        "select",
+        "summary",
+        "[contenteditable='true']",
+        "[role='button']",
+        "[role='link']",
+        "[role='menuitem']",
+        "[role='tab']",
+        "[role='checkbox']",
+        "[role='radio']",
+        "[role='switch']",
+        "[role='textbox']",
+        "[role='combobox']",
+        "[role='searchbox']",
+        "[role='slider']"
+      ].join(",");
+      const interactive = Array.from(document.querySelectorAll(interactiveSelector)).filter(isVisible);
+
+      const outsideViewport = all
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.left < -1 || rect.right > viewportWidth + 1 || rect.top < -1 || rect.bottom > viewportHeight + 1;
+        })
+        .slice(0, MAX_ITEMS)
+        .map((element) => summaryFor(element));
+
+      const clipped = all
+        .filter((element) => {
+          const style = getComputedStyle(element);
+          const clipsX = ["hidden", "clip", "auto", "scroll"].includes(style.overflowX);
+          const clipsY = ["hidden", "clip", "auto", "scroll"].includes(style.overflowY);
+          return (clipsX && element.scrollWidth > element.clientWidth + 1)
+            || (clipsY && element.scrollHeight > element.clientHeight + 1);
+        })
+        .slice(0, MAX_ITEMS)
+        .map((element) => summaryFor(element, {
+          scrollWidth: element.scrollWidth,
+          clientWidth: element.clientWidth,
+          scrollHeight: element.scrollHeight,
+          clientHeight: element.clientHeight,
+          overflowX: getComputedStyle(element).overflowX,
+          overflowY: getComputedStyle(element).overflowY
+        }));
+
+      const smallTapTargets = interactive
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.width < 44 || rect.height < 44;
+        })
+        .slice(0, MAX_ITEMS)
+        .map((element) => summaryFor(element));
+
+      const fixedOrSticky = all
+        .filter((element) => {
+          const position = getComputedStyle(element).position;
+          return position === "fixed" || position === "sticky";
+        })
+        .slice(0, 40);
+
+      const intersections = [];
+      for (let i = 0; i < fixedOrSticky.length; i += 1) {
+        for (let j = i + 1; j < fixedOrSticky.length; j += 1) {
+          const a = fixedOrSticky[i].getBoundingClientRect();
+          const b = fixedOrSticky[j].getBoundingClientRect();
+          const width = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+          const height = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+          const area = width * height;
+          if (area >= 64) {
+            intersections.push({
+              area: Math.round(area),
+              first: summaryFor(fixedOrSticky[i], { position: getComputedStyle(fixedOrSticky[i]).position }),
+              second: summaryFor(fixedOrSticky[j], { position: getComputedStyle(fixedOrSticky[j]).position })
+            });
+          }
+        }
+      }
+
+      return JSON.stringify({
+        url: location.href,
+        title: document.title || null,
+        generatedAt: new Date().toISOString(),
+        viewport: {
+          width: Math.round(viewportWidth),
+          height: Math.round(viewportHeight),
+          scrollX: Math.round(window.scrollX || 0),
+          scrollY: Math.round(window.scrollY || 0),
+          devicePixelRatio: window.devicePixelRatio || 1
+        },
+        document: {
+          scrollWidth: doc ? doc.scrollWidth : null,
+          clientWidth: doc ? doc.clientWidth : null,
+          scrollHeight: doc ? doc.scrollHeight : null,
+          clientHeight: doc ? doc.clientHeight : null,
+          bodyScrollWidth: body ? body.scrollWidth : null,
+          bodyClientWidth: body ? body.clientWidth : null,
+          hasHorizontalOverflow: !!doc && doc.scrollWidth > doc.clientWidth + 1
+        },
+        counts: {
+          visibleElements: all.length,
+          interactiveElements: interactive.length,
+          outsideViewport: outsideViewport.length,
+          clipped: clipped.length,
+          smallTapTargets: smallTapTargets.length,
+          fixedOrSticky: fixedOrSticky.length,
+          fixedOrStickyOverlaps: intersections.length
+        },
+        outsideViewport,
+        clipped,
+        smallTapTargets,
+        fixedOrStickyOverlaps: intersections.slice(0, 30)
+      });
+    })();
+    """
+
+    static func elementXRayInspectionScript(ref: String) -> String? {
+      guard
+        let refData = try? JSONEncoder().encode(ref),
+        let refJSON = String(data: refData, encoding: .utf8)
+      else {
+        return nil
+      }
+
+      return """
+      (() => {
+        const targetRef = \(refJSON);
+        const state = window.__wkdomainsSnapshotRefs;
+        const element = state && state.elements && state.elements.get(targetRef);
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+
+        const truncate = (value, limit = 220) => {
+          const text = String(value || "").replace(/\\s+/g, " ").trim();
+          return text.length > limit ? `${text.slice(0, limit)}...` : text;
+        };
+
+        const rectFor = (node) => {
+          const rect = node.getBoundingClientRect();
+          return {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            top: Math.round(rect.top),
+            right: Math.round(rect.right),
+            bottom: Math.round(rect.bottom),
+            left: Math.round(rect.left)
+          };
+        };
+
+        const attrsFor = (node) => {
+          const attrs = {};
+          for (const attr of Array.from(node.attributes || [])) {
+            if (/^(id|class|role|aria-|data-|name|type|href|src|alt|title|placeholder|disabled|required)/.test(attr.name)) {
+              attrs[attr.name] = truncate(attr.value, 260);
+            }
+          }
+          return attrs;
+        };
+
+        const selectorHintFor = (node) => {
+          if (node.id) return `#${CSS.escape(node.id)}`;
+          const testID = node.getAttribute("data-testid") || node.getAttribute("data-test") || node.getAttribute("data-cy");
+          if (testID) return `[data-testid="${CSS.escape(testID)}"]`;
+          const name = node.getAttribute("name");
+          if (name) return `${node.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+          return node.tagName.toLowerCase();
+        };
+
+        const cssPathFor = (node) => {
+          const parts = [];
+          let current = node;
+          while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.body) {
+            let part = current.tagName.toLowerCase();
+            if (current.id) {
+              part += `#${CSS.escape(current.id)}`;
+              parts.unshift(part);
+              break;
+            }
+            const parent = current.parentElement;
+            if (parent) {
+              const siblings = Array.from(parent.children).filter((child) => child.tagName === current.tagName);
+              if (siblings.length > 1) {
+                part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+              }
+            }
+            parts.unshift(part);
+            current = parent;
+          }
+          return parts.join(" > ");
+        };
+
+        const colorParts = (value) => {
+          const match = String(value || "").match(/rgba?\\(([^)]+)\\)/);
+          if (!match) return null;
+          const parts = match[1].split(",").map((part) => Number.parseFloat(part.trim()));
+          if (parts.length < 3 || parts.some((part, index) => index < 3 && Number.isNaN(part))) return null;
+          return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 && !Number.isNaN(parts[3]) ? parts[3] : 1 };
+        };
+
+        const luminance = (color) => {
+          const channel = (value) => {
+            const v = value / 255;
+            return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+          };
+          return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+        };
+
+        const contrastRatio = (fg, bg) => {
+          if (!fg || !bg || fg.a === 0 || bg.a === 0) return null;
+          const left = luminance(fg);
+          const right = luminance(bg);
+          const lighter = Math.max(left, right);
+          const darker = Math.min(left, right);
+          return Math.round(((lighter + 0.05) / (darker + 0.05)) * 100) / 100;
+        };
+
+        const nearestBackgroundColor = (node) => {
+          let current = node;
+          while (current && current.nodeType === Node.ELEMENT_NODE) {
+            const background = getComputedStyle(current).backgroundColor;
+            const parsed = colorParts(background);
+            if (parsed && parsed.a > 0) return background;
+            current = current.parentElement;
+          }
+          return getComputedStyle(document.body || document.documentElement).backgroundColor;
+        };
+
+        const roleFor = (node) => {
+          const explicit = node.getAttribute("role");
+          if (explicit) return explicit;
+          const tag = node.tagName.toLowerCase();
+          const type = (node.getAttribute("type") || "").toLowerCase();
+          if (tag === "a" && node.hasAttribute("href")) return "link";
+          if (tag === "button" || type === "button" || type === "submit" || type === "reset") return "button";
+          if (tag === "textarea") return "textbox";
+          if (tag === "select") return "combobox";
+          if (tag === "input") {
+            if (type === "checkbox") return "checkbox";
+            if (type === "radio") return "radio";
+            if (type === "range") return "slider";
+            if (type === "search") return "searchbox";
+            return "textbox";
+          }
+          return tag;
+        };
+
+        const accessibleNameFor = (node) => {
+          const aria = node.getAttribute("aria-label");
+          if (aria) return truncate(aria, 180);
+          const labelledBy = node.getAttribute("aria-labelledby");
+          if (labelledBy) {
+            const text = labelledBy.split(/\\s+/).map((id) => document.getElementById(id))
+              .filter(Boolean)
+              .map((label) => label.innerText || label.textContent)
+              .join(" ");
+            if (text) return truncate(text, 180);
+          }
+          if (node.id) {
+            const label = document.querySelector(`label[for="${CSS.escape(node.id)}"]`);
+            if (label) return truncate(label.innerText || label.textContent, 180);
+          }
+          const wrappingLabel = node.closest("label");
+          if (wrappingLabel) return truncate(wrappingLabel.innerText || wrappingLabel.textContent, 180);
+          return truncate(node.innerText || node.textContent || node.getAttribute("title") || node.getAttribute("placeholder"), 180) || null;
+        };
+
+        const sourceHintFor = (node) => {
+          const key = Object.keys(node).find((name) => name.startsWith("__reactFiber$") || name.startsWith("__reactInternalInstance$"));
+          const fiber = key ? node[key] : null;
+          let current = fiber;
+          while (current) {
+            const source = current._debugSource || current._debugOwner?._debugSource;
+            const ownerName = current._debugOwner?.elementType?.name || current._debugOwner?.type?.name || current.elementType?.name || current.type?.name || null;
+            if (source || ownerName) {
+              return {
+                framework: "react",
+                component: ownerName,
+                fileName: source?.fileName || null,
+                lineNumber: source?.lineNumber || null,
+                columnNumber: source?.columnNumber || null,
+                note: source ? "React development source metadata." : "React fiber owner name only; file metadata unavailable."
+              };
+            }
+            current = current.return;
+          }
+          return {
+            framework: null,
+            component: null,
+            fileName: null,
+            lineNumber: null,
+            columnNumber: null,
+            note: "No framework source metadata found on this element."
+          };
+        };
+
+        const nodeSummary = (node) => {
+          const style = getComputedStyle(node);
+          return {
+            tag: node.tagName.toLowerCase(),
+            role: roleFor(node),
+            label: accessibleNameFor(node),
+            selectorHint: selectorHintFor(node),
+            cssPath: cssPathFor(node),
+            attrs: attrsFor(node),
+            rect: rectFor(node),
+            layout: {
+              display: style.display,
+              position: style.position,
+              zIndex: style.zIndex,
+              overflowX: style.overflowX,
+              overflowY: style.overflowY,
+              opacity: style.opacity,
+              visibility: style.visibility
+            }
+          };
+        };
+
+        if (!element) {
+          return JSON.stringify({
+            ref: targetRef,
+            found: false,
+            error: "Element ref not found. Call /api/v1/snapshot first and use a current ref."
+          });
+        }
+
+        const style = getComputedStyle(element);
+        const backgroundColor = nearestBackgroundColor(element);
+        const color = style.color;
+        const rect = element.getBoundingClientRect();
+        const ancestors = [];
+        let parent = element.parentElement;
+        while (parent && ancestors.length < 8) {
+          ancestors.push(nodeSummary(parent));
+          parent = parent.parentElement;
+        }
+
+        const siblings = Array.from(element.parentElement?.children || [])
+          .filter((node) => node !== element)
+          .slice(0, 10)
+          .map(nodeSummary);
+
+        return JSON.stringify({
+          ref: targetRef,
+          found: true,
+          url: location.href,
+          title: document.title || null,
+          generatedAt: new Date().toISOString(),
+          element: nodeSummary(element),
+          accessibility: {
+            role: roleFor(element),
+            name: accessibleNameFor(element),
+            disabled: !!(element.disabled || element.getAttribute("aria-disabled") === "true"),
+            expanded: element.getAttribute("aria-expanded"),
+            selected: element.getAttribute("aria-selected"),
+            checked: typeof element.checked === "boolean" ? element.checked : null,
+            required: !!(element.required || element.hasAttribute("required")),
+            focused: document.activeElement === element
+          },
+          box: {
+            inViewport: rect.bottom >= 0 && rect.right >= 0 && rect.top <= viewportHeight && rect.left <= viewportWidth,
+            scrollWidth: element.scrollWidth,
+            clientWidth: element.clientWidth,
+            scrollHeight: element.scrollHeight,
+            clientHeight: element.clientHeight,
+            offsetWidth: element.offsetWidth,
+            offsetHeight: element.offsetHeight
+          },
+          computedStyle: {
+            display: style.display,
+            position: style.position,
+            zIndex: style.zIndex,
+            color,
+            backgroundColor,
+            fontFamily: style.fontFamily,
+            fontSize: style.fontSize,
+            fontWeight: style.fontWeight,
+            lineHeight: style.lineHeight,
+            letterSpacing: style.letterSpacing,
+            textAlign: style.textAlign,
+            whiteSpace: style.whiteSpace,
+            overflowX: style.overflowX,
+            overflowY: style.overflowY,
+            opacity: style.opacity,
+            visibility: style.visibility,
+            pointerEvents: style.pointerEvents
+          },
+          contrast: {
+            foreground: color,
+            background: backgroundColor,
+            ratio: contrastRatio(colorParts(color), colorParts(backgroundColor))
+          },
+          sourceHint: sourceHintFor(element),
+          ancestors,
+          siblings
+        });
+      })();
+      """
+    }
 
     static let pageInspectionScript = """
     (() => {
