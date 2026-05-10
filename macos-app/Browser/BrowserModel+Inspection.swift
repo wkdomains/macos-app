@@ -252,6 +252,7 @@ extension BrowserModel {
                 jsonType: nil,
                 jsonItems: nil,
                 jsonShape: nil,
+                responseBodyPreview: nil,
                 error: nil
             )
 
@@ -277,6 +278,7 @@ extension BrowserModel {
         xhrRecords[index].jsonType = message["jsonType"] as? String
         xhrRecords[index].jsonItems = Self.intValue(from: message["jsonItems"])
         xhrRecords[index].jsonShape = message["jsonShape"] as? String
+        xhrRecords[index].responseBodyPreview = message["responseBodyPreview"] as? String
         xhrRecords[index].error = message["error"] as? String
 
         let record = xhrRecords[index]

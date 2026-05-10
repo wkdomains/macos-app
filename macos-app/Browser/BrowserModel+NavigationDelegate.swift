@@ -130,11 +130,26 @@ extension BrowserModel: WKNavigationDelegate {
             return
         }
 
-        BrowserWebExtension.shared.prepareForNavigation(to: url, in: tab) {
+        var didDecide = false
+        let allowNavigation = {
+            guard !didDecide else { return }
+            didDecide = true
             BrowserDebugLogging.log(
                 "[wkdomains-debug] navigation policy allow url=\(url.absoluteString) type=\(navigationAction.navigationType.rawValue)"
             )
             decisionHandler(.allow)
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            guard !didDecide else { return }
+            BrowserDebugLogging.log(
+                "[wkdomains-debug] navigation policy fail-open url=\(url.absoluteString) type=\(navigationAction.navigationType.rawValue)"
+            )
+            allowNavigation()
+        }
+
+        BrowserWebExtension.shared.prepareForNavigation(to: url, in: tab) {
+            allowNavigation()
         }
     }
 

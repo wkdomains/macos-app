@@ -49,6 +49,138 @@ final class WebsiteDataReader {
         }
     }
 
+    func performAction(arguments: [String: Any], completion: @escaping (Result<Any, Error>) -> Void) {
+        guard BrowserModel.actionInspectionScript(arguments: arguments) != nil else {
+            completion(.failure(InspectionError.invalidActionRequest))
+            return
+        }
+
+        let runAction = { [weak self] in
+            guard let self else { return }
+            guard let script = BrowserModel.actionInspectionScript(arguments: arguments) else {
+                completion(.failure(InspectionError.invalidActionRequest))
+                return
+            }
+
+            self.evaluateJSONScript(script, label: "action") { result in
+                switch result {
+                case .failure(let error):
+                    completion(.failure(error))
+                case .success(let response):
+                    let waitFor = self.waitArguments(from: arguments)
+                    let actionSucceeded = (response as? [String: Any])?["ok"] as? Bool ?? true
+                    guard actionSucceeded, let waitFor else {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            completion(.success(response))
+                        }
+                        return
+                    }
+
+                    self.waitForCondition(waitFor) { waitResult in
+                        switch waitResult {
+                        case .failure(let error):
+                            completion(.failure(error))
+                        case .success(let waitResponse):
+                            var output = response as? [String: Any] ?? ["actionResult": response]
+                            output["wait"] = waitResponse
+                            completion(.success(output))
+                        }
+                    }
+                }
+            }
+        }
+
+        let ref = (arguments["ref"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !ref.isEmpty else {
+            runAction()
+            return
+        }
+
+        readSnapshot { snapshotResult in
+            switch snapshotResult {
+            case .failure(let error):
+                completion(.failure(error))
+            case .success:
+                runAction()
+            }
+        }
+    }
+
+    private func waitArguments(from arguments: [String: Any]) -> [String: Any]? {
+        if let waitFor = arguments["waitFor"] as? [String: Any] {
+            return waitFor
+        }
+
+        if let wait = arguments["wait"] as? [String: Any] {
+            return wait
+        }
+
+        return nil
+    }
+
+    private func waitForCondition(
+        _ waitFor: [String: Any],
+        completion: @escaping (Result<[String: Any], Error>) -> Void
+    ) {
+        guard BrowserModel.waitInspectionScript(arguments: waitFor) != nil else {
+            completion(.failure(InspectionError.invalidActionRequest))
+            return
+        }
+
+        let timeout = waitTimeout(from: waitFor)
+        let startedAt = Date()
+
+        func poll() {
+            guard let script = BrowserModel.waitInspectionScript(arguments: waitFor) else {
+                completion(.failure(InspectionError.invalidActionRequest))
+                return
+            }
+
+            evaluateJSONScript(script, label: "wait") { result in
+                switch result {
+                case .failure(let error):
+                    completion(.failure(error))
+                case .success(let response):
+                    var dictionary = response as? [String: Any] ?? ["value": response]
+                    if dictionary["ok"] as? Bool == true {
+                        dictionary["elapsedMilliseconds"] = Int(Date().timeIntervalSince(startedAt) * 1000)
+                        completion(.success(dictionary))
+                        return
+                    }
+
+                    if Date().timeIntervalSince(startedAt) >= timeout {
+                        dictionary["timedOut"] = true
+                        dictionary["elapsedMilliseconds"] = Int(Date().timeIntervalSince(startedAt) * 1000)
+                        completion(.success(dictionary))
+                        return
+                    }
+
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        poll()
+                    }
+                }
+            }
+        }
+
+        poll()
+    }
+
+    private func waitTimeout(from waitFor: [String: Any]) -> TimeInterval {
+        if let timeoutMilliseconds = waitFor["timeoutMs"] as? Double {
+            return min(max(timeoutMilliseconds / 1000, 0.2), 20)
+        }
+
+        if let timeoutMilliseconds = waitFor["timeoutMs"] as? Int {
+            return min(max(Double(timeoutMilliseconds) / 1000, 0.2), 20)
+        }
+
+        if let timeoutSeconds = waitFor["timeoutSeconds"] as? Double {
+            return min(max(timeoutSeconds, 0.2), 20)
+        }
+
+        return 5
+    }
+
 
     func navigate(
         to rawURL: String,
@@ -313,16 +445,59 @@ final class WebsiteDataReader {
     private func hardNavigate(to url: URL, completion: @escaping (Result<[String: Any], Error>) -> Void) {
         let beforeURL = browser.webView.url?.absoluteString
         browser.load(url)
+        let startedAt = Date()
+        var didForceLoad = false
 
-        completion(
-            .success([
-                "ok": true,
-                "mode": "hard",
-                "requestedURL": url.absoluteString,
-                "beforeURL": Self.json(beforeURL),
-                "url": url.absoluteString
-            ])
-        )
+        func poll() {
+            let elapsed = Date().timeIntervalSince(startedAt)
+            let currentURL = self.browser.webView.url?.absoluteString
+            let reachedURL = currentURL == url.absoluteString
+
+            if !didForceLoad, currentURL == nil, !self.browser.webView.isLoading, elapsed >= 0.4 {
+                didForceLoad = true
+                BrowserDebugLogging.log("[wkdomains-debug] local-api navigate hard forcing direct webview load url=\(url.absoluteString)")
+                self.browser.webView.load(URLRequest(url: url))
+            }
+
+            if reachedURL && (!self.browser.webView.isLoading || elapsed >= 1.0) {
+                completion(
+                    .success([
+                        "ok": true,
+                        "mode": "hard",
+                        "requestedURL": url.absoluteString,
+                        "beforeURL": Self.json(beforeURL),
+                        "url": currentURL ?? url.absoluteString,
+                        "forcedWebViewLoad": didForceLoad,
+                        "elapsedMilliseconds": Int(elapsed * 1000)
+                    ])
+                )
+                return
+            }
+
+            if elapsed >= 8 {
+                completion(
+                    .success([
+                        "ok": false,
+                        "mode": "hard",
+                        "requestedURL": url.absoluteString,
+                        "beforeURL": Self.json(beforeURL),
+                        "url": Self.json(currentURL),
+                        "forcedWebViewLoad": didForceLoad,
+                        "timedOut": true,
+                        "elapsedMilliseconds": Int(elapsed * 1000)
+                    ])
+                )
+                return
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                poll()
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            poll()
+        }
     }
 
     private func softNavigate(
@@ -518,6 +693,7 @@ final class WebsiteDataReader {
                     "jsonType": Self.json(request.jsonType),
                     "jsonItems": Self.json(request.jsonItems),
                     "jsonShape": Self.json(request.jsonShape),
+                    "responseBodyPreview": Self.json(request.responseBodyPreview),
                     "error": Self.json(request.error)
                 ] as [String: Any]
             }
@@ -582,6 +758,13 @@ final class WebsiteDataReader {
         let startURL = browser.webView.url?.absoluteString ?? "nil"
         BrowserDebugLogging.log("[wkdomains-debug] local-api eval \(label) start \(pageStateDescription()) scriptBytes=\(script.utf8.count)")
 
+        var didFinish = false
+        let finish: (Result<Any, Error>) -> Void = { result in
+            guard !didFinish else { return }
+            didFinish = true
+            completion(result)
+        }
+
         let slowWarning = DispatchWorkItem { [weak self] in
             guard let self else { return }
             BrowserDebugLogging.log(
@@ -590,12 +773,20 @@ final class WebsiteDataReader {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: slowWarning)
 
+        let timeout = DispatchWorkItem {
+            slowWarning.cancel()
+            BrowserDebugLogging.log("[wkdomains-debug] local-api eval \(label) timeout elapsed=\(Self.formatElapsed(since: startedAt)) startURL=\(startURL)")
+            finish(.failure(InspectionError.evaluationTimedOut(label)))
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: timeout)
+
         browser.webView.evaluateJavaScript(script) { value, error in
             Task { @MainActor in
                 slowWarning.cancel()
+                timeout.cancel()
                 if let error {
                     BrowserDebugLogging.log("[wkdomains-debug] local-api eval \(label) fail elapsed=\(Self.formatElapsed(since: startedAt)) error=\(error.localizedDescription) \(self.pageStateDescription())")
-                    completion(.failure(error))
+                    finish(.failure(error))
                     return
                 }
 
@@ -604,12 +795,12 @@ final class WebsiteDataReader {
                       let object = try? JSONSerialization.jsonObject(with: data)
                 else {
                     BrowserDebugLogging.log("[wkdomains-debug] local-api eval \(label) decode-fail elapsed=\(Self.formatElapsed(since: startedAt)) valueType=\(String(describing: type(of: value))) \(self.pageStateDescription())")
-                    completion(.failure(InspectionError.couldNotDecodePageJSON))
+                    finish(.failure(InspectionError.couldNotDecodePageJSON))
                     return
                 }
 
                 BrowserDebugLogging.log("[wkdomains-debug] local-api eval \(label) done elapsed=\(Self.formatElapsed(since: startedAt)) jsonBytes=\(data.count) objectType=\(String(describing: type(of: object))) \(self.pageStateDescription())")
-                completion(.success(object))
+                finish(.success(object))
             }
         }
     }

@@ -14,8 +14,11 @@ enum InspectionError: LocalizedError {
     case invalidNavigationRequest
     case invalidNavigationURL
     case softNavigationRequiresSameOrigin
+    case invalidActionRequest
     case invalidViewportRequest
+    case invalidVisualComparisonRequest
     case invalidElementRef
+    case evaluationTimedOut(String)
     case captureTimedOut
     case captureFailed
     case xhrIndexOutOfRange(Int)
@@ -37,10 +40,16 @@ enum InspectionError: LocalizedError {
             return "Navigation URL must resolve to an http or https URL."
         case .softNavigationRequiresSameOrigin:
             return "Soft navigation is only available for same-origin URLs."
+        case .invalidActionRequest:
+            return "Provide an action JSON body with a type and target ref, selector, or active element."
         case .invalidViewportRequest:
             return "Provide a viewport mode or positive width and height values."
+        case .invalidVisualComparisonRequest:
+            return "Provide a referenceUrl or baselineUrl, plus optional currentUrl, width, height, and threshold."
         case .invalidElementRef:
             return "Provide an element ref such as @e12."
+        case .evaluationTimedOut(let label):
+            return "Timed out evaluating page script: \(label)."
         case .captureTimedOut:
             return "Timed out waiting for the viewport capture."
         case .captureFailed:
@@ -74,6 +83,15 @@ struct ViewportCaptureOutput {
     let snapshot: Any
     let diagnostics: Any
     let screenshotPNG: Data?
+}
+
+struct VisualComparisonOutput {
+    let id: String
+    let name: String
+    let current: ViewportCaptureOutput
+    let reference: ViewportCaptureOutput
+    let metrics: [String: Any]
+    let diffPNG: Data?
 }
 
 @MainActor
@@ -419,6 +437,7 @@ struct XHRRequestResponse: Encodable {
     let jsonType: String?
     let jsonItems: Int?
     let jsonShape: String?
+    let responseBodyPreview: String?
     let error: String?
 
     init(record: XHRRequestRecord) {
@@ -439,6 +458,7 @@ struct XHRRequestResponse: Encodable {
         jsonType = record.jsonType
         jsonItems = record.jsonItems
         jsonShape = record.jsonShape
+        responseBodyPreview = record.responseBodyPreview
         error = record.error
     }
 }

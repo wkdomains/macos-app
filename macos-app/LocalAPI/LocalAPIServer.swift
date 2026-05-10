@@ -230,6 +230,71 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/visual/compare" || request.path == "/api/v1/visual-diff" {
+            guard request.method == "POST" else {
+                sendError(status: .methodNotAllowed, message: "Use POST for visual comparison requests.", on: connection)
+                return
+            }
+
+            guard request.originIsAllowed else {
+                sendError(status: .badRequest, message: "Origin is not allowed.", on: connection)
+                return
+            }
+
+            guard let body = jsonBody(from: request) else {
+                sendError(status: .badRequest, message: InspectionError.invalidVisualComparisonRequest.localizedDescription, on: connection)
+                return
+            }
+
+            BrowserDebugLogging.log("[wkdomains-debug] local-api visual compare start id=\(debugID)")
+            dataReader.compareVisual(arguments: body) { [weak self] result in
+                switch result {
+                case .success(let output):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api visual compare done id=\(debugID)")
+                    self?.sendJSONObject(
+                        self?.visualComparisonPayload(from: output) ?? [:],
+                        contentType: "application/json; charset=utf-8",
+                        status: .ok,
+                        on: connection
+                    )
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api visual compare fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
+        if request.path == "/api/v1/action" || request.path == "/api/v1/actions" {
+            guard request.method == "POST" else {
+                sendError(status: .methodNotAllowed, message: "Use POST for action requests.", on: connection)
+                return
+            }
+
+            guard request.originIsAllowed else {
+                sendError(status: .badRequest, message: "Origin is not allowed.", on: connection)
+                return
+            }
+
+            guard let body = jsonBody(from: request) else {
+                sendError(status: .badRequest, message: InspectionError.invalidActionRequest.localizedDescription, on: connection)
+                return
+            }
+
+            BrowserDebugLogging.log("[wkdomains-debug] local-api action start id=\(debugID)")
+            dataReader.performAction(arguments: body) { [weak self] result in
+                switch result {
+                case .success(let response):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api action done id=\(debugID)")
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api action fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .badRequest, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
         guard request.method == "GET" else {
             sendError(status: .methodNotAllowed, message: "Only GET is supported.", on: connection)
             return
@@ -725,6 +790,36 @@ final class LocalAPIServer {
             "screenshot": screenshot,
             "snapshot": output.snapshot,
             "diagnostics": output.diagnostics
+        ]
+    }
+
+    private func visualComparisonPayload(from output: VisualComparisonOutput) -> [String: Any] {
+        let diff: [String: Any]
+        if let diffPNG = output.diffPNG {
+            let diffID = "\(output.id)-diff"
+            storeCaptureScreenshot(id: diffID, data: diffPNG)
+            diff = [
+                "available": true,
+                "endpoint": "/api/v1/captures/\(diffID)/screenshot",
+                "contentType": "image/png",
+                "bytes": diffPNG.count
+            ]
+        } else {
+            diff = [
+                "available": false,
+                "endpoint": NSNull(),
+                "contentType": "image/png"
+            ]
+        }
+
+        return [
+            "id": output.id,
+            "name": output.name,
+            "generatedAt": ISO8601DateFormatter().string(from: Date()),
+            "metrics": output.metrics,
+            "reference": capturePayload(from: output.reference),
+            "current": capturePayload(from: output.current),
+            "diff": diff
         ]
     }
 

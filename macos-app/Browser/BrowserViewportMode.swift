@@ -52,9 +52,9 @@ enum BrowserViewportMode: String, CaseIterable, Identifiable {
         case .desktop:
             return "Desktop viewport"
         case .mobileLarge:
-            return "Mobile Large: 700px"
+            return "Mobile Large: 700px wide"
         case .mobileSmall:
-            return "Mobile Small: 390px"
+            return "Mobile Small: 390px wide"
         }
     }
 }

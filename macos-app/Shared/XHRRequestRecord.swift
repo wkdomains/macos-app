@@ -25,5 +25,6 @@ struct XHRRequestRecord: Encodable {
     var jsonType: String?
     var jsonItems: Int?
     var jsonShape: String?
+    var responseBodyPreview: String?
     var error: String?
 }

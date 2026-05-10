@@ -133,6 +133,39 @@ extension BrowserModel {
         return type;
       };
 
+      const truncateText = (value, limit = 2200) => {
+        const text = String(value || "");
+        return text.length > limit ? `${text.slice(0, limit)}...` : text;
+      };
+
+      const shouldRedactKey = (key) => {
+        return /(authorization|cookie|password|secret|session_token|access_token|refresh_token|id_token|bearer|stripe|api[_-]?key)/i.test(String(key || ""));
+      };
+
+      const redactedJSON = (value, depth = 0) => {
+        if (depth > 6) return "[truncated]";
+        if (Array.isArray(value)) return value.slice(0, 20).map((item) => redactedJSON(item, depth + 1));
+        if (!value || typeof value !== "object") return value;
+
+        const output = {};
+        Object.keys(value).slice(0, 60).forEach((key) => {
+          output[key] = shouldRedactKey(key) ? "[redacted]" : redactedJSON(value[key], depth + 1);
+        });
+
+        return output;
+      };
+
+      const bodyPreviewFor = (text) => {
+        if (typeof text !== "string" || text.length === 0) return undefined;
+
+        try {
+          const jsonText = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+          return truncateText(JSON.stringify(redactedJSON(JSON.parse(jsonText))));
+        } catch (_) {
+          return truncateText(text.replace(/\\s+/g, " ").trim());
+        }
+      };
+
       const shapeForValue = (value, depth = 0) => {
         const type = valueType(value);
 
@@ -169,6 +202,7 @@ extension BrowserModel {
         };
 
         if (typeof text !== "string" || text.length === 0) return summary;
+        summary.responseBodyPreview = bodyPreviewFor(text);
 
         try {
           const jsonText = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
@@ -217,7 +251,15 @@ extension BrowserModel {
         };
         const headerSummary = responseHeaderSummary(response);
 
-        post({ ...finishPayload, ...headerSummary });
+        try {
+          response.clone().text().then((text) => {
+            post({ ...finishPayload, ...summarizeJSON(text) });
+          }).catch(() => {
+            post({ ...finishPayload, ...headerSummary });
+          });
+        } catch (_) {
+          post({ ...finishPayload, ...headerSummary });
+        }
       };
 
       const xhrResponseText = (xhr) => {

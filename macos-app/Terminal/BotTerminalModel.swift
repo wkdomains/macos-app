@@ -234,6 +234,10 @@ final class BotTerminalModel: ObservableObject {
             \(context.localAPIBaseURL)/api/v1/screenshot
             \(context.localAPIBaseURL)/api/v1/xhr
             \(context.localAPIBaseURL)/api/v1/cookies
+            \(context.localAPIBaseURL)/api/v1/action
+            \(context.localAPIBaseURL)/api/v1/element/{ref}
+            \(context.localAPIBaseURL)/api/v1/qa/viewports
+            \(context.localAPIBaseURL)/api/v1/visual/compare
 
             Reply concisely for the terminal.
             """,
