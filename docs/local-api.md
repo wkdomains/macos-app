@@ -238,6 +238,14 @@ curl -sS -X POST http://localhost:9001/api/v1/action \
 
 curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
+  -d '{"type":"scroll","direction":"bottom","durationMs":9000}' | jq .
+
+curl -sS -X POST http://localhost:9001/api/v1/action \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"scroll","direction":"bottom","style":"human","durationMs":45000}' | jq .
+
+curl -sS -X POST http://localhost:9001/api/v1/action \
+  -H 'Content-Type: application/json' \
   -d '{"type":"scroll","role":"link","name":"Pricing","block":"center"}' | jq .
 ```
 

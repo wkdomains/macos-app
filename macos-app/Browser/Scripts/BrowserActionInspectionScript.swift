@@ -31,7 +31,11 @@ extension BrowserModel {
           const key = args.key == null ? "Enter" : String(args.key);
           const direction = typeof args.direction === "string" ? args.direction.trim().toLowerCase() : "";
           const behavior = args.behavior === "smooth" ? "smooth" : "instant";
+          const scrollStyle = typeof args.style === "string" ? args.style.trim().toLowerCase() : "";
           const amount = Number.isFinite(Number(args.amount)) ? Number(args.amount) : null;
+          const durationMs = Number.isFinite(Number(args.durationMs))
+            ? Math.min(Math.max(Number(args.durationMs), 0), 120000)
+            : 0;
           const x = Number.isFinite(Number(args.x)) ? Number(args.x) : null;
           const y = Number.isFinite(Number(args.y)) ? Number(args.y) : null;
           const beforeURL = location.href;
@@ -344,6 +348,131 @@ extension BrowserModel {
             if (direction === "right") deltaX = step;
             if (direction === "top") deltaY = -before.y;
             if (direction === "bottom") deltaY = before.maxY - before.y;
+
+            if (durationMs > 0) {
+              if (window.__wkdomainsAutoScrollFrame) {
+                window.cancelAnimationFrame(window.__wkdomainsAutoScrollFrame);
+                window.__wkdomainsAutoScrollFrame = null;
+              }
+              if (Array.isArray(window.__wkdomainsAutoScrollTimers)) {
+                window.__wkdomainsAutoScrollTimers.forEach((timer) => window.clearTimeout(timer));
+              }
+              window.__wkdomainsAutoScrollTimers = [];
+
+              const startX = before.x;
+              const startY = before.y;
+              const targetX = Math.min(Math.max(startX + deltaX, 0), before.maxX);
+              const targetY = Math.min(Math.max(startY + deltaY, 0), before.maxY);
+              const easeInOut = (value) => value < 0.5
+                ? 2 * value * value
+                : 1 - Math.pow(-2 * value + 2, 2) / 2;
+
+              if (scrollStyle === "human" || scrollStyle === "natural") {
+                const viewport = Math.max(480, window.innerHeight || 720);
+                const distanceY = targetY - startY;
+                const sign = distanceY < 0 ? -1 : 1;
+                const chunkFactors = [0.78, 0.52, 0.92, 0.36, 1.38, 0.64, 0.88, 1.72, 0.48, 0.8, 1.18];
+                const pauseFactors = [0.85, 1.25, 1.65, 0.65, 2.15, 0.95, 1.45, 0.75, 2.65, 1.05, 1.7];
+                const rawSegments = [];
+                let currentY = startY;
+                let index = 0;
+
+                while (Math.abs(targetY - currentY) > 8 && index < 80) {
+                  const remaining = Math.abs(targetY - currentY);
+                  const chunk = Math.min(remaining, viewport * chunkFactors[index % chunkFactors.length]);
+                  const nextY = currentY + (sign * chunk);
+                  rawSegments.push({
+                    fromY: currentY,
+                    toY: nextY,
+                    moveMs: 520 + Math.round(Math.min(chunk / viewport, 1.8) * 420),
+                    pauseMs: 520 + Math.round(pauseFactors[index % pauseFactors.length] * 620)
+                  });
+                  currentY = nextY;
+                  index += 1;
+                }
+
+                const rawTotalMs = rawSegments.reduce((sum, segment) => sum + segment.moveMs + segment.pauseMs, 0);
+                const scale = rawTotalMs > 0 ? durationMs / rawTotalMs : 1;
+                let delayMs = 0;
+
+                rawSegments.forEach((segment, segmentIndex) => {
+                  const moveMs = Math.max(360, Math.round(segment.moveMs * scale));
+                  const pauseMs = Math.max(260, Math.round(segment.pauseMs * scale));
+                  const timer = window.setTimeout(() => {
+                    const segmentStartedAt = performance.now();
+                    const animateSegment = (now) => {
+                      const progress = Math.min(1, (now - segmentStartedAt) / moveMs);
+                      const eased = easeInOut(progress);
+                      window.scrollTo({
+                        left: targetX,
+                        top: segment.fromY + ((segment.toY - segment.fromY) * eased),
+                        behavior: "instant"
+                      });
+
+                      if (progress < 1) {
+                        window.__wkdomainsAutoScrollFrame = window.requestAnimationFrame(animateSegment);
+                      } else if (segmentIndex === rawSegments.length - 1) {
+                        window.__wkdomainsAutoScrollFrame = null;
+                        window.__wkdomainsAutoScrollTimers = [];
+                      }
+                    };
+
+                    window.__wkdomainsAutoScrollFrame = window.requestAnimationFrame(animateSegment);
+                  }, delayMs);
+                  window.__wkdomainsAutoScrollTimers.push(timer);
+                  delayMs += moveMs + pauseMs;
+                });
+
+                return {
+                  before,
+                  after: before,
+                  mode: "page",
+                  status: "started",
+                  style: "human",
+                  durationMs,
+                  segmentCount: rawSegments.length,
+                  target: {
+                    x: Math.round(targetX),
+                    y: Math.round(targetY)
+                  },
+                  deltaX,
+                  deltaY
+                };
+              }
+
+              const startedAt = performance.now();
+
+              const tick = (now) => {
+                const progress = Math.min(1, (now - startedAt) / durationMs);
+                const eased = easeInOut(progress);
+                window.scrollTo({
+                  left: startX + ((targetX - startX) * eased),
+                  top: startY + ((targetY - startY) * eased),
+                  behavior: "instant"
+                });
+
+                if (progress < 1) {
+                  window.__wkdomainsAutoScrollFrame = window.requestAnimationFrame(tick);
+                } else {
+                  window.__wkdomainsAutoScrollFrame = null;
+                }
+              };
+
+              window.__wkdomainsAutoScrollFrame = window.requestAnimationFrame(tick);
+              return {
+                before,
+                after: before,
+                mode: "page",
+                status: "started",
+                durationMs,
+                target: {
+                  x: Math.round(targetX),
+                  y: Math.round(targetY)
+                },
+                deltaX,
+                deltaY
+              };
+            }
 
             window.scrollBy({ left: deltaX, top: deltaY, behavior });
             return { before, after: scrollPosition(), mode: "page", deltaX, deltaY };
