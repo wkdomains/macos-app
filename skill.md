@@ -137,6 +137,8 @@ Endpoints:
 - `GET /api/v1/snapshot`: stable visible interactive element refs like `@e8`.
 - `GET /api/v1/dom`: visible text, headings, forms, fields, tables, ARIA, rectangles.
 - `GET /api/v1/layout`: overflow, clipped elements, small tap targets, outside-viewport elements, fixed/sticky overlaps.
+- `GET /api/v1/scroll`: latest human-style or manually recorded scroll trace with planned stops, visible content samples, and dwell timing.
+- `POST /api/v1/scroll/record`: start/stop/reset manual scroll recording with `{"action":"start|stop|reset"}`.
 - `GET /api/v1/element/@eN`: element x-ray: computed styles, box model, accessibility state, selector/source hints, ancestors, siblings, contrast.
 - `GET /api/v1/links`: anchors, forms, scripts, link tags.
 - `GET /api/v1/console`: page console calls, window errors, unhandled promises, CSP violations.
@@ -212,6 +214,16 @@ curl -sS -X POST http://localhost:9001/api/v1/action \
 curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
   -d '{"type":"scroll","direction":"bottom","style":"human","durationMs":45000}' | jq .
+
+curl -sS http://localhost:9001/api/v1/scroll | jq .
+
+curl -sS -X POST http://localhost:9001/api/v1/scroll/record \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"start"}' | jq .
+
+curl -sS -X POST http://localhost:9001/api/v1/scroll/record \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"stop"}' | jq .
 ```
 
 Wait conditions supported in `waitFor` or `wait`:

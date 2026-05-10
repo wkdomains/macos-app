@@ -325,6 +325,31 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/scroll/record" {
+            guard request.method == "POST" else {
+                sendError(status: .methodNotAllowed, message: "Use POST for scroll recording requests.", on: connection)
+                return
+            }
+
+            guard request.originIsAllowed else {
+                sendError(status: .badRequest, message: "Origin is not allowed.", on: connection)
+                return
+            }
+
+            BrowserDebugLogging.log("[wkdomains-debug] local-api scroll record start id=\(debugID)")
+            dataReader.recordScrollTrace(arguments: jsonBody(from: request) ?? [:]) { [weak self] result in
+                switch result {
+                case .success(let response):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api scroll record done id=\(debugID)")
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api scroll record fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
         guard request.method == "GET" else {
             sendError(status: .methodNotAllowed, message: "Only GET is supported.", on: connection)
             return
@@ -508,6 +533,21 @@ final class LocalAPIServer {
                     self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
                 case .failure(let error):
                     BrowserDebugLogging.log("[wkdomains-debug] local-api dom fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
+        if request.path == "/api/v1/scroll" || request.path == "/api/v1/scroll-trace" {
+            BrowserDebugLogging.log("[wkdomains-debug] local-api scroll trace start id=\(debugID)")
+            dataReader.readScrollTrace { [weak self] result in
+                switch result {
+                case .success(let response):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api scroll trace done id=\(debugID)")
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api scroll trace fail id=\(debugID) error=\(error.localizedDescription)")
                     self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
                 }
             }

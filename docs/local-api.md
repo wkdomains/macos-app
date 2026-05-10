@@ -244,10 +244,26 @@ curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
   -d '{"type":"scroll","direction":"bottom","style":"human","durationMs":45000}' | jq .
 
+curl -sS http://localhost:9001/api/v1/scroll | jq .
+
+curl -sS -X POST http://localhost:9001/api/v1/scroll/record \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"start"}' | jq .
+
+curl -sS -X POST http://localhost:9001/api/v1/scroll/record \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"stop"}' | jq .
+
 curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
   -d '{"type":"scroll","role":"link","name":"Pricing","block":"center"}' | jq .
 ```
+
+`GET /api/v1/scroll` returns the latest human-style or manually recorded
+scroll trace: planned section stops when available, actual samples, dominant
+visible section/headings, dwell durations, and current scroll status.
+`POST /api/v1/scroll/record` starts, stops, or resets manual scroll recording
+with `{"action":"start|stop|reset"}`.
 
 ## Viewport QA
 

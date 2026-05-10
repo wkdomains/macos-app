@@ -325,6 +325,68 @@ extension BrowserModel {
             };
           };
 
+          const visibleScrollItems = () => {
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+            const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+            const selectorList = [
+              "main > section",
+              "main > article",
+              "section",
+              "article",
+              "[data-section]",
+              "h1",
+              "h2",
+              "h3"
+            ].join(",");
+            return Array.from(document.querySelectorAll(selectorList))
+              .map((node) => {
+                if (!node || !node.getBoundingClientRect) return null;
+                const rect = node.getBoundingClientRect();
+                const style = getComputedStyle(node);
+                if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return null;
+                const visibleTop = Math.max(rect.top, 0);
+                const visibleBottom = Math.min(rect.bottom, viewportHeight);
+                const visibleLeft = Math.max(rect.left, 0);
+                const visibleRight = Math.min(rect.right, viewportWidth);
+                const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+                const visibleWidth = Math.max(0, visibleRight - visibleLeft);
+                if (visibleHeight < 24 || visibleWidth < Math.min(260, viewportWidth * 0.25)) return null;
+                const tag = node.tagName.toLowerCase();
+                const text = truncate(node.innerText || node.textContent || node.getAttribute("aria-label") || "", 220);
+                if (!text && !/^h[1-3]$/.test(tag)) return null;
+                return {
+                  tag,
+                  id: node.id || null,
+                  text,
+                  top: Math.round(rect.top),
+                  bottom: Math.round(rect.bottom),
+                  height: Math.round(rect.height),
+                  visibleHeight: Math.round(visibleHeight),
+                  visibleRatio: rect.height > 0 ? Number(Math.min(1, visibleHeight / rect.height).toFixed(3)) : 0
+                };
+              })
+              .filter(Boolean)
+              .sort((left, right) => right.visibleHeight - left.visibleHeight)
+              .slice(0, 8);
+          };
+
+          const recordScrollSample = (trace, event, extra = {}) => {
+            if (!trace) return;
+            const visible = visibleScrollItems();
+            const dominant = visible[0] || null;
+            trace.samples.push({
+              event,
+              elapsedMs: Math.round(performance.now() - trace.startedAtPerformance),
+              at: new Date().toISOString(),
+              position: scrollPosition(),
+              dominant,
+              visible,
+              ...extra
+            });
+            trace.sampleCount = trace.samples.length;
+            trace.current = trace.samples[trace.samples.length - 1] || null;
+          };
+
           const scrollPage = (element) => {
             const before = scrollPosition();
             if (element && element !== document.body && element !== document.documentElement) {
@@ -369,36 +431,197 @@ extension BrowserModel {
 
               if (scrollStyle === "human" || scrollStyle === "natural") {
                 const viewport = Math.max(480, window.innerHeight || 720);
-                const distanceY = targetY - startY;
-                const sign = distanceY < 0 ? -1 : 1;
-                const chunkFactors = [0.78, 0.52, 0.92, 0.36, 1.38, 0.64, 0.88, 1.72, 0.48, 0.8, 1.18];
-                const pauseFactors = [0.85, 1.25, 1.65, 0.65, 2.15, 0.95, 1.45, 0.75, 2.65, 1.05, 1.7];
-                const rawSegments = [];
-                let currentY = startY;
-                let index = 0;
+                const directionSign = targetY < startY ? -1 : 1;
+                const minGap = Math.round(viewport * 0.42);
+                const maxGap = Math.round(viewport * 1.35);
+                const stopSelectors = [
+                  "main > section",
+                  "main > article",
+                  "main > div",
+                  "section",
+                  "article",
+                  "[data-section]",
+                  "[id]",
+                  "h1",
+                  "h2",
+                  "h3"
+                ].join(",");
+                const headerOffset = Math.min(132, Math.max(76, Math.round(viewport * 0.14)));
+                const stopCandidates = Array.from(document.querySelectorAll(stopSelectors))
+                  .map((node) => {
+                    if (!node || !node.getBoundingClientRect) return null;
+                    const rect = node.getBoundingClientRect();
+                    const style = getComputedStyle(node);
+                    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return null;
+                    if (rect.width < Math.min(320, window.innerWidth * 0.28)) return null;
+                    if (rect.height < 36) return null;
+                    const tag = node.tagName.toLowerCase();
+                    const textLength = String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim().length;
+                    const isHeading = /^h[1-3]$/.test(tag);
+                    const isContainer = ["section", "article", "div", "main"].includes(tag);
+                    if (isContainer && rect.height < viewport * 0.28 && textLength < 80) return null;
+                    return {
+                      y: Math.min(Math.max(Math.round(window.scrollY + rect.top - headerOffset), 0), before.maxY),
+                      tag,
+                      textLength,
+                      height: Math.round(rect.height),
+                      heading: isHeading,
+                      score: (isHeading ? 80 : 0) + Math.min(120, Math.round(rect.height / 12)) + Math.min(80, Math.round(textLength / 28))
+                    };
+                  })
+                  .filter(Boolean)
+                  .filter((candidate) => directionSign > 0
+                    ? candidate.y > startY + 24 && candidate.y < targetY - 24
+                    : candidate.y < startY - 24 && candidate.y > targetY + 24)
+                  .sort((left, right) => directionSign > 0 ? left.y - right.y : right.y - left.y);
 
-                while (Math.abs(targetY - currentY) > 8 && index < 80) {
-                  const remaining = Math.abs(targetY - currentY);
-                  const chunk = Math.min(remaining, viewport * chunkFactors[index % chunkFactors.length]);
-                  const nextY = currentY + (sign * chunk);
+                const curiosityScore = (candidate, index) => {
+                  const textWeight = Math.min(1, (candidate.textLength || 0) / 900);
+                  const heightWeight = Math.min(1, (candidate.height || 0) / (viewport * 1.4));
+                  const rhythm = ((index * 37) % 100) / 100;
+                  return (textWeight * 0.42) + (heightWeight * 0.38) + (rhythm * 0.2);
+                };
+
+                const semanticStops = [];
+                stopCandidates.forEach((candidate, candidateIndex) => {
+                  const previous = semanticStops[semanticStops.length - 1];
+                  const previousWasHeading = previous?.heading === true;
+                  const denseHeading = candidate.heading && previousWasHeading && Math.abs(candidate.y - previous.y) < viewport * 0.95;
+                  if (denseHeading && curiosityScore(candidate, candidateIndex) < 0.72) return;
+
+                  if (!previous) {
+                    semanticStops.push(candidate);
+                    return;
+                  }
+
+                  const gap = Math.abs(candidate.y - previous.y);
+                  if (gap < minGap) {
+                    if (candidate.score > previous.score) semanticStops[semanticStops.length - 1] = candidate;
+                    return;
+                  }
+
+                  if (gap > maxGap * 1.7) {
+                    const fillerCount = Math.floor(gap / maxGap);
+                    for (let fillerIndex = 1; fillerIndex < fillerCount; fillerIndex += 1) {
+                      semanticStops.push({
+                        y: Math.round(previous.y + (directionSign * maxGap * fillerIndex)),
+                        tag: "viewport",
+                        textLength: 0,
+                        height: viewport,
+                        heading: false,
+                        filler: true,
+                        score: 0
+                      });
+                    }
+                  }
+
+                  semanticStops.push(candidate);
+                });
+
+                const stopYs = [startY, ...semanticStops.map((candidate) => candidate.y), targetY]
+                  .filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > 12);
+                const rawSegments = [];
+
+                for (let index = 1; index < stopYs.length; index += 1) {
+                  const fromY = stopYs[index - 1];
+                  const toY = stopYs[index];
+                  const distance = Math.abs(toY - fromY);
+                  if (distance < 8) continue;
+                  const stop = semanticStops[index - 1] || null;
+                  const isLargeSkip = distance > viewport * 1.15;
+                  const isHeadingStop = stop?.heading === true;
+                  const isFiller = stop?.filler === true;
+                  const stopKind = isFiller ? "filler" : isHeadingStop ? "heading" : isLargeSkip ? "section-skip" : "section";
+                  const interest = stop ? curiosityScore(stop, index) : 0;
+                  const curiosityPause = !isFiller && interest > 0.72;
                   rawSegments.push({
-                    fromY: currentY,
-                    toY: nextY,
-                    moveMs: 520 + Math.round(Math.min(chunk / viewport, 1.8) * 420),
-                    pauseMs: 520 + Math.round(pauseFactors[index % pauseFactors.length] * 620)
+                    fromY,
+                    toY,
+                    moveMs: 420 + Math.round(Math.min(distance / viewport, 1.8) * 420),
+                    pauseMs: isFiller
+                      ? 180
+                      : curiosityPause
+                        ? 1350 + Math.min(900, Math.round((stop?.textLength || 260) / 5))
+                        : isLargeSkip
+                          ? 420
+                          : isHeadingStop
+                            ? 780
+                            : 560 + Math.min(520, Math.round((stop?.textLength || 240) / 8)),
+                    stopKind,
+                    interest: Number(interest.toFixed(3)),
+                    curiosityPause,
+                    stop: stop ? {
+                      tag: stop.tag,
+                      y: stop.y,
+                      height: stop.height,
+                      heading: stop.heading,
+                      filler: stop.filler === true
+                    } : null
                   });
-                  currentY = nextY;
-                  index += 1;
                 }
 
                 const rawTotalMs = rawSegments.reduce((sum, segment) => sum + segment.moveMs + segment.pauseMs, 0);
                 const scale = rawTotalMs > 0 ? durationMs / rawTotalMs : 1;
+                const moveScale = Math.min(1.18, Math.max(0.58, scale));
+                const pauseScale = Math.min(1.12, Math.max(0.55, scale));
+                const humanMoveMs = (segment) => Math.max(320, Math.round(segment.moveMs * moveScale));
+                const humanPauseMs = (segment) => {
+                  const minimum = segment.stopKind === "filler"
+                    ? 120
+                    : segment.curiosityPause
+                      ? 920
+                      : segment.stopKind === "heading"
+                        ? 420
+                        : segment.stopKind === "section-skip"
+                          ? 280
+                          : 360;
+                  return Math.max(minimum, Math.round(segment.pauseMs * pauseScale));
+                };
                 let delayMs = 0;
+                const trace = {
+                  id: `scroll-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                  status: "running",
+                  style: "human",
+                  url: location.href,
+                  title: document.title,
+                  startedAt: new Date().toISOString(),
+                  startedAtPerformance: performance.now(),
+                  requested: {
+                    direction: direction || null,
+                    durationMs,
+                    startY: Math.round(startY),
+                    targetY: Math.round(targetY)
+                  },
+                  plan: rawSegments.map((segment, segmentIndex) => ({
+                    index: segmentIndex,
+                    fromY: Math.round(segment.fromY),
+                    toY: Math.round(segment.toY),
+                    distance: Math.round(Math.abs(segment.toY - segment.fromY)),
+                    moveMs: humanMoveMs(segment),
+                    pauseMs: humanPauseMs(segment),
+                    stopKind: segment.stopKind,
+                    interest: segment.interest,
+                    curiosityPause: segment.curiosityPause,
+                    stop: segment.stop
+                  })),
+                  samples: [],
+                  sampleCount: 0,
+                  current: null
+                };
+                window.__wkdomainsScrollTrace = trace;
+                recordScrollSample(trace, "start", { plannedStop: null });
 
                 rawSegments.forEach((segment, segmentIndex) => {
-                  const moveMs = Math.max(360, Math.round(segment.moveMs * scale));
-                  const pauseMs = Math.max(260, Math.round(segment.pauseMs * scale));
+                  const moveMs = humanMoveMs(segment);
+                  const pauseMs = humanPauseMs(segment);
                   const timer = window.setTimeout(() => {
+                    recordScrollSample(trace, "move-start", {
+                      segmentIndex,
+                      plannedStop: segment.stop,
+                      plannedPauseMs: pauseMs,
+                      interest: segment.interest,
+                      curiosityPause: segment.curiosityPause
+                    });
                     const segmentStartedAt = performance.now();
                     const animateSegment = (now) => {
                       const progress = Math.min(1, (now - segmentStartedAt) / moveMs);
@@ -411,9 +634,29 @@ extension BrowserModel {
 
                       if (progress < 1) {
                         window.__wkdomainsAutoScrollFrame = window.requestAnimationFrame(animateSegment);
-                      } else if (segmentIndex === rawSegments.length - 1) {
-                        window.__wkdomainsAutoScrollFrame = null;
-                        window.__wkdomainsAutoScrollTimers = [];
+                      } else {
+                        recordScrollSample(trace, "pause-start", {
+                          segmentIndex,
+                          plannedStop: segment.stop,
+                          plannedPauseMs: pauseMs,
+                          moveMs,
+                          interest: segment.interest,
+                          curiosityPause: segment.curiosityPause
+                        });
+                        if (segmentIndex === rawSegments.length - 1) {
+                          const doneTimer = window.setTimeout(() => {
+                            trace.status = "completed";
+                            trace.completedAt = new Date().toISOString();
+                            trace.completedElapsedMs = Math.round(performance.now() - trace.startedAtPerformance);
+                            recordScrollSample(trace, "completed", {
+                              segmentIndex,
+                              plannedStop: segment.stop
+                            });
+                            window.__wkdomainsAutoScrollFrame = null;
+                            window.__wkdomainsAutoScrollTimers = [];
+                          }, pauseMs);
+                          window.__wkdomainsAutoScrollTimers.push(doneTimer);
+                        }
                       }
                     };
 
@@ -431,6 +674,8 @@ extension BrowserModel {
                   style: "human",
                   durationMs,
                   segmentCount: rawSegments.length,
+                  stopCount: semanticStops.length,
+                  stops: rawSegments.slice(0, 24).map((segment) => segment.stop).filter(Boolean),
                   target: {
                     x: Math.round(targetX),
                     y: Math.round(targetY)

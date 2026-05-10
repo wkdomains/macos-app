@@ -87,6 +87,255 @@ extension WebsiteDataReader {
         evaluateJSONScript(BrowserModel.linksInspectionScript, label: "links", completion: completion)
     }
 
+    func readScrollTrace(completion: @escaping (Result<Any, Error>) -> Void) {
+        let script = """
+        JSON.stringify((() => {
+          const trace = window.__wkdomainsScrollTrace || null;
+          const position = (() => {
+            const scrolling = document.scrollingElement || document.documentElement;
+            return {
+              x: Math.round(window.scrollX || scrolling.scrollLeft || 0),
+              y: Math.round(window.scrollY || scrolling.scrollTop || 0),
+              maxX: Math.max(0, Math.round(scrolling.scrollWidth - window.innerWidth)),
+              maxY: Math.max(0, Math.round(scrolling.scrollHeight - window.innerHeight)),
+              viewportWidth: window.innerWidth,
+              viewportHeight: window.innerHeight,
+              documentWidth: scrolling.scrollWidth,
+              documentHeight: scrolling.scrollHeight
+            };
+          })();
+
+          if (!trace) {
+            return {
+              ok: true,
+              hasTrace: false,
+              url: location.href,
+              title: document.title,
+              position
+            };
+          }
+
+          const samples = Array.isArray(trace.samples) ? trace.samples : [];
+          const plan = Array.isArray(trace.plan) ? trace.plan : [];
+          const dwell = samples
+            .filter((sample) => sample.event === "pause-start" || sample.event === "completed")
+            .map((sample, index) => {
+              const next = samples.find((candidate) => candidate.elapsedMs > sample.elapsedMs && (
+                candidate.event === "move-start" || candidate.event === "completed"
+              ));
+              return {
+                index,
+                event: sample.event,
+                elapsedMs: sample.elapsedMs,
+                durationMs: next ? Math.max(0, next.elapsedMs - sample.elapsedMs) : (sample.plannedPauseMs || 0),
+                position: sample.position,
+                dominant: sample.dominant,
+                visible: sample.visible,
+                interest: sample.interest || null,
+                curiosityPause: sample.curiosityPause === true,
+                plannedStop: sample.plannedStop || null
+              };
+            });
+
+          return {
+            ok: true,
+            hasTrace: true,
+            url: location.href,
+            title: document.title,
+            position,
+            trace: {
+              id: trace.id,
+              status: trace.status || "unknown",
+              style: trace.style || null,
+              startedAt: trace.startedAt || null,
+              completedAt: trace.completedAt || null,
+              completedElapsedMs: trace.completedElapsedMs || null,
+              requested: trace.requested || null,
+              plan,
+              planCount: plan.length,
+              sampleCount: samples.length,
+              current: trace.current || null,
+              samples,
+              dwell
+            }
+          };
+        })())
+        """
+        evaluateJSONScript(script, label: "scroll-trace", completion: completion)
+    }
+
+    func recordScrollTrace(arguments: [String: Any], completion: @escaping (Result<Any, Error>) -> Void) {
+        let action = (arguments["action"] as? String ?? "start").lowercased()
+        let script = """
+        JSON.stringify((() => {
+          const action = \(Self.jsonLiteral(action));
+          const scrolling = document.scrollingElement || document.documentElement;
+
+          const scrollPosition = () => ({
+            x: Math.round(window.scrollX || scrolling.scrollLeft || 0),
+            y: Math.round(window.scrollY || scrolling.scrollTop || 0),
+            maxX: Math.max(0, Math.round(scrolling.scrollWidth - window.innerWidth)),
+            maxY: Math.max(0, Math.round(scrolling.scrollHeight - window.innerHeight)),
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+            documentWidth: scrolling.scrollWidth,
+            documentHeight: scrolling.scrollHeight
+          });
+
+          const visibleScrollItems = () => {
+            const selectors = [
+              "main > section",
+              "main > article",
+              "section",
+              "article",
+              "[data-section]",
+              "h1",
+              "h2",
+              "h3"
+            ].join(",");
+            return Array.from(document.querySelectorAll(selectors))
+              .map((node) => {
+                if (!node || !node.getBoundingClientRect) return null;
+                const rect = node.getBoundingClientRect();
+                const style = getComputedStyle(node);
+                if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return null;
+                const visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
+                if (visibleHeight < 24 || rect.width < Math.min(260, window.innerWidth * 0.24)) return null;
+                const text = String(node.innerText || node.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 220);
+                return {
+                  tag: node.tagName.toLowerCase(),
+                  id: node.id || null,
+                  text,
+                  top: Math.round(rect.top),
+                  bottom: Math.round(rect.bottom),
+                  height: Math.round(rect.height),
+                  visibleHeight: Math.round(visibleHeight),
+                  visibleRatio: rect.height > 0 ? Number(Math.min(1, visibleHeight / rect.height).toFixed(3)) : 0
+                };
+              })
+              .filter(Boolean)
+              .sort((left, right) => right.visibleHeight - left.visibleHeight)
+              .slice(0, 8);
+          };
+
+          const recordSample = (trace, event, extra = {}) => {
+            const visible = visibleScrollItems();
+            const sample = {
+              event,
+              elapsedMs: Math.round(performance.now() - trace.startedAtPerformance),
+              at: new Date().toISOString(),
+              position: scrollPosition(),
+              dominant: visible[0] || null,
+              visible,
+              ...extra
+            };
+            trace.samples.push(sample);
+            trace.sampleCount = trace.samples.length;
+            trace.current = sample;
+            return sample;
+          };
+
+          const removeExistingRecorder = () => {
+            const recorder = window.__wkdomainsManualScrollRecorder || null;
+            if (!recorder) return;
+            window.removeEventListener("scroll", recorder.onScroll, { passive: true });
+            if (recorder.idleTimer) window.clearTimeout(recorder.idleTimer);
+            if (recorder.throttleTimer) window.clearTimeout(recorder.throttleTimer);
+            window.__wkdomainsManualScrollRecorder = null;
+          };
+
+          if (action === "stop") {
+            const recorder = window.__wkdomainsManualScrollRecorder || null;
+            const trace = window.__wkdomainsScrollTrace || recorder?.trace || null;
+            removeExistingRecorder();
+            if (trace && trace.status !== "completed") {
+              trace.status = "completed";
+              trace.completedAt = new Date().toISOString();
+              trace.completedElapsedMs = Math.round(performance.now() - trace.startedAtPerformance);
+              recordSample(trace, "completed", { source: "manual-stop" });
+            }
+            return { ok: true, action, hasTrace: Boolean(trace), trace };
+          }
+
+          if (action === "reset") {
+            removeExistingRecorder();
+            window.__wkdomainsScrollTrace = null;
+            return { ok: true, action, hasTrace: false };
+          }
+
+          removeExistingRecorder();
+          const trace = {
+            id: `manual-scroll-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            status: "recording",
+            style: "manual",
+            source: "human",
+            url: location.href,
+            title: document.title,
+            startedAt: new Date().toISOString(),
+            startedAtPerformance: performance.now(),
+            requested: {
+              action: "record",
+              startY: scrollPosition().y
+            },
+            plan: [],
+            samples: [],
+            sampleCount: 0,
+            current: null
+          };
+          window.__wkdomainsScrollTrace = trace;
+          recordSample(trace, "start", { source: "manual-start" });
+
+          const recorder = {
+            trace,
+            moving: false,
+            idleTimer: null,
+            throttleTimer: null,
+            lastSampleY: scrollPosition().y,
+            lastSampleAt: performance.now(),
+            onScroll: () => {
+              const now = performance.now();
+              const position = scrollPosition();
+              const moved = Math.abs(position.y - recorder.lastSampleY);
+              if (!recorder.moving) {
+                recorder.moving = true;
+                recordSample(trace, "move-start", { source: "manual", deltaY: Math.round(position.y - recorder.lastSampleY) });
+              }
+              if (moved >= 80 && now - recorder.lastSampleAt >= 240) {
+                recorder.lastSampleY = position.y;
+                recorder.lastSampleAt = now;
+                recordSample(trace, "scroll", { source: "manual" });
+              }
+              if (recorder.idleTimer) window.clearTimeout(recorder.idleTimer);
+              recorder.idleTimer = window.setTimeout(() => {
+                recorder.moving = false;
+                recorder.lastSampleY = scrollPosition().y;
+                recorder.lastSampleAt = performance.now();
+                recordSample(trace, "pause-start", { source: "manual-idle" });
+              }, 650);
+            }
+          };
+          window.__wkdomainsManualScrollRecorder = recorder;
+          window.addEventListener("scroll", recorder.onScroll, { passive: true });
+
+          return {
+            ok: true,
+            action: "start",
+            hasTrace: true,
+            trace: {
+              id: trace.id,
+              status: trace.status,
+              style: trace.style,
+              startedAt: trace.startedAt,
+              url: trace.url,
+              title: trace.title,
+              current: trace.current
+            }
+          };
+        })())
+        """
+        evaluateJSONScript(script, label: "scroll-record", completion: completion)
+    }
+
     func readResources(completion: @escaping (DomainResourcesResponse) -> Void) {
         guard let host = browser.webView.url?.host?.lowercased() else {
             completion(DomainResourcesResponse(domain: nil, pageHost: nil, resources: []))
@@ -338,5 +587,15 @@ extension WebsiteDataReader {
         }
 
         return NSNull()
+    }
+
+    static func jsonLiteral(_ value: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]),
+              let output = String(data: data, encoding: .utf8)
+        else {
+            return "\"\""
+        }
+
+        return output
     }
 }
