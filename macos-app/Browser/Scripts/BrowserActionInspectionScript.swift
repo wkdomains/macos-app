@@ -518,7 +518,55 @@ extension BrowserModel {
                   semanticStops.push(candidate);
                 });
 
-                const stopYs = [startY, ...semanticStops.map((candidate) => candidate.y), targetY]
+                const spacedStops = [];
+                let anchorY = startY;
+                semanticStops.forEach((candidate) => {
+                  const gap = Math.abs(candidate.y - anchorY);
+                  if (gap > maxGap * 1.45) {
+                    const fillerCount = Math.floor(gap / maxGap);
+                    for (let fillerIndex = 1; fillerIndex < fillerCount; fillerIndex += 1) {
+                      const fillerY = Math.round(anchorY + (directionSign * maxGap * fillerIndex));
+                      if (directionSign > 0 ? fillerY < candidate.y - minGap : fillerY > candidate.y + minGap) {
+                        spacedStops.push({
+                          y: fillerY,
+                          tag: "viewport",
+                          textLength: 0,
+                          height: viewport,
+                          heading: false,
+                          filler: true,
+                          score: 0
+                        });
+                      }
+                    }
+                  }
+                  spacedStops.push(candidate);
+                  anchorY = candidate.y;
+                });
+
+                const finalGap = Math.abs(targetY - anchorY);
+                if (finalGap > maxGap * 1.25) {
+                  const fillerCount = Math.floor(finalGap / maxGap);
+                  for (let fillerIndex = 1; fillerIndex <= fillerCount; fillerIndex += 1) {
+                    const fillerY = Math.round(anchorY + (directionSign * maxGap * fillerIndex));
+                    if (directionSign > 0 ? fillerY < targetY - minGap : fillerY > targetY + minGap) {
+                      spacedStops.push({
+                        y: fillerY,
+                        tag: "viewport",
+                        textLength: 0,
+                        height: viewport,
+                        heading: false,
+                        filler: true,
+                        score: 0
+                      });
+                    }
+                  }
+                }
+
+                const effectiveStops = spacedStops
+                  .sort((left, right) => directionSign > 0 ? left.y - right.y : right.y - left.y)
+                  .filter((candidate, index, values) => index === 0 || Math.abs(candidate.y - values[index - 1].y) > 12);
+
+                const stopYs = [startY, ...effectiveStops.map((candidate) => candidate.y), targetY]
                   .filter((value, index, values) => index === 0 || Math.abs(value - values[index - 1]) > 12);
                 const rawSegments = [];
 
@@ -527,7 +575,7 @@ extension BrowserModel {
                   const toY = stopYs[index];
                   const distance = Math.abs(toY - fromY);
                   if (distance < 8) continue;
-                  const stop = semanticStops[index - 1] || null;
+                  const stop = effectiveStops[index - 1] || null;
                   const isLargeSkip = distance > viewport * 1.15;
                   const isHeadingStop = stop?.heading === true;
                   const isFiller = stop?.filler === true;
@@ -674,7 +722,7 @@ extension BrowserModel {
                   style: "human",
                   durationMs,
                   segmentCount: rawSegments.length,
-                  stopCount: semanticStops.length,
+                  stopCount: effectiveStops.length,
                   stops: rawSegments.slice(0, 24).map((segment) => segment.stop).filter(Boolean),
                   target: {
                     x: Math.round(targetX),
