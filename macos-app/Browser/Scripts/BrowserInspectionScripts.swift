@@ -1015,7 +1015,11 @@ extension BrowserModel {
             }
             const wrappedLabel = element.closest("label");
             if (wrappedLabel) return truncate(wrappedLabel.innerText || wrappedLabel.textContent);
-            return truncate(element.innerText || element.textContent || element.getAttribute("placeholder") || element.getAttribute("title") || "");
+            const tag = element.tagName.toLowerCase();
+            const type = (element.getAttribute("type") || "").toLowerCase();
+            if (tag === "input" && ["button", "submit", "reset"].includes(type) && element.value) return truncate(element.value);
+            const imageAlt = element.matches("img") ? element.getAttribute("alt") : element.querySelector("img[alt]")?.getAttribute("alt");
+            return truncate(element.innerText || element.textContent || element.getAttribute("placeholder") || element.getAttribute("title") || imageAlt || element.getAttribute("name") || "");
           };
 
           const roleFor = (element) => {
@@ -1052,6 +1056,8 @@ extension BrowserModel {
           };
 
           const normalized = (value) => String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
+          const wordsFor = (value) => normalized(value).replace(/[^a-z0-9]+/g, " ").trim().split(/\\s+/).filter(Boolean);
+
           const matchesText = (candidate, expected) => {
             const candidateText = normalized(candidate);
             const expectedText = normalized(expected);
@@ -1059,15 +1065,72 @@ extension BrowserModel {
             return exact ? candidateText === expectedText : candidateText.includes(expectedText);
           };
 
+          const textScore = (candidate, expected) => {
+            const candidateText = normalized(candidate);
+            const expectedText = normalized(expected);
+            if (!expectedText) return 0;
+            if (!candidateText) return -20;
+            if (candidateText === expectedText) return 120;
+            if (candidateText.includes(expectedText)) return 95;
+            if (expectedText.includes(candidateText)) return 70;
+            if (candidateText.startsWith(expectedText) || expectedText.startsWith(candidateText)) return 68;
+
+            const candidateWords = wordsFor(candidateText);
+            const expectedWords = wordsFor(expectedText);
+            if (expectedWords.length > 0 && expectedWords.every((word) => candidateWords.includes(word))) return 72;
+            const overlap = expectedWords.filter((word) => candidateWords.includes(word)).length;
+            const overlapScore = expectedWords.length > 0 ? Math.round((overlap / expectedWords.length) * 55) : 0;
+
+            const left = candidateText.slice(0, 80);
+            const right = expectedText.slice(0, 80);
+            const rows = Array.from({ length: right.length + 1 }, (_, index) => index);
+            for (let i = 1; i <= left.length; i += 1) {
+              let previous = rows[0];
+              rows[0] = i;
+              for (let j = 1; j <= right.length; j += 1) {
+                const saved = rows[j];
+                rows[j] = Math.min(
+                  rows[j] + 1,
+                  rows[j - 1] + 1,
+                  previous + (left[i - 1] === right[j - 1] ? 0 : 1)
+                );
+                previous = saved;
+              }
+            }
+            const distance = rows[right.length] || 0;
+            const maxLength = Math.max(left.length, right.length, 1);
+            const similarity = Math.round((1 - distance / maxLength) * 45);
+            return Math.max(overlapScore, similarity);
+          };
+
+          const nameValuesFor = (element) => [
+            labelFor(element),
+            element.innerText || element.textContent || "",
+            element.getAttribute("placeholder") || "",
+            element.getAttribute("title") || "",
+            element.matches("input, textarea, select") ? element.value : "",
+            element.getAttribute("name") || "",
+            element.id || ""
+          ];
+
+          const shouldRedactElementValue = (element) => {
+            if (!element || !element.matches("input, textarea, select")) return false;
+            const type = (element.getAttribute("type") || "").toLowerCase();
+            if (["password", "hidden"].includes(type)) return true;
+            const haystack = [
+              element.id,
+              element.getAttribute("name"),
+              element.getAttribute("autocomplete"),
+              element.getAttribute("aria-label"),
+              element.getAttribute("placeholder"),
+              labelFor(element)
+            ].join(" ");
+            return /(password|passcode|otp|one[-\\s]?time|2fa|mfa|code|token|secret|session|auth)/i.test(haystack);
+          };
+
           const matchesName = (element, expected) => {
             if (!expected) return true;
-            const values = [
-              labelFor(element),
-              element.innerText || element.textContent || "",
-              element.getAttribute("placeholder") || "",
-              element.getAttribute("title") || ""
-            ];
-            return values.some((value) => matchesText(value, expected));
+            return nameValuesFor(element).some((value) => matchesText(value, expected));
           };
 
           const summaryFor = (element) => {
@@ -1080,7 +1143,7 @@ extension BrowserModel {
               role: roleFor(element),
               label: labelFor(element),
               text: truncate(element.innerText || element.textContent || "", 120),
-              value: element.matches("input, textarea, select") ? truncate(element.value, 80) : null,
+              value: element.matches("input, textarea, select") ? (shouldRedactElementValue(element) && element.value ? "[redacted]" : truncate(element.value, 80)) : null,
               disabled: !!(element.disabled || element.getAttribute("aria-disabled") === "true"),
               rect: rectFor(element)
             };
@@ -1136,16 +1199,48 @@ extension BrowserModel {
               "[role='searchbox']"
             ].join(",");
 
-            const candidates = Array.from(document.querySelectorAll(selectorList))
-              .filter(isVisible)
-              .filter((element) => !role || roleFor(element) === role)
+            const allCandidates = Array.from(document.querySelectorAll(selectorList)).filter(isVisible);
+            const rankedCandidates = allCandidates
+              .map((element) => {
+                const elementRole = roleFor(element);
+                const roleScore = !role ? 0 : (elementRole === role ? 40 : -45);
+                const bestNameScore = expectedName
+                  ? Math.max(...nameValuesFor(element).map((value) => textScore(value, expectedName)))
+                  : 0;
+                const textCandidate = element.innerText || element.textContent || labelFor(element);
+                const bestTextScore = expectedText ? textScore(textCandidate, expectedText) : 0;
+                const disabledPenalty = (element.disabled || element.getAttribute("aria-disabled") === "true") ? 15 : 0;
+                return {
+                  element,
+                  score: roleScore + bestNameScore + bestTextScore - disabledPenalty,
+                  roleMatched: role ? elementRole === role : null,
+                  nameMatched: expectedName ? matchesName(element, expectedName) : null,
+                  textMatched: expectedText ? matchesText(textCandidate, expectedText) : null
+                };
+              })
+              .sort((left, right) => right.score - left.score);
+
+            const candidates = rankedCandidates
+              .filter((candidate) => candidate.roleMatched !== false)
+              .map((candidate) => candidate.element)
               .filter((element) => matchesName(element, expectedName))
               .filter((element) => !expectedText || matchesText(element.innerText || element.textContent || labelFor(element), expectedText));
 
-            if (candidates.length === 0) return { element: null, candidates: [] };
+            const nearMatches = rankedCandidates.slice(0, 10).map((candidate) => ({
+              ...summaryFor(candidate.element),
+              score: candidate.score,
+              matched: {
+                role: candidate.roleMatched,
+                name: candidate.nameMatched,
+                text: candidate.textMatched
+              }
+            }));
+
+            if (candidates.length === 0) return { element: null, candidates: nearMatches, nearMatches };
             return {
               element: candidates[0],
-              candidates: candidates.slice(0, 8).map(summaryFor)
+              candidates: candidates.slice(0, 8).map(summaryFor),
+              nearMatches
             };
           };
 
@@ -1156,6 +1251,7 @@ extension BrowserModel {
           if (!target || target === document.body || target === document.documentElement) {
             const failure = fail("Target element was not found. Provide ref, selector, text/name/role, or active:true for press.");
             if (byQuery) failure.candidates = byQuery.candidates;
+            if (byQuery?.nearMatches) failure.nearMatches = byQuery.nearMatches;
             return failure;
           }
 
@@ -1282,6 +1378,7 @@ extension BrowserModel {
             role: role || null,
             targetStrategy: byRef ? "ref" : bySelector ? "selector" : byQuery?.element ? "query" : usesActiveElement ? "active" : null,
             candidates: byQuery?.candidates || [],
+            nearMatches: byQuery?.nearMatches || [],
             beforeURL,
             url: location.href,
             target: summaryFor(target),

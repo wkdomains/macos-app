@@ -171,7 +171,7 @@ Prefer user-facing targets over selectors when possible:
 - `{"role":"link","name":"Sign in"}`
 - `{"text":"Sign out","exact":true}`
 
-`exact` defaults to `true`; set `exact:false` for case-insensitive contains matching. Action responses include `targetStrategy`, `role`, `name`, `text`, and nearby `candidates` when useful.
+`exact` defaults to `true`; set `exact:false` for case-insensitive contains matching. Action responses include `targetStrategy`, `role`, `name`, `text`, and nearby `candidates` when useful. Failed query actions include ranked `nearMatches` with role/name/text match flags; use those labels for the next action instead of guessing selectors. Sensitive input values such as passwords, OTPs, tokens, and auth codes are redacted in action summaries.
 
 Supported actions:
 

@@ -220,6 +220,11 @@ Prefer `role` plus `name` for controls when possible because it matches how a
 user and assistive technology find the element. Set `exact:false` to use
 contains matching instead of exact matching.
 
+When a query target is not found, the response includes ranked `nearMatches`
+with each candidate's label, visible text, role, rectangle, score, and
+role/name/text match flags. Sensitive input values such as passwords, OTPs,
+tokens, and auth codes are redacted in action summaries.
+
 Useful wait fields are `url`, `urlContains`, `titleContains`, `readyState`,
 `text`, `textIncludes`, `selector`, `selectorGone`, `visible`, `xhr`, and
 `timeoutMs`.
