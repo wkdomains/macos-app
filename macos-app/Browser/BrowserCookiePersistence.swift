@@ -555,15 +555,21 @@ final class BrowserCookiePersistence {
         _ currentCookies: [HTTPCookie],
         preserving existingCookies: [HTTPCookie]
     ) -> [HTTPCookie] {
-        var cookiesByKey = Dictionary(
-            uniqueKeysWithValues: existingCookies.map { (cookieKey($0), $0) }
-        )
+        var cookiesByKey: [CookieKey: HTTPCookie] = [:]
+
+        for cookie in existingCookies {
+            cookiesByKey[cookieKey(cookie)] = cookie
+        }
 
         for cookie in currentCookies {
             cookiesByKey[cookieKey(cookie)] = cookie
         }
 
-        return cookiesByKey.values.sorted { lhs, rhs in
+        return sortedCookies(Array(cookiesByKey.values))
+    }
+
+    nonisolated private static func sortedCookies(_ cookies: [HTTPCookie]) -> [HTTPCookie] {
+        return cookies.sorted { lhs, rhs in
             let leftKey = cookieKey(lhs)
             let rightKey = cookieKey(rhs)
             return (leftKey.domain, leftKey.name, leftKey.path) < (rightKey.domain, rightKey.name, rightKey.path)
@@ -601,7 +607,13 @@ final class BrowserCookiePersistence {
     }
 
     nonisolated private static func usableCookies(from cookies: [HTTPCookie]) -> [HTTPCookie] {
-        cookies.filter { !$0.isExpired }
+        var cookiesByKey: [CookieKey: HTTPCookie] = [:]
+
+        for cookie in cookies where !cookie.isExpired {
+            cookiesByKey[cookieKey(cookie)] = cookie
+        }
+
+        return sortedCookies(Array(cookiesByKey.values))
     }
 
     nonisolated private static func cookieKey(_ cookie: HTTPCookie) -> CookieKey {
