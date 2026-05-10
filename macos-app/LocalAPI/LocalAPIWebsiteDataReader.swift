@@ -8,164 +8,15 @@ import Foundation
 
 @MainActor
 final class WebsiteDataReader {
-    private let browser: BrowserModel
-    private var viewportCaptureSessions: [String: WebKitViewportCaptureSession] = [:]
+    let browser: BrowserModel
+    var viewportCaptureSessions: [String: WebKitViewportCaptureSession] = [:]
 
     init(browser: BrowserModel) {
         self.browser = browser
     }
 
-    func readStorage(for domain: RequestedDomain, completion: @escaping (DomainStorageResponse) -> Void) {
-        let dataStore = browser.webView.configuration.websiteDataStore
-        dataStore.httpCookieStore.getAllCookies { [weak self] cookies in
-            Task { @MainActor in
-                guard let self else { return }
-
-                let matchingCookies = cookies
-                    .filter { Self.cookie($0, matches: domain.host) }
-                    .map(CookieResponse.init(cookie:))
-                    .sorted { left, right in
-                        if left.domain == right.domain {
-                            return left.name < right.name
-                        }
-
-                        return left.domain < right.domain
-                    }
-
-                var localStorageReader: LocalStorageReader?
-                localStorageReader = LocalStorageReader(dataStore: dataStore)
-                localStorageReader?.readLocalStorage(for: domain.localStorageOrigins) { localStorageOrigins in
-                    _ = localStorageReader
-                    self.readActiveSessionStorage(for: domain) { sessionStorageOrigins in
-                        completion(
-                            DomainStorageResponse(
-                                domain: domain.host,
-                                cookies: matchingCookies,
-                                localStorage: localStorageOrigins,
-                                sessionStorage: sessionStorageOrigins
-                            )
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    func readStorageForCurrentPage(completion: @escaping (Result<DomainStorageResponse, Error>) -> Void) {
-        do {
-            let domain = try currentPageDomain()
-            readStorage(for: domain) { response in
-                completion(.success(response))
-            }
-        } catch {
-            completion(.failure(error))
-        }
-    }
-
-    func readXHRRequests(for domain: RequestedDomain) -> XHRRequestsResponse {
-        let requests = browser.sortedXHRRequests(for: domain.host)
-            .map(XHRRequestResponse.init(record:))
-
-        return XHRRequestsResponse(
-            hostname: domain.host,
-            activePageURL: browser.webView.url?.absoluteString,
-            activePageHost: browser.webView.url?.host,
-            requests: requests
-        )
-    }
-
-    func readXHRRequestsForCurrentPage() -> Result<XHRRequestsResponse, Error> {
-        do {
-            return .success(readXHRRequests(for: try currentPageDomain()))
-        } catch {
-            return .failure(error)
-        }
-    }
-
-    func replayXHRRequestForCurrentPage(
-        at index: Int,
-        completion: @escaping (Result<XHRReplayResponse, Error>) -> Void
-    ) {
-        do {
-            let domain = try currentPageDomain()
-            let requests = readXHRRequests(for: domain).requests
-
-            guard requests.indices.contains(index) else {
-                throw InspectionError.xhrIndexOutOfRange(index)
-            }
-
-            let xhr = requests[index]
-            guard let url = URL(string: xhr.url) else {
-                throw InspectionError.invalidXHRURL
-            }
-
-            let dataStore = browser.webView.configuration.websiteDataStore
-            dataStore.httpCookieStore.getAllCookies { cookies in
-                Task { @MainActor in
-                    let cookieHeader = Self.cookieHeader(for: url, from: cookies)
-
-                    do {
-                        let response = try await Self.fetchXHRJSON(
-                            xhr: xhr,
-                            url: url,
-                            cookieHeader: cookieHeader
-                        )
-                        completion(.success(response))
-                    } catch {
-                        completion(.failure(error))
-                    }
-                }
-            }
-        } catch {
-            completion(.failure(error))
-        }
-    }
-
     func readScreenshot(completion: @escaping (Result<Data, Error>) -> Void) {
         browser.currentVisiblePageScreenshotPNG(completion: completion)
-    }
-
-    func readViewport() -> [String: Any] {
-        let page = readPage()
-        return [
-            "mode": page.viewportMode,
-            "width": page.viewportWidth,
-            "height": page.viewportHeight,
-            "availableModes": BrowserViewportMode.allCases.map { mode in
-                [
-                    "mode": mode.rawValue,
-                    "width": Self.json(mode.width.map { Int($0.rounded()) }),
-                    "label": mode.accessibilityLabel
-                ] as [String: Any]
-            },
-            "note": "The visible browser supports desktop, mobileLarge, and mobileSmall. Exact width/height captures are available through /api/v1/capture and /api/v1/qa/viewports."
-        ]
-    }
-
-    func setViewport(arguments: [String: Any]) -> Result<[String: Any], Error> {
-        let mode: BrowserViewportMode?
-
-        if let rawMode = arguments["mode"] as? String {
-            mode = BrowserViewportMode(rawValue: rawMode)
-        } else if let width = Self.positiveInt(arguments["width"]) {
-            switch width {
-            case 390:
-                mode = .mobileSmall
-            case 700:
-                mode = .mobileLarge
-            default:
-                mode = .desktop
-            }
-        } else {
-            mode = nil
-        }
-
-        guard let mode else {
-            return .failure(InspectionError.invalidViewportRequest)
-        }
-
-        browser.setViewportMode(mode)
-        return .success(readViewport())
     }
 
     func readLayoutDiagnostics(completion: @escaping (Result<Any, Error>) -> Void) {
@@ -198,73 +49,6 @@ final class WebsiteDataReader {
         }
     }
 
-    func captureViewport(
-        arguments: [String: Any],
-        completion: @escaping (Result<ViewportCaptureOutput, Error>) -> Void
-    ) {
-        do {
-            let url = try captureURL(from: arguments)
-            let width = Self.positiveInt(arguments["width"]) ?? max(1, Int(browser.webView.bounds.width.rounded()))
-            let height = Self.positiveInt(arguments["height"]) ?? max(1, Int(browser.webView.bounds.height.rounded()))
-            let name = (arguments["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let includeScreenshot = arguments["includeScreenshot"] as? Bool ?? true
-
-            guard width > 0, height > 0 else {
-                throw InspectionError.invalidViewportRequest
-            }
-
-            startCapture(
-                url: url,
-                name: name?.isEmpty == false ? name! : "\(width)x\(height)",
-                width: width,
-                height: height,
-                includeScreenshot: includeScreenshot,
-                completion: completion
-            )
-        } catch {
-            completion(.failure(error))
-        }
-    }
-
-    func captureViewports(
-        arguments: [String: Any],
-        completion: @escaping (Result<[ViewportCaptureOutput], Error>) -> Void
-    ) {
-        do {
-            let url = try captureURL(from: arguments)
-            let specs = try viewportSpecs(from: arguments)
-            let includeScreenshot = arguments["includeScreenshot"] as? Bool ?? true
-            var outputs: [ViewportCaptureOutput] = []
-
-            func run(index: Int) {
-                if index >= specs.count {
-                    completion(.success(outputs))
-                    return
-                }
-
-                let spec = specs[index]
-                startCapture(
-                    url: url,
-                    name: spec.name,
-                    width: spec.width,
-                    height: spec.height,
-                    includeScreenshot: includeScreenshot
-                ) { result in
-                    switch result {
-                    case .failure(let error):
-                        completion(.failure(error))
-                    case .success(let output):
-                        outputs.append(output)
-                        run(index: index + 1)
-                    }
-                }
-            }
-
-            run(index: 0)
-        } catch {
-            completion(.failure(error))
-        }
-    }
 
     func navigate(
         to rawURL: String,
@@ -501,103 +285,7 @@ final class WebsiteDataReader {
         return response
     }
 
-    private struct CaptureViewportSpec {
-        let name: String
-        let width: Int
-        let height: Int
-    }
-
-    private func captureURL(from arguments: [String: Any]) throws -> URL {
-        if let rawURL = arguments["url"] as? String {
-            guard let url = resolvedNavigationURL(from: rawURL) else {
-                throw InspectionError.invalidNavigationURL
-            }
-
-            return url
-        }
-
-        guard let url = browser.webView.url else {
-            throw InspectionError.noPageLoaded
-        }
-
-        return url
-    }
-
-    private func viewportSpecs(from arguments: [String: Any]) throws -> [CaptureViewportSpec] {
-        guard let rawViewports = arguments["viewports"] as? [Any] else {
-            return [
-                CaptureViewportSpec(name: "mobile-390", width: 390, height: 844),
-                CaptureViewportSpec(name: "tablet-768", width: 768, height: 1024),
-                CaptureViewportSpec(name: "desktop-1280", width: 1280, height: 800),
-                CaptureViewportSpec(name: "desktop-1440", width: 1440, height: 900)
-            ]
-        }
-
-        let specs = rawViewports.compactMap { raw -> CaptureViewportSpec? in
-            guard let viewport = raw as? [String: Any],
-                  let width = Self.positiveInt(viewport["width"]),
-                  let height = Self.positiveInt(viewport["height"])
-            else {
-                return nil
-            }
-
-            let rawName = (viewport["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return CaptureViewportSpec(
-                name: rawName?.isEmpty == false ? rawName! : "\(width)x\(height)",
-                width: width,
-                height: height
-            )
-        }
-
-        guard specs.count == rawViewports.count, !specs.isEmpty else {
-            throw InspectionError.invalidViewportRequest
-        }
-
-        return specs
-    }
-
-    private func startCapture(
-        url: URL,
-        name: String,
-        width: Int,
-        height: Int,
-        includeScreenshot: Bool,
-        completion: @escaping (Result<ViewportCaptureOutput, Error>) -> Void
-    ) {
-        let id = UUID().uuidString.lowercased()
-        let session = WebKitViewportCaptureSession(
-            id: id,
-            name: name,
-            url: url,
-            width: width,
-            height: height,
-            dataStore: browser.webView.configuration.websiteDataStore,
-            includeScreenshot: includeScreenshot
-        ) { [weak self] result in
-            self?.viewportCaptureSessions.removeValue(forKey: id)
-            completion(result)
-        }
-
-        viewportCaptureSessions[id] = session
-        session.start()
-    }
-
-    private static func positiveInt(_ value: Any?) -> Int? {
-        switch value {
-        case let value as Int where value > 0:
-            return value
-        case let value as Double where value > 0:
-            return Int(value.rounded())
-        case let value as NSNumber where value.intValue > 0:
-            return value.intValue
-        case let value as String:
-            return Int(value).flatMap { $0 > 0 ? $0 : nil }
-        default:
-            return nil
-        }
-    }
-
-    private func resolvedNavigationURL(from rawURL: String) -> URL? {
+    func resolvedNavigationURL(from rawURL: String) -> URL? {
         let value = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
 
@@ -755,44 +443,7 @@ final class WebsiteDataReader {
         ]
     }
 
-    private func readCookieAuthShapeForCurrentPage(completion: @escaping ([String: Any]) -> Void) {
-        guard let domain = try? currentPageDomain() else {
-            completion([
-                "cookieCount": 0,
-                "cookies": [Any](),
-                "note": "No page is loaded."
-            ])
-            return
-        }
-
-        readCookieAuthShape(for: domain, completion: completion)
-    }
-
-    private func readCookieAuthShape(for domain: RequestedDomain, completion: @escaping ([String: Any]) -> Void) {
-        let dataStore = browser.webView.configuration.websiteDataStore
-        dataStore.httpCookieStore.getAllCookies { cookies in
-            Task { @MainActor in
-                let matchingCookies = cookies
-                    .filter { Self.cookie($0, matches: domain.host) }
-                    .sorted { left, right in
-                        if left.domain == right.domain {
-                            return left.name < right.name
-                        }
-
-                        return left.domain < right.domain
-                    }
-
-                completion([
-                    "domain": domain.host,
-                    "cookieCount": matchingCookies.count,
-                    "cookies": matchingCookies.map(Self.safeCookieDictionary(from:)),
-                    "note": "Cookie values are intentionally omitted from observe."
-                ])
-            }
-        }
-    }
-
-    private func currentPageDomain() throws -> RequestedDomain {
+    func currentPageDomain() throws -> RequestedDomain {
         guard let url = browser.webView.url,
               let domain = RequestedDomain(url: url)
         else {
@@ -893,19 +544,6 @@ final class WebsiteDataReader {
         ]
     }
 
-    private static func safeCookieDictionary(from cookie: HTTPCookie) -> [String: Any] {
-        [
-            "name": cookie.name,
-            "domain": cookie.domain,
-            "path": cookie.path,
-            "expiresAt": Self.json(cookie.expiresDate.map(Self.iso8601Formatter.string(from:))),
-            "isSecure": cookie.isSecure,
-            "isHTTPOnly": cookie.isHTTPOnly,
-            "sameSitePolicy": Self.json(cookie.sameSitePolicy?.rawValue),
-            "hasValue": !cookie.value.isEmpty
-        ]
-    }
-
     private static func domain(fromSnapshot snapshot: Any) -> RequestedDomain? {
         guard let dictionary = snapshot as? [String: Any],
               let urlString = dictionary["url"] as? String,
@@ -917,7 +555,7 @@ final class WebsiteDataReader {
         return RequestedDomain(url: url)
     }
 
-    private static func json(_ value: String?) -> Any {
+    static func json(_ value: String?) -> Any {
         if let value {
             return value
         }
@@ -925,7 +563,7 @@ final class WebsiteDataReader {
         return NSNull()
     }
 
-    private static func json(_ value: Int?) -> Any {
+    static func json(_ value: Int?) -> Any {
         if let value {
             return value
         }
@@ -984,118 +622,7 @@ final class WebsiteDataReader {
         String(format: "%.3fs", Date().timeIntervalSince(startedAt))
     }
 
-    private static func cookie(_ cookie: HTTPCookie, matches host: String) -> Bool {
-        let cookieDomain = cookie.domain
-            .lowercased()
-            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
-
-        return cookieDomain == host
-            || cookieDomain.hasSuffix(".\(host)")
-            || host.hasSuffix(".\(cookieDomain)")
-    }
-
-    static func cookieHeader(for url: URL, from cookies: [HTTPCookie]) -> String? {
-        let matchingCookies = cookies.filter { cookie in
-            Self.cookie(cookie, shouldBeSentTo: url)
-        }
-
-        guard !matchingCookies.isEmpty else {
-            return nil
-        }
-
-        return matchingCookies
-            .sorted { left, right in
-                if left.path.count == right.path.count {
-                    return left.name < right.name
-                }
-
-                return left.path.count > right.path.count
-            }
-            .map { "\($0.name)=\($0.value)" }
-            .joined(separator: "; ")
-    }
-
-    private static func cookie(_ cookie: HTTPCookie, shouldBeSentTo url: URL) -> Bool {
-        guard let host = url.host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) else {
-            return false
-        }
-
-        if cookie.isSecure, url.scheme?.lowercased() != "https" {
-            return false
-        }
-
-        if let expiresDate = cookie.expiresDate, expiresDate <= Date() {
-            return false
-        }
-
-        let requestPath = url.path.isEmpty ? "/" : url.path
-        guard requestPath.hasPrefix(cookie.path) else {
-            return false
-        }
-
-        return Self.cookie(cookie, matches: host)
-    }
-
-    private func readActiveSessionStorage(
-        for domain: RequestedDomain,
-        completion: @escaping ([SessionStorageOriginResponse]) -> Void
-    ) {
-        guard let url = browser.webView.url,
-              let host = url.host?.lowercased(),
-              domain.matches(host: host)
-        else {
-            completion([])
-            return
-        }
-
-        let script = """
-        JSON.stringify(Array.from({ length: sessionStorage.length }, (_, index) => {
-            const key = sessionStorage.key(index);
-            return { key, value: sessionStorage.getItem(key) };
-        }))
-        """
-
-        browser.webView.evaluateJavaScript(script) { value, error in
-            Task { @MainActor in
-                let origin = Self.originString(from: url)
-
-                if let error {
-                    completion([
-                        SessionStorageOriginResponse(
-                            origin: origin,
-                            items: [],
-                            error: error.localizedDescription
-                        )
-                    ])
-                    return
-                }
-
-                guard let json = value as? String,
-                      let data = json.data(using: .utf8),
-                      let items = try? JSONDecoder().decode([StorageItem].self, from: data)
-                else {
-                    completion([
-                        SessionStorageOriginResponse(
-                            origin: origin,
-                            items: [],
-                            error: "Could not decode sessionStorage."
-                        )
-                    ])
-                    return
-                }
-
-                completion([
-                    SessionStorageOriginResponse(
-                        origin: origin,
-                        items: items.sorted { $0.key < $1.key },
-                        error: nil
-                    )
-                ])
-            }
-        }
-    }
-
-    private static func originString(from url: URL) -> String {
+    static func originString(from url: URL) -> String {
         var components = URLComponents()
         components.scheme = url.scheme
         components.host = url.host
@@ -1183,93 +710,7 @@ final class WebsiteDataReader {
         }
     }
 
-    static func fetchXHRJSON(
-        xhr: XHRRequestResponse,
-        url: URL,
-        cookieHeader: String?
-    ) async throws -> XHRReplayResponse {
-        var request = URLRequest(url: url)
-        request.httpMethod = xhr.method
-        request.timeoutInterval = 30
-
-        for (name, value) in xhr.requestHeaders {
-            guard shouldReplayHeader(name) else {
-                continue
-            }
-
-            request.setValue(value, forHTTPHeaderField: name)
-        }
-
-        if request.value(forHTTPHeaderField: "Accept") == nil {
-            request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
-        }
-
-        if request.value(forHTTPHeaderField: "User-Agent") == nil {
-            request.setValue(xhr.userAgent ?? BotTerminalModel.llmsUserAgent, forHTTPHeaderField: "User-Agent")
-        }
-
-        if let cookieHeader, !cookieHeader.isEmpty {
-            request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
-        }
-
-        if let pageURL = xhr.pageURL {
-            if request.value(forHTTPHeaderField: "Referer") == nil {
-                request.setValue(pageURL, forHTTPHeaderField: "Referer")
-            }
-
-            if request.value(forHTTPHeaderField: "Origin") == nil,
-               let origin = URL(string: pageURL).map(Self.originString(from:)) {
-                request.setValue(origin, forHTTPHeaderField: "Origin")
-            }
-        }
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let httpResponse = response as? HTTPURLResponse
-        let statusCode = httpResponse?.statusCode
-
-        guard !data.isEmpty else {
-            throw InspectionError.xhrReplayReturnedEmptyBody(statusCode)
-        }
-
-        do {
-            _ = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-        } catch {
-            throw InspectionError.xhrReplayReturnedNonJSON(statusCode)
-        }
-
-        let responseContentType = httpResponse?.value(forHTTPHeaderField: "Content-Type")
-        let contentType: String
-        if responseContentType?.lowercased().contains("json") == true {
-            contentType = responseContentType ?? "application/json; charset=utf-8"
-        } else {
-            contentType = "application/json; charset=utf-8"
-        }
-
-        return XHRReplayResponse(
-            body: data,
-            contentType: contentType
-        )
-    }
-
-    private static func shouldReplayHeader(_ name: String) -> Bool {
-        switch name.lowercased() {
-        case "accept-encoding",
-            "connection",
-            "content-length",
-            "cookie",
-            "host",
-            "proxy-authorization",
-            "te",
-            "trailer",
-            "transfer-encoding",
-            "upgrade":
-            return false
-        default:
-            return true
-        }
-    }
-
-    private static let iso8601Formatter: ISO8601DateFormatter = {
+    static let iso8601Formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter

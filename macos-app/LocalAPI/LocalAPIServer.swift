@@ -163,11 +163,13 @@ final class LocalAPIServer {
                 return
             }
 
-            switch dataReader.setViewport(arguments: body) {
-            case .success(let response):
-                sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
-            case .failure(let error):
-                sendError(status: .badRequest, message: error.localizedDescription, on: connection)
+            dataReader.setViewport(arguments: body) { [weak self] result in
+                switch result {
+                case .success(let response):
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    self?.sendError(status: .badRequest, message: error.localizedDescription, on: connection)
+                }
             }
             return
         }
