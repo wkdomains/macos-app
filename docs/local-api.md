@@ -231,6 +231,23 @@ Useful wait fields are `url`, `urlContains`, `titleContains`, `readyState`,
 
 ## Viewport QA
 
+## Scenario
+
+```sh
+curl -sS -X POST http://localhost:9001/api/v1/scenario \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"open-login","steps":[{"kind":"navigate","url":"http://localhost:5173/","mode":"hard"},{"type":"click","role":"link","name":"Sign in","waitFor":{"selector":"#login-email","timeoutMs":5000}},{"kind":"page"}]}' | jq .
+```
+
+Scenarios reduce agent/browser round trips by running a short ordered flow in
+the browser API. Each step returns `ok`, `op`, elapsed time, and the underlying
+result.
+
+Supported operations are `navigate`, `action`, `page`, `snapshot`, `observe`,
+`dom`, `layout`, `console`, `xhr`, and `sleep`. Action steps can use
+`{"kind":"action","action":"click",...}` or a direct action shape such as
+`{"type":"click","role":"button","name":"Sign out"}`.
+
 ```sh
 curl -sS -X POST http://localhost:9001/api/v1/qa/viewports \
   -H 'Content-Type: application/json' \

@@ -295,6 +295,36 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/scenario" || request.path == "/api/v1/flow" {
+            guard request.method == "POST" else {
+                sendError(status: .methodNotAllowed, message: "Use POST for scenario requests.", on: connection)
+                return
+            }
+
+            guard request.originIsAllowed else {
+                sendError(status: .badRequest, message: "Origin is not allowed.", on: connection)
+                return
+            }
+
+            guard let body = jsonBody(from: request) else {
+                sendError(status: .badRequest, message: InspectionError.invalidScenarioRequest.localizedDescription, on: connection)
+                return
+            }
+
+            BrowserDebugLogging.log("[wkdomains-debug] local-api scenario start id=\(debugID)")
+            dataReader.runScenario(arguments: body) { [weak self] result in
+                switch result {
+                case .success(let response):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api scenario done id=\(debugID)")
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    BrowserDebugLogging.log("[wkdomains-debug] local-api scenario fail id=\(debugID) error=\(error.localizedDescription)")
+                    self?.sendError(status: .badRequest, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
         guard request.method == "GET" else {
             sendError(status: .methodNotAllowed, message: "Only GET is supported.", on: connection)
             return

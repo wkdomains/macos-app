@@ -300,7 +300,7 @@ final class WebsiteDataReader {
         return 5
     }
 
-    private static func stringValue(_ value: Any?) -> String? {
+    static func stringValue(_ value: Any?) -> String? {
         switch value {
         case let value as String:
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -312,7 +312,7 @@ final class WebsiteDataReader {
         }
     }
 
-    private static func intValue(_ value: Any?) -> Int? {
+    static func intValue(_ value: Any?) -> Int? {
         switch value {
         case let value as Int:
             return value
@@ -327,7 +327,7 @@ final class WebsiteDataReader {
         }
     }
 
-    private static func boolValue(_ value: Any?) -> Bool? {
+    static func boolValue(_ value: Any?) -> Bool? {
         switch value {
         case let value as Bool:
             return value

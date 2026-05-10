@@ -157,6 +157,8 @@ Endpoints:
 - `POST /api/v1/visual-diff`: alias for visual compare.
 - `POST /api/v1/action`: click/fill/select/submit/press/focus/clear visible elements.
 - `POST /api/v1/actions`: alias for action.
+- `POST /api/v1/scenario`: run a short ordered browser flow and return a step trace.
+- `POST /api/v1/flow`: alias for scenario.
 - `POST /mcp`: JSON-RPC MCP shim for human request tools.
 
 ## Action Endpoint
@@ -227,6 +229,31 @@ curl -sS -X POST http://localhost:9001/api/v1/action \
 ```
 
 ## Viewport QA And Visual Diff
+
+## Scenario Endpoint
+
+Use `POST /api/v1/scenario` when a task would otherwise need many back-and-forth calls. It runs steps in order and returns a trace with `ok`, `op`, elapsed time, and each step result.
+
+Supported `kind` / `op` values:
+
+- `navigate`
+- `action`
+- `page`
+- `snapshot`
+- `observe`
+- `dom`
+- `layout`
+- `console`
+- `xhr`
+- `sleep`
+
+For action steps, use either `{"kind":"action","action":"click",...}` or a direct action-shaped step such as `{"type":"click","role":"button","name":"Sign out"}`.
+
+```sh
+curl -sS -X POST http://localhost:9001/api/v1/scenario \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"open-login","steps":[{"kind":"navigate","url":"http://localhost:5173/","mode":"hard"},{"type":"click","role":"link","name":"Sign in","waitFor":{"selector":"#login-email","timeoutMs":5000}},{"kind":"page"}]}' | jq .
+```
 
 Batch QA default sizes are:
 

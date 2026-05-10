@@ -15,6 +15,7 @@ enum InspectionError: LocalizedError {
     case invalidNavigationURL
     case softNavigationRequiresSameOrigin
     case invalidActionRequest
+    case invalidScenarioRequest
     case invalidViewportRequest
     case invalidVisualComparisonRequest
     case invalidElementRef
@@ -42,6 +43,8 @@ enum InspectionError: LocalizedError {
             return "Soft navigation is only available for same-origin URLs."
         case .invalidActionRequest:
             return "Provide an action JSON body with a type and target ref, selector, or active element."
+        case .invalidScenarioRequest:
+            return "Provide a scenario JSON body with a non-empty steps array."
         case .invalidViewportRequest:
             return "Provide a viewport mode or positive width and height values."
         case .invalidVisualComparisonRequest:
