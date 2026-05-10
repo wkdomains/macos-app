@@ -29,6 +29,11 @@ extension BrowserModel {
           const exact = args.exact !== false;
           const value = args.value == null ? "" : String(args.value);
           const key = args.key == null ? "Enter" : String(args.key);
+          const direction = typeof args.direction === "string" ? args.direction.trim().toLowerCase() : "";
+          const behavior = args.behavior === "smooth" ? "smooth" : "instant";
+          const amount = Number.isFinite(Number(args.amount)) ? Number(args.amount) : null;
+          const x = Number.isFinite(Number(args.x)) ? Number(args.x) : null;
+          const y = Number.isFinite(Number(args.y)) ? Number(args.y) : null;
           const beforeURL = location.href;
 
           const truncate = (text, limit = 160) => {
@@ -302,6 +307,72 @@ extension BrowserModel {
           const byQuery = (!byRef && !bySelector) ? queryTarget() : null;
           const usesActiveElement = args.active === true || (!ref && !selector && !text && !name && !role && !targetText && !targetName && action === "press");
           const target = usesActiveElement ? document.activeElement : (byRef || bySelector || byQuery?.element);
+          const scrollPosition = () => {
+            const scrolling = document.scrollingElement || document.documentElement;
+            return {
+              x: Math.round(window.scrollX || scrolling.scrollLeft || 0),
+              y: Math.round(window.scrollY || scrolling.scrollTop || 0),
+              maxX: Math.max(0, Math.round(scrolling.scrollWidth - window.innerWidth)),
+              maxY: Math.max(0, Math.round(scrolling.scrollHeight - window.innerHeight)),
+              viewportWidth: window.innerWidth,
+              viewportHeight: window.innerHeight,
+              documentWidth: scrolling.scrollWidth,
+              documentHeight: scrolling.scrollHeight
+            };
+          };
+
+          const scrollPage = (element) => {
+            const before = scrollPosition();
+            if (element && element !== document.body && element !== document.documentElement) {
+              try {
+                element.scrollIntoView({ block: args.block || "center", inline: args.inline || "nearest", behavior });
+              } catch (_) {
+                element.scrollIntoView();
+              }
+              return { before, after: scrollPosition(), mode: "element" };
+            }
+
+            const scrolling = document.scrollingElement || document.documentElement;
+            const viewportStep = Math.max(120, Math.round((window.innerHeight || 720) * 0.82));
+            const step = amount == null ? viewportStep : amount;
+            let deltaX = x == null ? 0 : x;
+            let deltaY = y == null ? 0 : y;
+
+            if (direction === "up") deltaY = -step;
+            if (direction === "down" || (!direction && x == null && y == null)) deltaY = step;
+            if (direction === "left") deltaX = -step;
+            if (direction === "right") deltaX = step;
+            if (direction === "top") deltaY = -before.y;
+            if (direction === "bottom") deltaY = before.maxY - before.y;
+
+            window.scrollBy({ left: deltaX, top: deltaY, behavior });
+            return { before, after: scrollPosition(), mode: "page", deltaX, deltaY };
+          };
+
+          if (action === "scroll") {
+            try {
+              const scroll = scrollPage(target);
+              return {
+                ok: true,
+                action,
+                ref: ref || null,
+                selector: selector || null,
+                text: text || targetText || null,
+                name: name || targetName || null,
+                role: role || null,
+                targetStrategy: byRef ? "ref" : bySelector ? "selector" : byQuery?.element ? "query" : null,
+                candidates: byQuery?.candidates || [],
+                nearMatches: byQuery?.nearMatches || [],
+                beforeURL,
+                url: location.href,
+                scroll,
+                target: target ? summaryFor(target) : null,
+                activeElement: summaryFor(document.activeElement)
+              };
+            } catch (error) {
+              return fail(error && error.message ? error.message : String(error));
+            }
+          }
 
           if (!target || target === document.body || target === document.documentElement) {
             const failure = fail("Target element was not found. Provide ref, selector, text/name/role, or active:true for press.");

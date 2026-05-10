@@ -211,7 +211,7 @@ curl -sS -X POST http://localhost:9001/api/v1/action \
 ```
 
 Actions drive the visible WebKit browser. Supported action types are `click`,
-`fill`, `clear`, `select`, `submit`, `press`, and `focus`.
+`fill`, `clear`, `select`, `submit`, `press`, `focus`, and `scroll`.
 
 Targets can be a current `ref`, CSS `selector`, accessible `name`, visible
 `text`, `role`, or active element for key presses. `name` checks the
@@ -228,6 +228,18 @@ tokens, and auth codes are redacted in action summaries.
 Useful wait fields are `url`, `urlContains`, `titleContains`, `readyState`,
 `text`, `textIncludes`, `selector`, `selectorGone`, `visible`, `xhr`, and
 `timeoutMs`.
+
+Scroll examples:
+
+```sh
+curl -sS -X POST http://localhost:9001/api/v1/action \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"scroll","direction":"down"}' | jq .
+
+curl -sS -X POST http://localhost:9001/api/v1/action \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"scroll","role":"link","name":"Pricing","block":"center"}' | jq .
+```
 
 ## Viewport QA
 

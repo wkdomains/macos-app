@@ -155,7 +155,7 @@ Endpoints:
 - `GET /api/v1/captures/{id}/screenshot`: PNG from capture, QA, or visual diff.
 - `POST /api/v1/visual/compare`: compare current/local page to reference/baseline URL and return pixel metrics plus current/reference/diff PNG endpoints.
 - `POST /api/v1/visual-diff`: alias for visual compare.
-- `POST /api/v1/action`: click/fill/select/submit/press/focus/clear visible elements.
+- `POST /api/v1/action`: click/fill/select/submit/press/focus/clear/scroll visible elements or the page.
 - `POST /api/v1/actions`: alias for action.
 - `POST /api/v1/scenario`: run a short ordered browser flow and return a step trace.
 - `POST /api/v1/flow`: alias for scenario.
@@ -184,6 +184,7 @@ Supported actions:
 - `submit`
 - `press`
 - `focus`
+- `scroll`
 
 Examples:
 
@@ -199,6 +200,10 @@ curl -sS -X POST http://localhost:9001/api/v1/action \
 curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
   -d '{"type":"press","active":true,"key":"Enter","waitFor":{"urlContains":"/dashboard","timeoutMs":10000}}' | jq .
+
+curl -sS -X POST http://localhost:9001/api/v1/action \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"scroll","direction":"down"}' | jq .
 ```
 
 Wait conditions supported in `waitFor` or `wait`:
