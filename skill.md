@@ -143,7 +143,7 @@ Endpoints:
 - `GET /api/v1/timing`: browser/API timing rollup.
 - `GET /api/v1/timing/reset`: reset timing session.
 - `GET /api/v1/resources`: common machine files: `llms.txt`, OpenAPI, agent cards, sitemap, robots, etc.
-- `GET /api/v1/xhr`: observed XHR/fetch for current page host, including `jsonShape` and redacted `responseBodyPreview`.
+- `GET /api/v1/xhr`: observed XHR/fetch for current page host, including redacted `jsonShape` and redacted `responseBodyPreview`.
 - `GET /api/v1/xhr/{index}/replay`: replay an observed request when available.
 - `GET /api/v1/cookies`: cookies plus local/session storage. Sensitive.
 - `GET /api/v1/dark-reader`: Dark Reader extension/page diagnostics.
@@ -163,7 +163,15 @@ Endpoints:
 
 Use `POST /api/v1/action` instead of Playwright.
 
-Targets can be a current `ref`, a CSS `selector`, or active element for `press`.
+Targets can be a current `ref`, a CSS `selector`, accessible `name`, visible `text`, `role`, or active element for `press`. `name` checks the accessibility label first and falls back to visible text/title/placeholder so it stays useful on local apps with imperfect ARIA labels.
+
+Prefer user-facing targets over selectors when possible:
+
+- `{"role":"button","name":"Email me a 6-digit code"}`
+- `{"role":"link","name":"Sign in"}`
+- `{"text":"Sign out","exact":true}`
+
+`exact` defaults to `true`; set `exact:false` for case-insensitive contains matching. Action responses include `targetStrategy`, `role`, `name`, `text`, and nearby `candidates` when useful.
 
 Supported actions:
 
@@ -180,7 +188,7 @@ Examples:
 ```sh
 curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
-  -d '{"type":"click","selector":"a[href=\"/login\"]","waitFor":{"selector":"#login-email","timeoutMs":5000}}' | jq .
+  -d '{"type":"click","role":"link","name":"Sign in","waitFor":{"selector":"#login-email","timeoutMs":5000}}' | jq .
 
 curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
@@ -201,7 +209,22 @@ Wait conditions supported in `waitFor` or `wait`:
 - `selector`
 - `selectorGone`
 - `visible`
+- `xhr`
+- `xhrURLContains` / `xhrUrlContains`
+- `xhrMethod`
+- `xhrStatus`
+- `xhrCompleted`
+- `xhrResponseBodyContains`
+- `xhrJsonShapeContains`
 - `timeoutMs` or `timeoutSeconds` (capped at 20s)
+
+XHR waits start counting after the action begins, so stale earlier requests do not satisfy the wait.
+
+```sh
+curl -sS -X POST http://localhost:9001/api/v1/action \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"click","role":"button","name":"Email me a 6-digit code","waitFor":{"selector":"#login-code","xhr":{"urlContains":"/api/auth/email/request-code","method":"POST","status":200},"timeoutMs":10000}}' | jq .
+```
 
 ## Viewport QA And Visual Diff
 
@@ -274,8 +297,9 @@ The local `../web` app is configured to avoid real email:
 
 - `.dev.vars` contains `WKDOMAINS_DEV_AUTH=1`.
 - `scripts/dev.mjs` defaults `WKDOMAINS_DEV_AUTH` to `1`.
-- `worker/routes/auth.js` returns/logs a local `dev_code` instead of calling Resend when in local dev.
-- `src/context/AuthContext.jsx` logs the dev OTP to the browser console on localhost.
+- `scripts/dev.mjs` starts a 127.0.0.1-only OTP sink with a random token and writes JSONL to `/tmp/wkdomains-dev-otp.jsonl`.
+- `worker/routes/auth.js` posts plaintext OTPs to that local sink instead of calling Resend when in local dev.
+- `/api/auth/email/request-code` does not return `dev_code`; the browser-visible response only reports `delivery: "local-dev"`.
 
 Sample browser-API login flow:
 
@@ -286,7 +310,7 @@ curl -sS -X POST http://localhost:9001/api/v1/navigate \
 
 curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
-  -d '{"type":"click","selector":"a[href=\"/login\"], a[href=\"http://localhost:5173/login\"]","waitFor":{"selector":"#login-email","timeoutMs":5000}}' | jq .
+  -d '{"type":"click","role":"link","name":"Sign in","waitFor":{"selector":"#login-email","timeoutMs":5000}}' | jq .
 
 curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
@@ -294,15 +318,13 @@ curl -sS -X POST http://localhost:9001/api/v1/action \
 
 curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
-  -d '{"type":"click","selector":".email-login-form button[type=submit]","waitFor":{"selector":"#login-code","timeoutMs":5000}}' | jq .
+  -d '{"type":"click","role":"button","name":"Email me a 6-digit code","waitFor":{"selector":"#login-code","xhr":{"urlContains":"/api/auth/email/request-code","method":"POST","status":200},"timeoutMs":10000}}' | jq .
 ```
 
-Get OTP from XHR, not email:
+Get OTP from the local JSONL file, not email and not XHR:
 
 ```sh
-otp=$(curl -sS http://localhost:9001/api/v1/xhr \
-  | jq -r '.requests[] | select(.url|contains("/api/auth/email/request-code")) | .responseBodyPreview' \
-  | jq -r '.dev_code' | tail -n 1)
+otp=$(jq -r 'select(.email=="test@example.com") | .code' /tmp/wkdomains-dev-otp.jsonl | tail -n 1)
 echo "$otp"
 ```
 
@@ -315,7 +337,7 @@ curl -sS -X POST http://localhost:9001/api/v1/action \
 
 curl -sS -X POST http://localhost:9001/api/v1/action \
   -H 'Content-Type: application/json' \
-  -d '{"type":"click","selector":".email-login-form button[type=submit]","waitFor":{"urlContains":"/dashboard","timeoutMs":10000}}' | jq .
+  -d '{"type":"click","role":"button","name":"Sign in","waitFor":{"urlContains":"/dashboard","xhr":{"urlContains":"/api/auth/email/verify-code","method":"POST","status":200},"timeoutMs":10000}}' | jq .
 
 curl -sS http://localhost:9001/api/v1/page | jq '{url,title,isLoading}'
 ```
@@ -343,7 +365,7 @@ curl -sS http://localhost:9001/api/v1/xhr \
 ## Safety And Notes
 
 - Treat cookies, storage, OTPs, session tokens, and XHR body previews as sensitive.
-- XHR `responseBodyPreview` redacts common token/session keys but still review before sharing.
+- XHR `jsonShape` and `responseBodyPreview` redact common token/session keys but still review before sharing.
 - `/api/v1/xhr` and `/api/v1/cookies` infer the current page host.
 - The visible browser viewport affects `/api/v1/page`, `/api/v1/screenshot`, DOM rectangles, and action targeting.
 - Offscreen captures use real WebKit and the same website data store.

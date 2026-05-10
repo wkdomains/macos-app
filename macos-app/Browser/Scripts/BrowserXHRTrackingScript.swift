@@ -190,6 +190,7 @@ extension BrowserModel {
 
         const fields = keys.map((key) => {
           if (key.startsWith("+") && key.endsWith(" more")) return key;
+          if (shouldRedactKey(key)) return `${key}:"[redacted]"`;
           return `${key}:${shapeForValue(value[key], depth + 1)}`;
         });
 

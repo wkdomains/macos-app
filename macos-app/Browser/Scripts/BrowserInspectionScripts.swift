@@ -966,6 +966,12 @@ extension BrowserModel {
           const action = String(args.type || args.action || "").trim().toLowerCase();
           const ref = typeof args.ref === "string" ? args.ref.trim() : "";
           const selector = typeof args.selector === "string" ? args.selector.trim() : "";
+          const text = typeof args.text === "string" ? args.text.trim() : "";
+          const name = typeof args.name === "string" ? args.name.trim() : "";
+          const role = typeof args.role === "string" ? args.role.trim().toLowerCase() : "";
+          const targetText = typeof args.targetText === "string" ? args.targetText.trim() : "";
+          const targetName = typeof args.targetName === "string" ? args.targetName.trim() : "";
+          const exact = args.exact !== false;
           const value = args.value == null ? "" : String(args.value);
           const key = args.key == null ? "Enter" : String(args.key);
           const beforeURL = location.href;
@@ -1012,6 +1018,58 @@ extension BrowserModel {
             return truncate(element.innerText || element.textContent || element.getAttribute("placeholder") || element.getAttribute("title") || "");
           };
 
+          const roleFor = (element) => {
+            const explicit = element.getAttribute("role");
+            if (explicit) return explicit.toLowerCase();
+            const tag = element.tagName.toLowerCase();
+            const type = (element.getAttribute("type") || "").toLowerCase();
+            if (tag === "a" && element.hasAttribute("href")) return "link";
+            if (tag === "button" || type === "button" || type === "submit" || type === "reset") return "button";
+            if (tag === "textarea") return "textbox";
+            if (tag === "select") return "combobox";
+            if (tag === "input") {
+              if (type === "checkbox") return "checkbox";
+              if (type === "radio") return "radio";
+              if (type === "range") return "slider";
+              if (type === "search") return "searchbox";
+              return "textbox";
+            }
+            if (tag === "summary") return "button";
+            if (tag === "form") return "form";
+            return tag;
+          };
+
+          const isVisible = (element) => {
+            if (!element || !element.getBoundingClientRect) return false;
+            const style = getComputedStyle(element);
+            if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0
+              && rect.bottom >= 0
+              && rect.right >= 0
+              && rect.top <= (window.innerHeight || document.documentElement.clientHeight)
+              && rect.left <= (window.innerWidth || document.documentElement.clientWidth);
+          };
+
+          const normalized = (value) => String(value || "").replace(/\\s+/g, " ").trim().toLowerCase();
+          const matchesText = (candidate, expected) => {
+            const candidateText = normalized(candidate);
+            const expectedText = normalized(expected);
+            if (!expectedText) return true;
+            return exact ? candidateText === expectedText : candidateText.includes(expectedText);
+          };
+
+          const matchesName = (element, expected) => {
+            if (!expected) return true;
+            const values = [
+              labelFor(element),
+              element.innerText || element.textContent || "",
+              element.getAttribute("placeholder") || "",
+              element.getAttribute("title") || ""
+            ];
+            return values.some((value) => matchesText(value, expected));
+          };
+
           const summaryFor = (element) => {
             if (!element || !element.tagName) return null;
             return {
@@ -1019,8 +1077,9 @@ extension BrowserModel {
               type: element.getAttribute("type") || null,
               id: element.id || null,
               name: element.getAttribute("name") || null,
-              role: element.getAttribute("role") || null,
+              role: roleFor(element),
               label: labelFor(element),
+              text: truncate(element.innerText || element.textContent || "", 120),
               value: element.matches("input, textarea, select") ? truncate(element.value, 80) : null,
               disabled: !!(element.disabled || element.getAttribute("aria-disabled") === "true"),
               rect: rectFor(element)
@@ -1033,6 +1092,9 @@ extension BrowserModel {
             error: message,
             ref: ref || null,
             selector: selector || null,
+            text: text || targetText || null,
+            name: name || targetName || null,
+            role: role || null,
             url: location.href,
             activeElement: summaryFor(document.activeElement)
           });
@@ -1049,11 +1111,52 @@ extension BrowserModel {
             }
           }
 
-          const usesActiveElement = args.active === true || (!ref && !selector && action === "press");
-          const target = usesActiveElement ? document.activeElement : (byRef || bySelector);
+          const queryTarget = () => {
+            const expectedText = text || targetText;
+            const expectedName = name || targetName;
+            if (!expectedText && !expectedName && !role) return null;
+
+            const selectorList = [
+              "a[href]",
+              "button",
+              "input:not([type='hidden'])",
+              "textarea",
+              "select",
+              "summary",
+              "[contenteditable='true']",
+              "[role='button']",
+              "[role='link']",
+              "[role='menuitem']",
+              "[role='tab']",
+              "[role='checkbox']",
+              "[role='radio']",
+              "[role='switch']",
+              "[role='textbox']",
+              "[role='combobox']",
+              "[role='searchbox']"
+            ].join(",");
+
+            const candidates = Array.from(document.querySelectorAll(selectorList))
+              .filter(isVisible)
+              .filter((element) => !role || roleFor(element) === role)
+              .filter((element) => matchesName(element, expectedName))
+              .filter((element) => !expectedText || matchesText(element.innerText || element.textContent || labelFor(element), expectedText));
+
+            if (candidates.length === 0) return { element: null, candidates: [] };
+            return {
+              element: candidates[0],
+              candidates: candidates.slice(0, 8).map(summaryFor)
+            };
+          };
+
+          const byQuery = (!byRef && !bySelector) ? queryTarget() : null;
+          const usesActiveElement = args.active === true || (!ref && !selector && !text && !name && !role && !targetText && !targetName && action === "press");
+          const target = usesActiveElement ? document.activeElement : (byRef || bySelector || byQuery?.element);
 
           if (!target || target === document.body || target === document.documentElement) {
-            return fail("Target element was not found. Call /api/v1/snapshot and use a current ref.");
+            const failure = fail("Target element was not found. Provide ref, selector, text/name/role, or active:true for press.");
+            if (byQuery) failure.candidates = byQuery.candidates;
+            return failure;
           }
 
           const focusElement = (element) => {
@@ -1174,6 +1277,11 @@ extension BrowserModel {
             action,
             ref: ref || null,
             selector: selector || null,
+            text: text || targetText || null,
+            name: name || targetName || null,
+            role: role || null,
+            targetStrategy: byRef ? "ref" : bySelector ? "selector" : byQuery?.element ? "query" : usesActiveElement ? "active" : null,
+            candidates: byQuery?.candidates || [],
             beforeURL,
             url: location.href,
             target: summaryFor(target),

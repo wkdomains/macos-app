@@ -141,8 +141,8 @@ curl http://localhost:9001/api/v1/xhr | jq .
 ```
 
 Returns browser-observed XHR/fetch calls for the current page host. The key
-field is `jsonShape`, a compact map of the response body that helps identify
-useful API endpoints without dumping full JSON.
+field is `jsonShape`, a compact, redacted map of the response body that helps
+identify useful API endpoints without dumping full JSON.
 
 Example shape:
 
@@ -165,6 +165,29 @@ Example shape:
 }
 ```
 
+Action waits can also watch for fresh XHR/fetch activity triggered by the
+action. A matching request must start after the action begins, which prevents an
+old request from satisfying the wait.
+
+```sh
+curl -sS -X POST http://localhost:9001/api/v1/action \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"click","role":"button","name":"Email me a 6-digit code","waitFor":{"selector":"#login-code","xhr":{"urlContains":"/api/auth/email/request-code","method":"POST","status":200},"timeoutMs":10000}}' | jq .
+```
+
+Supported XHR wait fields:
+
+- `urlContains`
+- `method`
+- `status`
+- `completed`
+- `responseBodyContains`
+- `jsonShapeContains`
+
+The same fields can be supplied as shorthands on `waitFor`:
+`xhrURLContains`, `xhrUrlContains`, `xhrMethod`, `xhrStatus`,
+`xhrCompleted`, `xhrResponseBodyContains`, and `xhrJsonShapeContains`.
+
 ## Cookies and browser storage
 
 ```sh
@@ -178,3 +201,59 @@ This endpoint gives a coding tool the auth/session context needed to replay the
 same XHR endpoints and retrieve full JSON directly. Treat this output as
 sensitive. Redact cookie values, bearer tokens, session IDs, account IDs, and
 user IDs before sharing logs or examples.
+
+## Action
+
+```sh
+curl -sS -X POST http://localhost:9001/api/v1/action \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"click","role":"link","name":"Sign in","waitFor":{"selector":"#login-email","timeoutMs":5000}}' | jq .
+```
+
+Actions drive the visible WebKit browser. Supported action types are `click`,
+`fill`, `clear`, `select`, `submit`, `press`, and `focus`.
+
+Targets can be a current `ref`, CSS `selector`, accessible `name`, visible
+`text`, `role`, or active element for key presses. `name` checks the
+accessibility label first and falls back to visible text/title/placeholder.
+Prefer `role` plus `name` for controls when possible because it matches how a
+user and assistive technology find the element. Set `exact:false` to use
+contains matching instead of exact matching.
+
+Useful wait fields are `url`, `urlContains`, `titleContains`, `readyState`,
+`text`, `textIncludes`, `selector`, `selectorGone`, `visible`, `xhr`, and
+`timeoutMs`.
+
+## Viewport QA
+
+```sh
+curl -sS -X POST http://localhost:9001/api/v1/qa/viewports \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"http://localhost:5173/","includeScreenshot":false}' | jq .
+```
+
+The default viewport set is `390x844`, `768x1024`, `1280x800`, and
+`1440x900`. Each result includes page, DOM, layout, console, and optional
+screenshot diagnostics.
+
+## Element x-ray and source hints
+
+```sh
+curl -sS http://localhost:9001/api/v1/snapshot | jq .
+curl -sS http://localhost:9001/api/v1/element/@e8 | jq .
+```
+
+Element x-ray returns computed style, box model, accessibility state, selector
+hints, parent context, contrast diagnostics, and `sourceHint` when dev source
+metadata is available.
+
+## Visual compare
+
+```sh
+curl -sS -X POST http://localhost:9001/api/v1/visual/compare \
+  -H 'Content-Type: application/json' \
+  -d '{"referenceUrl":"http://localhost:5173/","currentUrl":"http://localhost:5173/dashboard","width":390,"height":844,"threshold":8}' | jq .
+```
+
+The response includes changed-pixel metrics and screenshot endpoints for the
+current, reference, and diff images.
