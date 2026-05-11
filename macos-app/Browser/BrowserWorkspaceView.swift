@@ -61,8 +61,6 @@ extension ContentView {
                     BrowserConsolePanel(records: browser.consoleRecords) {
                         browser.setConsolePanelVisible(false)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -303,62 +301,211 @@ private struct BrowserConsolePanel: View {
     let records: [ConsoleMessageRecord]
     let close: () -> Void
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "curlybraces.square")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("JavaScript console")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("developer extras enabled")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button(action: close) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Close JavaScript console")
-            }
+    private let tabs: [ConsoleToolbarTab] = [
+        .init(systemName: "cursorarrow.rays", title: "Inspector", compactTitle: "Inspect"),
+        .init(systemName: "chevron.right.square", title: "Console", compactTitle: "Console"),
+        .init(systemName: "tag", title: "Debugger", compactTitle: "Debug"),
+        .init(systemName: "arrow.up.arrow.down", title: "Network", compactTitle: "Net"),
+        .init(systemName: "curlybraces", title: "Style Editor", compactTitle: "Style"),
+        .init(systemName: "gauge.with.dots.needle.50percent", title: "Performance", compactTitle: "Perf")
+    ]
 
-            if records.isEmpty {
-                Text("No page console messages captured yet.")
-                    .font(.system(size: 12, weight: .medium))
+    private let filters: [ConsoleFilter] = [
+        .init(title: "Errors", compactTitle: "Err", isSelected: true),
+        .init(title: "Warnings", compactTitle: "Warn", isSelected: true),
+        .init(title: "Info", compactTitle: "Info", isSelected: true),
+        .init(title: "Logs", compactTitle: "Logs", isSelected: true),
+        .init(title: "Debug", compactTitle: "Debug", isSelected: true),
+        .init(title: "CSS", compactTitle: "CSS", isSelected: false),
+        .init(title: "XHR", compactTitle: "XHR", isSelected: false),
+        .init(title: "Requests", compactTitle: "Req", isSelected: false)
+    ]
+
+    var body: some View {
+        GeometryReader { proxy in
+            let isCompact = proxy.size.width < 640
+
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 0) {
+                            ForEach(tabs) { tab in
+                                consoleTab(tab, isSelected: tab.title == "Console", isCompact: isCompact)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Spacer(minLength: 8)
+
+                    consoleIconButton(systemName: "rectangle.split.2x1", label: "Dock position", isCompact: isCompact)
+                    consoleIconButton(systemName: "rectangle.on.rectangle", label: "Pop out", isCompact: isCompact)
+                    consoleIconButton(systemName: "ellipsis", label: "More tools", isCompact: isCompact)
+
+                    Button(action: close) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(width: isCompact ? 34 : 38, height: 38)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Close JavaScript console")
+                }
+                .frame(height: 38)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(Color(nsColor: .separatorColor))
+                        .frame(height: 1)
+                }
+
+                HStack(spacing: 0) {
+                    consoleIconButton(systemName: "trash", label: "Clear console", isCompact: isCompact)
+                    Divider()
+
+                    HStack(spacing: 8) {
+                        Image(systemName: "line.3.horizontal.decrease")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("Filter Output")
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 6)
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(records.suffix(5), id: \.id) { record in
-                        HStack(alignment: .top, spacing: 8) {
-                            Text(record.level.uppercased())
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(color(for: record.level))
-                                .frame(width: 42, alignment: .leading)
-                            Text(record.message)
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .lineLimit(2)
-                                .foregroundStyle(.primary)
+                    .padding(.horizontal, isCompact ? 10 : 12)
+                    .layoutPriority(-1)
+
+                    HStack(spacing: isCompact ? 3 : 4) {
+                        ForEach(filters) { filter in
+                            if filter.title == "CSS" {
+                                Divider()
+                                    .frame(height: 22)
+                            }
+                            filterChip(filter, isCompact: isCompact)
                         }
+                    }
+                    .padding(.trailing, isCompact ? 6 : 10)
+                    .layoutPriority(1)
+
+                    consoleIconButton(systemName: "gearshape", label: "Console settings", isCompact: isCompact)
+                }
+                .frame(height: 43)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(Color(nsColor: .separatorColor))
+                        .frame(height: 1)
+                }
+
+                consoleOutput
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 260)
+        .background(Color(nsColor: .textBackgroundColor))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(height: 1)
+        }
+    }
+
+    private var consoleOutput: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if records.isEmpty {
+                HStack(alignment: .top, spacing: 12) {
+                    Text(">>")
+                        .font(.system(size: 17, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color.accentColor)
+                    Text("No page console messages captured yet.")
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 14)
+                .padding(.leading, 18)
+            } else {
+                ForEach(records.suffix(6), id: \.id) { record in
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(record.level.uppercased())
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(color(for: record.level))
+                            .frame(width: 48, alignment: .leading)
+                        Text(record.message)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .lineLimit(2)
+                            .foregroundStyle(.primary)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 7)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(Color(nsColor: .separatorColor).opacity(0.35))
+                            .frame(height: 1)
                     }
                 }
             }
+
+            Spacer()
         }
-        .padding(12)
-        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.black.opacity(0.82))
+    }
+
+    private func consoleTab(_ tab: ConsoleToolbarTab, isSelected: Bool, isCompact: Bool) -> some View {
+        HStack(spacing: isCompact ? 7 : 8) {
+            Image(systemName: tab.systemName)
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 18)
+            Text(isCompact ? tab.compactTitle : tab.title)
+                .font(.system(size: 14, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .foregroundStyle(isSelected ? .primary : .secondary)
+        .frame(height: 38)
+        .padding(.horizontal, isCompact ? 9 : 13)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.96))
-                .shadow(color: .black.opacity(0.22), radius: 18, x: 0, y: 10)
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(isSelected ? Color.accentColor : Color.clear)
+                    .frame(height: 2)
+                Spacer()
+            }
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.7), lineWidth: 1)
-        )
+    }
+
+    private func consoleIconButton(systemName: String, label: String, isCompact: Bool) -> some View {
+        Button {} label: {
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: isCompact ? 34 : 38, height: 38)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel(label)
+    }
+
+    private func filterChip(_ filter: ConsoleFilter, isCompact: Bool) -> some View {
+        Text(isCompact ? filter.compactTitle : filter.title)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(filter.isSelected ? Color.accentColor : .secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, isCompact ? 7 : 9)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(filter.isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+            )
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(filter.isSelected ? Color.accentColor : Color.clear)
+                    .frame(height: 1)
+            }
     }
 
     private func color(for level: String) -> Color {
@@ -371,6 +518,20 @@ private struct BrowserConsolePanel: View {
             return .secondary
         }
     }
+}
+
+private struct ConsoleToolbarTab: Identifiable {
+    var id: String { title }
+    let systemName: String
+    let title: String
+    let compactTitle: String
+}
+
+private struct ConsoleFilter: Identifiable {
+    var id: String { title }
+    let title: String
+    let compactTitle: String
+    let isSelected: Bool
 }
 
 private struct ViewportPulseRing: View {
