@@ -140,21 +140,22 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
         }
         self.display = display
 
-        let nativeWidth = CGFloat(display.width)
-        let nativeHeight = CGFloat(display.height)
-        let scale = min(1, 1920 / max(nativeWidth, 1))
-        let width = max(2, Int((nativeWidth * scale).rounded(.down))) & ~1
-        let height = max(2, Int((nativeHeight * scale).rounded(.down))) & ~1
+        let displayID = display.displayID
+        let pixelWidth = CGDisplayPixelsWide(displayID)
+        let pixelHeight = CGDisplayPixelsHigh(displayID)
+        let width = max(2, Int(pixelWidth)) & ~1
+        let height = max(2, Int(pixelHeight)) & ~1
 
         let configuration = SCStreamConfiguration()
         configuration.width = width
         configuration.height = height
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
-        configuration.queueDepth = 5
+        configuration.queueDepth = 8
         configuration.showsCursor = true
         configuration.capturesAudio = false
         configuration.captureMicrophone = false
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
+        configuration.captureResolution = .best
         self.configuration = configuration
 
         try? FileManager.default.removeItem(at: outputURL)
@@ -172,7 +173,9 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
         let recordingConfiguration = SCRecordingOutputConfiguration()
         recordingConfiguration.outputURL = outputURL
         recordingConfiguration.outputFileType = .mp4
-        recordingConfiguration.videoCodecType = .h264
+        recordingConfiguration.videoCodecType = recordingConfiguration.availableVideoCodecTypes.contains(.hevc)
+            ? .hevc
+            : .h264
 
         let recordingOutput = SCRecordingOutput(configuration: recordingConfiguration, delegate: self)
         try stream.addRecordingOutput(recordingOutput)
@@ -191,7 +194,18 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
         } catch {
             finishAfterIntentionalStopOrFail(error)
         }
+
+        if let recordingOutput {
+            try? stream?.removeRecordingOutput(recordingOutput)
+        }
+
         self.stream = nil
+        self.recordingOutput = nil
+
+        if !didFinish,
+           FileManager.default.fileExists(atPath: outputURL.path) {
+            finishWithSuccess()
+        }
     }
 
     nonisolated func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
