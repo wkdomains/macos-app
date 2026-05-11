@@ -242,6 +242,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.isMovable = false
         window.isMovableByWindowBackground = false
         positionTrafficLights(in: window)
+        MainWindowFramePersistence.shared.attach(to: window)
     }
 
     private func positionTrafficLights(in window: NSWindow) {
@@ -263,6 +264,165 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
                 y: superview.bounds.height - 29
             ))
         }
+    }
+}
+
+private final class MainWindowFramePersistence {
+    static let shared = MainWindowFramePersistence()
+
+    private var observations: [ObjectIdentifier: WindowObservation] = [:]
+    private var appliedWindowIDs = Set<ObjectIdentifier>()
+
+    private init() {}
+
+    func attach(to window: NSWindow) {
+        let windowID = ObjectIdentifier(window)
+
+        if observations[windowID] == nil {
+            observations[windowID] = WindowObservation(window: window) { [weak self, weak window] in
+                guard let self,
+                      let window
+                else {
+                    return
+                }
+
+                self.saveFrame(for: window)
+            } onClose: { [weak self, weak window] in
+                guard let self,
+                      let window
+                else {
+                    return
+                }
+
+                self.saveFrame(for: window)
+                self.observations.removeValue(forKey: ObjectIdentifier(window))
+                self.appliedWindowIDs.remove(ObjectIdentifier(window))
+            }
+        }
+
+        guard !appliedWindowIDs.contains(windowID) else { return }
+        appliedWindowIDs.insert(windowID)
+        restoreSavedFrameIfAvailable(to: window)
+    }
+
+    private func restoreSavedFrameIfAvailable(to window: NSWindow) {
+        guard let savedFrame = AppSettingsStore.shared.startupMainWindowFrame else { return }
+
+        let requestedFrame = NSRect(
+            x: CGFloat(savedFrame.x),
+            y: CGFloat(savedFrame.y),
+            width: CGFloat(savedFrame.width),
+            height: CGFloat(savedFrame.height)
+        )
+        window.setFrame(constrainedFrame(requestedFrame, for: window), display: false)
+    }
+
+    private func saveFrame(for window: NSWindow) {
+        guard !window.styleMask.contains(.fullScreen),
+              !window.isMiniaturized
+        else {
+            return
+        }
+
+        let frame = window.frame
+        AppSettingsStore.shared.updateMainWindowFrame(AppWindowFrame(
+            x: Double(frame.origin.x),
+            y: Double(frame.origin.y),
+            width: Double(frame.width),
+            height: Double(frame.height)
+        ))
+    }
+
+    private func constrainedFrame(_ frame: NSRect, for window: NSWindow) -> NSRect {
+        let minimumSize = window.minSize
+        let width = max(frame.width, minimumSize.width)
+        let height = max(frame.height, minimumSize.height)
+        var candidate = NSRect(x: frame.minX, y: frame.minY, width: width, height: height)
+
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return candidate }
+
+        let screen = screens.max { lhs, rhs in
+            lhs.visibleFrame.intersection(candidate).area < rhs.visibleFrame.intersection(candidate).area
+        } ?? window.screen ?? NSScreen.main ?? screens[0]
+
+        let visibleFrame = screen.visibleFrame
+        candidate.size.width = min(candidate.width, visibleFrame.width)
+        candidate.size.height = min(candidate.height, visibleFrame.height)
+
+        if !visibleFrame.intersects(candidate) {
+            candidate.origin.x = visibleFrame.midX - candidate.width / 2
+            candidate.origin.y = visibleFrame.midY - candidate.height / 2
+        }
+
+        candidate.origin.x = min(max(candidate.minX, visibleFrame.minX), visibleFrame.maxX - candidate.width)
+        candidate.origin.y = min(max(candidate.minY, visibleFrame.minY), visibleFrame.maxY - candidate.height)
+        return candidate
+    }
+}
+
+private final class WindowObservation {
+    private var pendingSave: DispatchWorkItem?
+    private var tokens: [NSObjectProtocol] = []
+
+    init(
+        window: NSWindow,
+        onSave: @escaping () -> Void,
+        onClose: @escaping () -> Void
+    ) {
+        let center = NotificationCenter.default
+        let saveNotifications: [Notification.Name] = [
+            NSWindow.didMoveNotification,
+            NSWindow.didResizeNotification,
+            NSWindow.didEndLiveResizeNotification,
+            NSWindow.didChangeScreenNotification
+        ]
+
+        tokens = saveNotifications.map { notificationName in
+            center.addObserver(
+                forName: notificationName,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.scheduleSave(onSave)
+            }
+        }
+
+        tokens.append(center.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.pendingSave?.cancel()
+            onClose()
+        })
+    }
+
+    deinit {
+        pendingSave?.cancel()
+        for token in tokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
+    private func scheduleSave(_ save: @escaping () -> Void) {
+        pendingSave?.cancel()
+
+        let workItem = DispatchWorkItem(block: save)
+        pendingSave = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+    }
+}
+
+private extension NSRect {
+    var area: CGFloat {
+        guard !isNull,
+              !isEmpty
+        else {
+            return 0
+        }
+
+        return width * height
     }
 }
 

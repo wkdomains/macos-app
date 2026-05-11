@@ -25,6 +25,13 @@ struct BrowserSiteIdentityMenuItem: Identifiable, Equatable {
     var isCurrent: Bool
 }
 
+struct AppWindowFrame: Codable, Equatable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+}
+
 struct AppSettings: Codable {
     static let defaultPort: UInt16 = 9001
     static let defaultURL = "https://wkdomains.com"
@@ -42,6 +49,7 @@ struct AppSettings: Codable {
     var darkDisabledSites: [String]
     var siteIdentities: [String: [SiteIdentity]]
     var activeSiteIdentityIDs: [String: UUID]
+    var mainWindowFrame: AppWindowFrame?
 
     static var defaults: AppSettings {
         AppSettings(
@@ -56,7 +64,8 @@ struct AppSettings: Codable {
             dark: true,
             darkDisabledSites: [],
             siteIdentities: [:],
-            activeSiteIdentityIDs: [:]
+            activeSiteIdentityIDs: [:],
+            mainWindowFrame: nil
         )
     }
 
@@ -72,7 +81,8 @@ struct AppSettings: Codable {
         dark: Bool,
         darkDisabledSites: [String],
         siteIdentities: [String: [SiteIdentity]],
-        activeSiteIdentityIDs: [String: UUID]
+        activeSiteIdentityIDs: [String: UUID],
+        mainWindowFrame: AppWindowFrame?
     ) {
         self.bookmarks = bookmarks
         self.port = port
@@ -86,6 +96,7 @@ struct AppSettings: Codable {
         self.darkDisabledSites = darkDisabledSites
         self.siteIdentities = siteIdentities
         self.activeSiteIdentityIDs = activeSiteIdentityIDs
+        self.mainWindowFrame = mainWindowFrame
     }
 
     init(from decoder: Decoder) throws {
@@ -105,6 +116,7 @@ struct AppSettings: Codable {
         darkDisabledSites = try container.decodeIfPresent([String].self, forKey: .darkDisabledSites) ?? []
         siteIdentities = try container.decodeIfPresent([String: [SiteIdentity]].self, forKey: .siteIdentities) ?? [:]
         activeSiteIdentityIDs = try container.decodeIfPresent([String: UUID].self, forKey: .activeSiteIdentityIDs) ?? [:]
+        mainWindowFrame = try container.decodeIfPresent(AppWindowFrame.self, forKey: .mainWindowFrame)
     }
 }
 
@@ -163,6 +175,10 @@ final class AppSettingsStore {
     var startupActiveTabIndex: Int {
         guard startupURLs.indices.contains(cachedSettings.activeTabIndex) else { return 0 }
         return cachedSettings.activeTabIndex
+    }
+
+    var startupMainWindowFrame: AppWindowFrame? {
+        cachedSettings.mainWindowFrame
     }
 
     var darkDisabledSites: [String] {
@@ -372,6 +388,22 @@ final class AppSettingsStore {
         write(cachedSettings)
     }
 
+    func updateMainWindowFrame(_ frame: AppWindowFrame) {
+        guard frame.width >= 720,
+              frame.height >= 520,
+              frame.x.isFinite,
+              frame.y.isFinite,
+              frame.width.isFinite,
+              frame.height.isFinite
+        else {
+            return
+        }
+
+        guard cachedSettings.mainWindowFrame != frame else { return }
+        cachedSettings.mainWindowFrame = frame
+        write(cachedSettings)
+    }
+
     private func identity(withID identityID: UUID) -> SiteIdentity? {
         for identities in cachedSettings.siteIdentities.values {
             if let identity = identities.first(where: { $0.id == identityID }) {
@@ -533,7 +565,23 @@ final class AppSettingsStore {
         settings.activeSiteIdentityIDs = settings.activeSiteIdentityIDs.filter { siteKey, identityID in
             settings.siteIdentities[siteKey]?.contains(where: { $0.id == identityID }) == true
         }
+        settings.mainWindowFrame = normalizedWindowFrame(settings.mainWindowFrame)
         return settings
+    }
+
+    nonisolated private static func normalizedWindowFrame(_ frame: AppWindowFrame?) -> AppWindowFrame? {
+        guard let frame,
+              frame.x.isFinite,
+              frame.y.isFinite,
+              frame.width.isFinite,
+              frame.height.isFinite,
+              frame.width >= 720,
+              frame.height >= 520
+        else {
+            return nil
+        }
+
+        return frame
     }
 
     nonisolated private static func normalizedBookmarkURLs(_ values: [String]) -> [String] {
