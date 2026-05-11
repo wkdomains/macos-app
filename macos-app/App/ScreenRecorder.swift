@@ -8,6 +8,7 @@ import AppKit
 import Combine
 import CoreGraphics
 import CoreMedia
+import CoreVideo
 import Foundation
 @preconcurrency import ScreenCaptureKit
 
@@ -130,9 +131,11 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCStrea
     private let queue = DispatchQueue(label: "com.wkdomains.screen-recorder")
     nonisolated(unsafe) private let writer: AVAssetWriter
     nonisolated(unsafe) private let videoInput: AVAssetWriterInput
+    nonisolated(unsafe) private let pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor
 
     nonisolated(unsafe) private var stream: SCStream?
     nonisolated(unsafe) private var finishHandler: ((Result<URL, Error>) -> Void)?
+    nonisolated(unsafe) private var firstPresentationTime: CMTime?
     nonisolated(unsafe) private var didStartSession = false
     nonisolated(unsafe) private var didAppendFrame = false
     nonisolated(unsafe) private var isStopping = false
@@ -161,6 +164,7 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCStrea
         configuration.queueDepth = 5
         configuration.showsCursor = true
         configuration.capturesAudio = false
+        configuration.pixelFormat = kCVPixelFormatType_32BGRA
         self.configuration = configuration
 
         try? FileManager.default.removeItem(at: outputURL)
@@ -183,6 +187,16 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCStrea
 
         videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
         videoInput.expectsMediaDataInRealTime = true
+        let sourceAttributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ]
+        pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: sourceAttributes
+        )
 
         guard writer.canAdd(videoInput) else {
             throw RecordingError.couldNotAddVideoInput
@@ -229,6 +243,7 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCStrea
     nonisolated private func appendScreenSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
         guard !isStopping, sampleBuffer.isValid, CMSampleBufferDataIsReady(sampleBuffer) else { return }
         guard isCompleteFrame(sampleBuffer) else { return }
+        guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         guard writer.status != .failed else {
             finishWithFailure(writer.error ?? RecordingError.writerFailed("The movie writer failed."))
@@ -240,18 +255,27 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCStrea
                 finishWithFailure(writer.error ?? RecordingError.writerFailed("The movie writer could not start."))
                 return
             }
-            writer.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+            writer.startSession(atSourceTime: .zero)
+            firstPresentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             didStartSession = true
         }
 
         guard videoInput.isReadyForMoreMediaData else { return }
+        let presentationTime = normalizedPresentationTime(for: sampleBuffer)
 
-        guard videoInput.append(sampleBuffer) else {
+        guard pixelBufferAdaptor.append(imageBuffer, withPresentationTime: presentationTime) else {
             finishWithFailure(writer.error ?? RecordingError.writerFailed("A captured video frame could not be written."))
             return
         }
 
         didAppendFrame = true
+    }
+
+    nonisolated private func normalizedPresentationTime(for sampleBuffer: CMSampleBuffer) -> CMTime {
+        let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard let firstPresentationTime else { return .zero }
+        let relativeTime = CMTimeSubtract(presentationTime, firstPresentationTime)
+        return relativeTime >= .zero ? relativeTime : .zero
     }
 
     nonisolated private func isCompleteFrame(_ sampleBuffer: CMSampleBuffer) -> Bool {

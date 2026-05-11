@@ -40,7 +40,7 @@ final class BrowserCookiePersistence {
                 completion?()
             }
             return
-        }
+        }   
 
         for coordinator in coordinators {
             coordinator.logSaveAllRequested(coordinatorCount: coordinators.count)
