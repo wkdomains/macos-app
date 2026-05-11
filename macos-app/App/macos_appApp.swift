@@ -17,6 +17,7 @@ struct macos_appApp: App {
     @StateObject private var appModel = AppModel()
     @StateObject private var historyFaviconStore = HistoryFaviconStore()
     @StateObject private var bookmarkFaviconStore = HistoryFaviconStore()
+    @StateObject private var screenRecorder = ScreenRecorder()
 
     var body: some Scene {
         Window("", id: "main") {
@@ -26,12 +27,26 @@ struct macos_appApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             BrowserTabCommands(browser: appModel.browser)
+            ScreenRecordingCommands(recorder: screenRecorder)
             BrowserHistoryCommands(browser: appModel.browser, faviconStore: historyFaviconStore)
             BrowserBookmarksCommands(browser: appModel.browser, faviconStore: bookmarkFaviconStore)
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase != .active else { return }
             appModel.browser.saveAllProfileCookiesNow()
+        }
+    }
+}
+
+private struct ScreenRecordingCommands: Commands {
+    @ObservedObject var recorder: ScreenRecorder
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button(recorder.isRecording ? "Stop Recording" : "Record Entire Screen") {
+                recorder.toggleRecording()
+            }
+            .keyboardShortcut("5", modifiers: [.command, .shift])
         }
     }
 }
