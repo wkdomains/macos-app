@@ -186,15 +186,11 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
         guard !isStopping else { return }
         isStopping = true
 
-        if let recordingOutput {
-            do {
-                try stream?.removeRecordingOutput(recordingOutput)
-            } catch {
-                finishWithFailure(error)
-            }
+        do {
+            try await stream?.stopCapture()
+        } catch {
+            finishAfterIntentionalStopOrFail(error)
         }
-
-        try? await stream?.stopCapture()
         self.stream = nil
     }
 
@@ -203,10 +199,17 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
     }
 
     nonisolated func recordingOutput(_ recordingOutput: SCRecordingOutput, didFailWithError error: Error) {
-        finishWithFailure(error)
+        if isStopping {
+            finishAfterIntentionalStopOrFail(error)
+        } else {
+            finishWithFailure(error)
+        }
     }
 
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
+        if isStopping {
+            return
+        }
         finishWithFailure(error)
     }
 
@@ -225,5 +228,14 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
         recordingOutput = nil
         finishHandler?(.failure(RecordingError.recordingFailed(error.localizedDescription)))
         finishHandler = nil
+    }
+
+    nonisolated private func finishAfterIntentionalStopOrFail(_ error: Error) {
+        if FileManager.default.fileExists(atPath: outputURL.path),
+           (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? NSNumber)?.intValue ?? 0 > 0 {
+            finishWithSuccess()
+        } else {
+            finishWithFailure(error)
+        }
     }
 }
