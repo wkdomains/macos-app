@@ -303,6 +303,7 @@ private final class MainWindowFramePersistence {
         guard !appliedWindowIDs.contains(windowID) else { return }
         appliedWindowIDs.insert(windowID)
         restoreSavedFrameIfAvailable(to: window)
+        saveFrame(for: window)
     }
 
     private func restoreSavedFrameIfAvailable(to window: NSWindow) {
