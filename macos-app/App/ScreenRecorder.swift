@@ -96,7 +96,7 @@ final class ScreenRecorder: ObservableObject {
     private static func desktopOutputURL() -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
-        let filename = "wkdomain_\(formatter.string(from: Date())).mp4"
+        let filename = "wkdomain_\(formatter.string(from: Date())).mov"
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Desktop", isDirectory: true)
             .appendingPathComponent(filename)
@@ -140,11 +140,9 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
         }
         self.display = display
 
-        let displayID = display.displayID
-        let pixelWidth = CGDisplayPixelsWide(displayID)
-        let pixelHeight = CGDisplayPixelsHigh(displayID)
-        let width = max(2, Int(pixelWidth)) & ~1
-        let height = max(2, Int(pixelHeight)) & ~1
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let width = max(2, Int((filter.contentRect.width * CGFloat(filter.pointPixelScale)).rounded())) & ~1
+        let height = max(2, Int((filter.contentRect.height * CGFloat(filter.pointPixelScale)).rounded())) & ~1
 
         let configuration = SCStreamConfiguration()
         configuration.width = width
@@ -172,10 +170,8 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         let recordingConfiguration = SCRecordingOutputConfiguration()
         recordingConfiguration.outputURL = outputURL
-        recordingConfiguration.outputFileType = .mp4
-        recordingConfiguration.videoCodecType = recordingConfiguration.availableVideoCodecTypes.contains(.hevc)
-            ? .hevc
-            : .h264
+        recordingConfiguration.outputFileType = .mov
+        recordingConfiguration.videoCodecType = .h264
 
         let recordingOutput = SCRecordingOutput(configuration: recordingConfiguration, delegate: self)
         try stream.addRecordingOutput(recordingOutput)
