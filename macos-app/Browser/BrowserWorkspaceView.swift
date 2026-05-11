@@ -160,9 +160,29 @@ extension ContentView {
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .fill(browser.viewportMode == mode ? Color.accentColor.opacity(0.14) : Color.clear)
                 )
+                .overlay {
+                    if pulsingViewportMode == mode {
+                        ViewportPulseRing()
+                            .id(viewportPulseToken)
+                    }
+                }
                 .accessibilityLabel(mode.accessibilityLabel)
                 .help(mode.helpText)
             }
+        }
+        .onChange(of: browser.viewportMode) { _, mode in
+            pulseViewportControl(mode)
+        }
+    }
+
+    func pulseViewportControl(_ mode: BrowserViewportMode) {
+        let token = UUID()
+        viewportPulseToken = token
+        pulsingViewportMode = mode
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard viewportPulseToken == token else { return }
+            pulsingViewportMode = nil
         }
     }
 
@@ -249,6 +269,20 @@ extension ContentView {
             guard pageFindDraft == query else { return }
             pageFindMatchFound = matchFound
         }
+    }
+}
+
+private struct ViewportPulseRing: View {
+    @State private var isExpanded = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .stroke(Color.accentColor.opacity(isExpanded ? 0 : 0.9), lineWidth: 2)
+            .scaleEffect(isExpanded ? 1.24 : 1)
+            .animation(.easeOut(duration: 0.55), value: isExpanded)
+            .onAppear {
+                isExpanded = true
+            }
     }
 }
 

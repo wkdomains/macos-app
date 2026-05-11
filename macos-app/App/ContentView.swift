@@ -25,6 +25,8 @@ struct ContentView: View {
     @State var shouldFocusBrowserAfterLoad = false
     @State var suggestionTask: Task<Void, Never>?
     @State var suggestions: [AddressSuggestion] = []
+    @State var viewportPulseToken = UUID()
+    @State var pulsingViewportMode: BrowserViewportMode?
     @StateObject private var tabStripMouseBridge = BrowserTabStripMouseEventBridge()
 
     var body: some View {
