@@ -4,4 +4,5 @@ DerivedData/
 build/
 *.xcuserstate
 xcuserdata/
-DarkReaderWebExtension
+/DarkReaderWebExtension/*
+!/DarkReaderWebExtension/README.md
