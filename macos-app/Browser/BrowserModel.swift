@@ -29,6 +29,7 @@ final class BrowserModel: NSObject, ObservableObject {
         BrowserSiteIdentityMenuItem(id: BrowserSiteIdentityMenuItem.defaultID, title: "Default", isCurrent: true)
     ]
     @Published var viewportMode: BrowserViewportMode = .desktop
+    @Published var isConsolePanelVisible = false
 
     @Published var webView: BrowserWKWebView
     let botTerminal = BotTerminalModel()
@@ -39,7 +40,7 @@ final class BrowserModel: NSObject, ObservableObject {
     private var activePageHost: String?
     private var pendingLoginUsernameTarget: LoginFieldTarget?
     private var pendingLoginPasswordTarget: LoginFieldTarget?
-    var consoleRecords: [ConsoleMessageRecord] = []
+    @Published var consoleRecords: [ConsoleMessageRecord] = []
     var xhrRecords: [XHRRequestRecord] = []
     var xhrRecordIndexesByID: [String: Int] = [:]
     var lastTimingPageURL: String?
@@ -137,6 +138,7 @@ final class BrowserModel: NSObject, ObservableObject {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         configuration.applicationNameForUserAgent = safariApplicationNameForUserAgent
+        configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
         BrowserWebExtension.configure(configuration)
 
         return BrowserWKWebView(frame: .zero, configuration: configuration)
@@ -458,6 +460,11 @@ final class BrowserModel: NSObject, ObservableObject {
         guard viewportMode != mode else { return }
         viewportMode = mode
         markScreenshotDirty(scheduleAfter: 0.35)
+    }
+
+    func setConsolePanelVisible(_ isVisible: Bool) {
+        guard isConsolePanelVisible != isVisible else { return }
+        isConsolePanelVisible = isVisible
     }
 
     func requestLLMSSummary() {

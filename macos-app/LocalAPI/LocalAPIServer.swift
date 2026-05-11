@@ -350,6 +350,45 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/console-panel" {
+            if request.method == "GET" {
+                sendJSONObject(
+                    [
+                        "visible": dataReader.browser.isConsolePanelVisible,
+                        "messageCount": dataReader.browser.consoleRecords.count
+                    ],
+                    contentType: "application/json; charset=utf-8",
+                    status: .ok,
+                    on: connection
+                )
+                return
+            }
+
+            guard request.method == "POST" else {
+                sendError(status: .methodNotAllowed, message: "Use GET or POST for console panel requests.", on: connection)
+                return
+            }
+
+            guard request.originIsAllowed else {
+                sendError(status: .badRequest, message: "Origin is not allowed.", on: connection)
+                return
+            }
+
+            let body = jsonBody(from: request) ?? [:]
+            let visible = body["visible"] as? Bool ?? false
+            dataReader.browser.setConsolePanelVisible(visible)
+            sendJSONObject(
+                [
+                    "visible": dataReader.browser.isConsolePanelVisible,
+                    "messageCount": dataReader.browser.consoleRecords.count
+                ],
+                contentType: "application/json; charset=utf-8",
+                status: .ok,
+                on: connection
+            )
+            return
+        }
+
         guard request.method == "GET" else {
             sendError(status: .methodNotAllowed, message: "Only GET is supported.", on: connection)
             return

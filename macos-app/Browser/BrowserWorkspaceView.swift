@@ -56,6 +56,16 @@ extension ContentView {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
+
+                if browser.isConsolePanelVisible {
+                    BrowserConsolePanel(records: browser.consoleRecords) {
+                        browser.setConsolePanelVisible(false)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .frame(width: browser.viewportMode.width)
             .frame(
@@ -189,6 +199,23 @@ extension ContentView {
     var botControls: some View {
         HStack(spacing: 1) {
             Button {
+                browser.setConsolePanelVisible(!browser.isConsolePanelVisible)
+            } label: {
+                Image(systemName: "curlybraces.square")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(browser.isConsolePanelVisible ? Color.accentColor : .secondary)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(browser.isConsolePanelVisible ? Color.accentColor.opacity(0.14) : Color.clear)
+            )
+            .accessibilityLabel("JavaScript console")
+            .help("JavaScript console")
+
+            Button {
                 if isBotPanelVisible {
                     isBotPanelVisible = false
                     browser.closeBotTerminal()
@@ -268,6 +295,80 @@ extension ContentView {
         browser.findInPage(query, backwards: backwards) { matchFound in
             guard pageFindDraft == query else { return }
             pageFindMatchFound = matchFound
+        }
+    }
+}
+
+private struct BrowserConsolePanel: View {
+    let records: [ConsoleMessageRecord]
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "curlybraces.square")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("JavaScript console")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("developer extras enabled")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Close JavaScript console")
+            }
+
+            if records.isEmpty {
+                Text("No page console messages captured yet.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(records.suffix(5), id: \.id) { record in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(record.level.uppercased())
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundStyle(color(for: record.level))
+                                .frame(width: 42, alignment: .leading)
+                            Text(record.message)
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .lineLimit(2)
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: 720)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.96))
+                .shadow(color: .black.opacity(0.22), radius: 18, x: 0, y: 10)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.7), lineWidth: 1)
+        )
+    }
+
+    private func color(for level: String) -> Color {
+        switch level.lowercased() {
+        case "error":
+            return Color(nsColor: .systemRed)
+        case "warn", "warning":
+            return Color(nsColor: .systemOrange)
+        default:
+            return .secondary
         }
     }
 }

@@ -103,6 +103,39 @@ Typical loop:
 4. Launch rebuilt app.
 5. Hit `localhost:9001` endpoints to verify.
 
+Fast demo loop after a local `-derivedDataPath build/DerivedData` build:
+
+```sh
+cd /Users/aa/wkdomains/macos-app
+xcodebuild -scheme macos-app -configuration Debug -derivedDataPath build/DerivedData build
+
+app=/Users/aa/wkdomains/macos-app/build/DerivedData/Build/Products/Debug/wkdomains.app
+pids=$(pgrep -f '/wkdomains\.app/Contents/MacOS/wkdomains' || true)
+if [ -n "$pids" ]; then kill -9 $pids 2>/dev/null || true; fi
+
+for i in {1..20}; do
+  pgrep -f '/wkdomains\.app/Contents/MacOS/wkdomains' >/dev/null || break
+  sleep 0.1
+done
+
+open -n "$app" || (sleep 1 && open -n "$app")
+
+for i in {1..40}; do
+  if curl -sS --max-time 1 http://localhost:9001/api/v1/page >/tmp/wk-page.json 2>/dev/null; then
+    cat /tmp/wk-page.json | jq '{url,title,viewportMode,isLoading}'
+    break
+  fi
+  sleep 0.5
+done
+```
+
+Notes:
+
+- Prefer `open -n "$app"` over launching `Contents/MacOS/wkdomains` directly for recordings; Launch Services gives the app a normal foreground window.
+- If `open` returns `-600`, it usually means the previous app instance was killed too recently. Wait one second and retry `open -n "$app"`.
+- Do not keep retrying a dead direct executable launch. Verify with `/api/v1/page`; if the local API does not come back, launch through Finder/Launch Services or ask the human to reopen the built app.
+- For route changes in `LocalAPIServer.swift`, verify POST routes are above the general `guard request.method == "GET"` fallback.
+
 ## Core Browser API
 
 Base URL:
@@ -142,6 +175,8 @@ Endpoints:
 - `GET /api/v1/element/@eN`: element x-ray: computed styles, box model, accessibility state, selector/source hints, ancestors, siblings, contrast.
 - `GET /api/v1/links`: anchors, forms, scripts, link tags.
 - `GET /api/v1/console`: page console calls, window errors, unhandled promises, CSP violations.
+- `GET /api/v1/console-panel`: current in-app JavaScript console drawer state.
+- `POST /api/v1/console-panel`: show or hide the in-app JavaScript console drawer. Body: `{"visible":true}` or `{"visible":false}`.
 - `GET /api/v1/timing`: browser/API timing rollup.
 - `GET /api/v1/timing/reset`: reset timing session.
 - `GET /api/v1/resources`: common machine files: `llms.txt`, OpenAPI, agent cards, sitemap, robots, etc.
