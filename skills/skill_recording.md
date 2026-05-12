@@ -6,7 +6,9 @@ Use this when an agent needs to record the visible macOS desktop while driving t
 
 Record only visible action. Pause recording while the agent reads, thinks, extracts DOM, or plans the next move. Resume recording for user-visible actions such as scrolling, navigation, viewport changes, console-panel display, and UI interaction.
 
-Prefer writing narration notes during the recording and generating VoxCPM audio after the recording is stopped. This keeps speech synthesis latency out of the pause/resume timing problem.
+For longer exploratory reviews, prefer writing narration notes during the recording and generating VoxCPM audio after the recording is stopped. This keeps speech synthesis latency out of the pause/resume timing problem.
+
+For short polished videos, use the stricter segment-first edit flow: inspect the site first, write a few site-specific lines, generate the WAV files before recording, measure their exact durations, record one matching browser segment per WAV, mux each segment with its own audio, then concatenate the finished clips.
 
 ## Required Local Services
 
@@ -73,6 +75,93 @@ curl -sS http://127.0.0.1:9001/api/v1/console | jq .
 12. Resume briefly before stop, then stop through the API.
 13. Generate all VoxCPM WAV files after the video exists.
 14. Mux the WAV files into the final video using the segment manifest.
+
+## Short Polished Segment Flow
+
+Use this when the goal is a short video the website owner would actually like: focused, funny, and about their product.
+
+1. Inspect the site before recording:
+
+```sh
+curl -sS http://127.0.0.1:9001/api/v1/page | jq .
+curl -sS http://127.0.0.1:9001/api/v1/dom | jq .
+curl -sS http://127.0.0.1:9001/api/v1/snapshot | jq .
+curl -sS http://127.0.0.1:9001/api/v1/links | jq .
+```
+
+2. Write only 3 to 5 narration lines.
+3. Make every line about the website content, not the recording process.
+4. Use one voice unless the demo specifically needs character variety.
+5. Generate the WAV files before recording.
+6. Measure each WAV duration with `ffprobe`.
+7. Record one browser segment per WAV, slightly longer than the WAV.
+8. Extract each segment to exactly the WAV duration.
+9. Mux each extracted video segment with its matching WAV.
+10. Concatenate the muxed clips.
+
+This produces a final structure like:
+
+```text
+clip1 video + clip1 audio
+then clip2 video + clip2 audio
+then clip3 video + clip3 audio
+```
+
+This avoids the overlapping-audio failure mode caused by delayed audio tracks stacked over one long video.
+
+Good narration content:
+
+- Explain what the company appears to do.
+- React to concrete claims, numbers, product names, app names, or demos visible on the page.
+- Include one useful open question the website raises but does not fully answer.
+- Keep the tone entertaining, but make the company look understandable and interesting.
+
+Bad narration content:
+
+- Describing the recording process.
+- Saying that the agent is scrolling or switching viewports.
+- Generic praise that could fit any SaaS homepage.
+- Jokes that are not anchored to visible page content.
+
+Example lines for `withone.ai`:
+
+```text
+Looking at With One dot AI, I think I just found mission control for AI agents: one CLI, one login, and every app lined up like it heard the boss music.
+Sixty two thousand tools, seventeen thousand developers, and teams from Google to Figma? That is either serious traction, or the most organized guest list in software.
+The open question I still have is permissions: when an agent can touch Slack, HubSpot, Shopify, and Gmail, show me the audit trail before I hand it the keys.
+```
+
+Generate and measure:
+
+```sh
+curl -sS -X POST http://127.0.0.1:9002/say \
+  -H 'Content-Type: application/json' \
+  -d '{"voice":"cinematic_trailer","text":"Looking at With One dot AI, I think I just found mission control for AI agents.","filename":"seg1.wav"}'
+
+ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 seg1.wav
+```
+
+When recording, use the WAV duration as the target visual length. Record a little extra, then trim in ffmpeg.
+
+Assemble without overlapping audio:
+
+```sh
+ffmpeg -y -ss 0.00 -t 12.800 -i raw.mov -i seg1.wav \
+  -map 0:v:0 -map 1:a:0 \
+  -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \
+  -c:a aac -b:a 192k -shortest clip1.mov
+
+ffmpeg -y -ss 15.00 -t 13.760 -i raw.mov -i seg2.wav \
+  -map 0:v:0 -map 1:a:0 \
+  -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \
+  -c:a aac -b:a 192k -shortest clip2.mov
+
+printf "file '%s'\nfile '%s'\n" clip1.mov clip2.mov > concat.txt
+
+ffmpeg -y -f concat -safe 0 -i concat.txt -c copy -movflags +faststart final.mov
+```
+
+Use this flow for short 30 to 60 second demos. Use the manifest/delayed-audio flow only when a single continuous recording is more important than exact segment-level narration.
 
 ## Important Timing Lesson
 
@@ -159,6 +248,8 @@ Keep each line around 2 to 8 seconds. Funny is good, but it should be anchored t
 
 Do not attach audio to each temp video segment during recording. Let the recorder keep video-only segments and add all narration at the end.
 
+For short polished videos, do not use `adelay`/`amix`. Instead, create separate muxed clips and concatenate them. The output should never have multiple narration tracks active at once.
+
 Maintain two manifests while recording:
 
 ```text
@@ -192,6 +283,17 @@ ffmpeg -y \
 
 Use `segments.tsv` to calculate cumulative segment start times for `adelay`. Generate the WAV files only after recording has stopped, then write a third manifest with the generated WAV paths.
 
+For short polished videos, keep a simpler manifest:
+
+```text
+label<TAB>wav_path<TAB>wav_duration<TAB>raw_video_start
+seg1_hero<TAB>/path/seg1.wav<TAB>12.800<TAB>0.00
+seg2_stats<TAB>/path/seg2.wav<TAB>13.760<TAB>15.00
+seg3_question<TAB>/path/seg3.wav<TAB>11.520<TAB>30.60
+```
+
+Then cut and mux each row independently.
+
 ## Recorder Temp Files
 
 During pause/resume recording, temporary segment files are created under:
@@ -216,6 +318,9 @@ The app assembles them into the final `.mov`, then removes the temp directory. I
 - If the script records only the API call duration, not the visible action duration, the final movie misses the scroll/navigation.
 - macOS `date +%s%3N` does not provide millisecond timing like GNU date. Use fixed known durations, Python, Perl, or another reliable timer.
 - Do not let speech generation happen during the recording unless the demo specifically needs to show it. It makes timing harder and adds long non-visual waits.
+- For short polished videos, generate speech before recording so the visual segment can be planned around the exact WAV duration.
+- Do not stack multiple delayed narration tracks for a short segmented edit. Mux one audio file per video clip and concatenate the clips.
+- If narration is about the mechanics of recording instead of the website, rewrite it before generating audio.
 - Always verify viewport mode after `POST /api/v1/viewport`. If the viewport is not `mobileSmall`, do not record the mobile scroll.
 - Avoid brittle shell helper names. In zsh, a local variable named `path` can interfere with command lookup because `path` is tied to `PATH`; prefer names like `endpoint`.
 - If final assembly fails with `Cannot Open`, suspect an unfinalized segment file.
