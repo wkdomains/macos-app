@@ -295,7 +295,8 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
             Task {
                 do {
                     try await stream.stopCapture()
-                    if self.segmentFinishContinuation != nil {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    if self.segmentFinishContinuation != nil, self.activeSegmentURL != nil {
                         self.finishActiveSegment()
                     }
                 } catch {
