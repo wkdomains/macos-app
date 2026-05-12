@@ -401,7 +401,177 @@ Do not attach audio to each temp video segment during recording. Let the recorde
 
 For short polished videos, do not use `adelay`/`amix`. Instead, create separate muxed clips and concatenate them. The output should never have multiple narration tracks active at once.
 
-For an already-trimmed long video, do not simply concatenate all WAV narration and speed it up to the full video duration. That can make good audio drift into the wrong visual section. If the edit is section-based, treat the video as a sequence of visual slots and place one existing WAV into each slot.
+## Turning A Long Raw Recording Into A Watchable Demo
+
+Use this when starting from a long raw screen recording with no audio, such as a 10 to 15 minute product test drive. The goal is not to preserve real time. The goal is to remove dead air, waiting, repeated attempts, and thinking time while keeping the visible story understandable.
+
+The process:
+
+1. Probe the raw file.
+2. Make contact sheets or sampled frames.
+3. Identify visible action beats.
+4. Cut only the beats that move the story forward.
+5. Speed the selected clips moderately if the UI motion remains readable.
+6. Concatenate a no-audio trimmed video.
+7. Review the trimmed video visually.
+8. Write narration against the trimmed visual beats.
+9. Add audio after the picture edit is stable.
+
+Good cuts to keep:
+
+- First meaningful page or empty state.
+- Form filling that shows what product is being created.
+- Validation errors or UI gotchas, if they teach something useful.
+- Successful create/save/publish moments.
+- Navigation into important product areas.
+- Before/after states where the app clearly changed.
+- Final customer-facing or public result.
+
+Boring cuts to remove:
+
+- Long pauses where nothing in the UI changes.
+- Waiting for network or app loading after the viewer already understands what is happening.
+- Repeated attempts that do not reveal new information.
+- Terminal/API thinking periods unless the terminal output is part of the demo.
+- Tiny cursor movement or scrolling that does not land on new content.
+- Dead ends that are not mentioned in the narration.
+
+Make a contact sheet from the raw file. If `drawtext` is unavailable in the local ffmpeg build, use sampled frames without timestamp text and infer timing from frame order:
+
+```sh
+RAW=/Users/aa/Desktop/product_raw.mov
+WORK=/tmp/product_trim
+
+rm -rf "$WORK"
+mkdir -p "$WORK/frames"
+
+ffmpeg -y -hide_banner -loglevel error \
+  -i "$RAW" -vf "fps=1/10,scale=640:-1" \
+  "$WORK/frames/frame_%03d.jpg"
+
+ffmpeg -y -hide_banner -loglevel error \
+  -pattern_type glob -i "$WORK/frames/*.jpg" \
+  -filter_complex "tile=3x6:padding=10:margin=10:color=black" \
+  "$WORK/contact_10s.jpg"
+```
+
+Open the contact sheet and create a cut list. Each row is `start_seconds<TAB>end_seconds`. Choose rough ranges first, then refine after seeing the first trimmed video.
+
+```text
+0	6
+20	28
+60	72
+200	212
+```
+
+Build the trimmed video from the cut list:
+
+```sh
+RAW=/Users/aa/Desktop/product_raw.mov
+OUT=/Users/aa/Desktop/product_trimmed.mov
+WORK=/tmp/product_trim
+SPEED=1.45
+
+i=0
+: > "$WORK/concat.txt"
+while IFS=$'\t' read -r start end; do
+  i=$((i + 1))
+  duration=$(awk -v s="$start" -v e="$end" 'BEGIN { printf "%.3f", e - s }')
+  clip=$(printf "$WORK/clip_%02d.mov" "$i")
+
+  ffmpeg -y -hide_banner -loglevel error \
+    -ss "$start" -t "$duration" -i "$RAW" \
+    -vf "setpts=(PTS-STARTPTS)/$SPEED,scale=1920:1080" \
+    -an -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p "$clip"
+
+  printf "file '%s'\n" "$clip" >> "$WORK/concat.txt"
+done < "$WORK/cuts.tsv"
+
+ffmpeg -y -hide_banner -loglevel error \
+  -f concat -safe 0 -i "$WORK/concat.txt" \
+  -c copy -movflags +faststart "$OUT"
+```
+
+Review the trimmed video before adding voice:
+
+```sh
+ffprobe -v error -show_entries format=duration,size -of default=nw=1 "$OUT"
+
+rm -rf "$WORK/trimmed_frames"
+mkdir -p "$WORK/trimmed_frames"
+ffmpeg -y -hide_banner -loglevel error \
+  -i "$OUT" -vf "fps=1/10,scale=640:-1" \
+  "$WORK/trimmed_frames/frame_%03d.jpg"
+ffmpeg -y -hide_banner -loglevel error \
+  -pattern_type glob -i "$WORK/trimmed_frames/*.jpg" \
+  -filter_complex "tile=3x6:padding=10:margin=10:color=black" \
+  "$WORK/trimmed_contact.jpg"
+```
+
+The trimmed video should feel like a coherent product story even without audio. If it does not, fix the cut list before generating narration.
+
+After the picture edit is stable, write one narration line per visual beat or section. The narration should describe what is on screen now, not what happened two clips ago.
+
+Do not simply concatenate all WAV narration and speed it up to the full video duration. That can make good audio drift into the wrong visual section. If the edit is section-based, treat the video as a sequence of visual slots and place one existing WAV into each slot.
+
+Example: rebuild the Kelviq 12:34 raw product test drive into the 2:57 trimmed demo:
+
+```sh
+RAW=/Users/aa/Desktop/kelviq.mov
+OUT=/Users/aa/Desktop/kelviq_trimmed.mov
+WORK=/tmp/kelviq_trim
+
+rm -rf "$WORK"
+mkdir -p "$WORK"
+
+cat > "$WORK/cuts.tsv" <<'EOF'
+0	6
+20	28
+60	72
+200	212
+240	250
+250	265
+300	312
+320	340
+380	395
+445	462
+470	490
+520	540
+570	590
+630	648
+660	680
+700	733
+EOF
+
+i=0
+: > "$WORK/concat.txt"
+while IFS=$'\t' read -r start end; do
+  i=$((i + 1))
+  duration=$(awk -v s="$start" -v e="$end" 'BEGIN { printf "%.3f", e - s }')
+  clip=$(printf "$WORK/clip_%02d.mov" "$i")
+
+  ffmpeg -y -hide_banner -loglevel error \
+    -ss "$start" -t "$duration" -i "$RAW" \
+    -vf "setpts=(PTS-STARTPTS)/1.45,scale=1920:1080" \
+    -an -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p "$clip"
+
+  printf "file '%s'\n" "$clip" >> "$WORK/concat.txt"
+done < "$WORK/cuts.tsv"
+
+ffmpeg -y -hide_banner -loglevel error \
+  -f concat -safe 0 -i "$WORK/concat.txt" \
+  -c copy -movflags +faststart "$OUT"
+
+ffprobe -v error -show_entries format=duration,size -of default=nw=1 "$OUT"
+```
+
+Expected Kelviq trimmed output:
+
+```text
+duration: about 177.78 seconds
+resolution: 1920x1080
+audio: none
+```
 
 Repair pattern for an existing trimmed video and existing WAV files:
 
