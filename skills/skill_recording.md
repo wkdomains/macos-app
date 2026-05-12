@@ -163,6 +163,157 @@ ffmpeg -y -f concat -safe 0 -i concat.txt -c copy -movflags +faststart final.mov
 
 Use this flow for short 30 to 60 second demos. Use the manifest/delayed-audio flow only when a single continuous recording is more important than exact segment-level narration.
 
+## Section-By-Section Review Flow
+
+Use this when the user wants a review that follows a landing page section by section, such as 10 clips before the FAQ.
+
+1. Inspect the page content with DOM, markdown routes, and screenshots.
+2. Identify the main sections before the FAQ.
+3. Scroll to candidate positions and make a contact sheet.
+4. Write one narration line per visible section.
+5. Generate every WAV before recording.
+6. Record each section as its own raw movie.
+7. Trim each raw movie to the matching WAV duration.
+8. Mux each trimmed movie with exactly one WAV.
+9. Concatenate the muxed clips.
+
+This is slower than recording one long video, but it avoids cumulative timing drift and makes each clip easier to re-do.
+
+Useful section discovery calls:
+
+```sh
+curl -sS http://127.0.0.1:9001/api/v1/dom | jq -r '(.text // .bodyText // .visibleText // "")'
+curl -sSL https://www.example.com/md
+curl -sS http://127.0.0.1:9001/api/v1/layout | jq .
+```
+
+For sites that expose clean markdown routes, prefer those for the section outline, then verify visually in the browser. For `withone.ai`, `/md` exposed a clean outline:
+
+```text
+Hero
+By the numbers
+One CLI
+Auth
+Agent Capabilities
+Use Cases
+Flows
+Agents
+Production Infrastructure
+Bridge / Open Source
+FAQ
+```
+
+Stop before FAQ if the user asks for pre-FAQ sections.
+
+Candidate section map example:
+
+```text
+01_hero                 y=0
+02_metrics              y=760
+03_cli                  y=1180
+04_auth                 y=2680
+05_capabilities         y=4550
+06_use_cases            y=5600
+07_flows                y=7000
+08_agents               y=8450
+09_production           y=9650
+10_bridge_open_source   y=11150
+```
+
+Always verify these positions visually. Use screenshots or a contact sheet before committing to recording.
+
+Contact-sheet pattern:
+
+```sh
+mkdir -p /tmp/site_section_screens
+
+while IFS=$'\t' read -r label y; do
+  curl -sS -X POST http://127.0.0.1:9001/api/v1/action \
+    -H 'Content-Type: application/json' \
+    -d '{"type":"scroll","direction":"top","durationMs":100}' >/dev/null
+  sleep 0.2
+
+  curl -sS -X POST http://127.0.0.1:9001/api/v1/action \
+    -H 'Content-Type: application/json' \
+    -d "$(jq -nc --argjson y "$y" '{type:"scroll",y:$y,durationMs:100}')" >/dev/null
+  sleep 0.6
+
+  curl -sS http://127.0.0.1:9001/api/v1/screenshot > "/tmp/site_section_screens/$label.png"
+done < sections.tsv
+```
+
+Narration should comment on what is visible in that section. It can be skeptical or lightly snarky, but it should help a real user understand the value proposition.
+
+Good section-by-section narration examples:
+
+```text
+Command center for your AI workforce. Okay With One, that is a big promise; I am hearing air traffic control, but for agents with app permissions.
+Sixty two thousand tools, seventeen thousand developers, ninety nine point nine percent uptime, and under one hundred milliseconds. Subtle? No. Effective? Annoyingly, yes.
+One login. One CLI. Every app. I respect the confidence, though every app is the kind of phrase that makes a developer quietly reach for the audit logs.
+Now we get One login, every integration. That is a little repetitive, but the actual point is useful: OAuth, token refresh, and credentials handled before the agent breaks something.
+Connect all your apps through a single prompt. That sounds magical, and also like exactly where I want to see constraints, previews, and a very clear undo button.
+```
+
+Raw recording pattern for one section per file:
+
+```sh
+# Reset page and scroll to the previous section first.
+curl -sS -X POST http://127.0.0.1:9001/api/v1/recording/start
+sleep 0.8
+
+# If this section needs movement, scroll during the recording.
+curl -sS -X POST http://127.0.0.1:9001/api/v1/action \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"scroll","y":760,"style":"human","durationMs":3500}'
+
+# Keep recording slightly longer than the WAV duration.
+sleep 14.8
+
+curl -sS -X POST http://127.0.0.1:9001/api/v1/recording/stop
+sleep 4
+curl -sS http://127.0.0.1:9001/api/v1/recording | jq .
+```
+
+Store a raw manifest:
+
+```text
+label<TAB>target_y<TAB>wav_duration<TAB>raw_mov<TAB>scroll_ms
+01_hero<TAB>0<TAB>11.520<TAB>/path/raw1.mov<TAB>0
+02_metrics<TAB>760<TAB>13.920<TAB>/path/raw2.mov<TAB>3500
+03_cli<TAB>1180<TAB>11.840<TAB>/path/raw3.mov<TAB>2600
+```
+
+Then assemble:
+
+```sh
+ffmpeg -y -ss 0 -t "$duration" -i "$raw" -i "$wav" \
+  -map 0:v:0 -map 1:a:0 \
+  -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \
+  -c:a aac -b:a 192k -shortest "$clip"
+
+printf "file '%s'\n" "$clip" >> concat.txt
+
+ffmpeg -y -f concat -safe 0 -i concat.txt -c copy -movflags +faststart final.mov
+```
+
+Verification for section-by-section clips:
+
+```sh
+ffprobe -v error -show_entries format=duration,size -show_streams -of json final.mov | jq .
+for clip in clip_*.mov; do
+  printf '%s ' "$clip"
+  ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$clip"
+done
+```
+
+Expected:
+
+- One audio stream in each clip.
+- No delayed audio stack.
+- Final duration equals the sum of the WAV durations, within small encoder rounding.
+- Section clips visibly land on the intended content.
+- The commentary references the visible section, not the mechanics of scrolling.
+
 ## Important Timing Lesson
 
 The browser action API often returns after scheduling an action, not after the visual motion has finished. For example, a human-style scroll can return immediately with `status: "started"` while the page is still scrolling.
