@@ -15,6 +15,7 @@ import Foundation
 @MainActor
 final class ScreenRecorder: ObservableObject {
     @Published private(set) var isRecording = false
+    @Published private(set) var isPaused = false
     @Published private(set) var lastErrorMessage: String?
     @Published private(set) var lastOutputURL: URL?
 
@@ -67,13 +68,39 @@ final class ScreenRecorder: ObservableObject {
     func stopRecording() {
         guard let session else { return }
         isRecording = false
+        isPaused = false
         Task {
             await session.stop()
         }
     }
 
+    func togglePause() {
+        guard let session, isRecording else { return }
+
+        if isPaused {
+            Task {
+                do {
+                    try await session.resume()
+                    self.isPaused = false
+                } catch {
+                    self.handleFinish(.failure(error))
+                }
+            }
+        } else {
+            isPaused = true
+            Task {
+                do {
+                    try await session.pause()
+                } catch {
+                    self.handleFinish(.failure(error))
+                }
+            }
+        }
+    }
+
     private func handleFinish(_ result: Result<URL, Error>) {
         isRecording = false
+        isPaused = false
         session = nil
 
         switch result {
@@ -107,7 +134,9 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
     private enum RecordingError: LocalizedError {
         case couldNotFindDisplay
         case couldNotAddRecordingOutput
+        case noSegmentsRecorded
         case recordingFailed(String)
+        case exportFailed
 
         var errorDescription: String? {
             switch self {
@@ -115,8 +144,12 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
                 return "No capturable display was found."
             case .couldNotAddRecordingOutput:
                 return "The screen recording output could not be added."
+            case .noSegmentsRecorded:
+                return "The recording stopped before any video was captured."
             case .recordingFailed(let message):
                 return message
+            case .exportFailed:
+                return "The paused recording segments could not be joined."
             }
         }
     }
@@ -124,14 +157,21 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
     private let outputURL: URL
     private let display: SCDisplay
     private let configuration: SCStreamConfiguration
+    private let temporaryDirectoryURL: URL
     nonisolated(unsafe) private var stream: SCStream?
     nonisolated(unsafe) private var recordingOutput: SCRecordingOutput?
     nonisolated(unsafe) private var finishHandler: ((Result<URL, Error>) -> Void)?
+    nonisolated(unsafe) private var segmentURLs: [URL] = []
+    nonisolated(unsafe) private var activeSegmentURL: URL?
+    nonisolated(unsafe) private var segmentFinishContinuation: CheckedContinuation<URL, Error>?
+    nonisolated(unsafe) private var isPaused = false
     nonisolated(unsafe) private var isStopping = false
     nonisolated(unsafe) private var didFinish = false
 
     init(outputURL: URL) async throws {
         self.outputURL = outputURL
+        temporaryDirectoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wkdomains-recording-\(UUID().uuidString)", isDirectory: true)
 
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let mainDisplayID = CGMainDisplayID()
@@ -161,24 +201,27 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
             at: outputURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        try FileManager.default.createDirectory(
+            at: temporaryDirectoryURL,
+            withIntermediateDirectories: true
+        )
     }
 
     func start(finishHandler: @escaping (Result<URL, Error>) -> Void) async throws {
         self.finishHandler = finishHandler
+        try await startSegment()
+    }
 
-        let filter = SCContentFilter(display: display, excludingWindows: [])
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        let recordingConfiguration = SCRecordingOutputConfiguration()
-        recordingConfiguration.outputURL = outputURL
-        recordingConfiguration.outputFileType = .mov
-        recordingConfiguration.videoCodecType = .h264
+    func pause() async throws {
+        guard !isPaused, !isStopping else { return }
+        isPaused = true
+        _ = try await stopActiveSegment()
+    }
 
-        let recordingOutput = SCRecordingOutput(configuration: recordingConfiguration, delegate: self)
-        try stream.addRecordingOutput(recordingOutput)
-
-        self.stream = stream
-        self.recordingOutput = recordingOutput
-        try await stream.startCapture()
+    func resume() async throws {
+        guard isPaused, !isStopping else { return }
+        isPaused = false
+        try await startSegment()
     }
 
     func stop() async {
@@ -186,41 +229,79 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
         isStopping = true
 
         do {
-            try await stream?.stopCapture()
-        } catch {
-            finishAfterIntentionalStopOrFail(error)
-        }
-
-        if let recordingOutput {
-            try? stream?.removeRecordingOutput(recordingOutput)
-        }
-
-        self.stream = nil
-        self.recordingOutput = nil
-
-        if !didFinish,
-           FileManager.default.fileExists(atPath: outputURL.path) {
+            if stream != nil {
+                _ = try await stopActiveSegment()
+            }
+            try await writeFinalMovie()
+            cleanupTemporarySegments()
             finishWithSuccess()
+        } catch {
+            cleanupTemporarySegments()
+            finishWithFailure(error)
+        }
+    }
+
+    private func startSegment() async throws {
+        let segmentURL = temporaryDirectoryURL
+            .appendingPathComponent("segment-\(segmentURLs.count + 1).mov")
+        try? FileManager.default.removeItem(at: segmentURL)
+
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+        let recordingConfiguration = SCRecordingOutputConfiguration()
+        recordingConfiguration.outputURL = segmentURL
+        recordingConfiguration.outputFileType = .mov
+        recordingConfiguration.videoCodecType = .h264
+
+        let recordingOutput = SCRecordingOutput(configuration: recordingConfiguration, delegate: self)
+        do {
+            try stream.addRecordingOutput(recordingOutput)
+        } catch {
+            throw RecordingError.couldNotAddRecordingOutput
+        }
+
+        self.stream = stream
+        self.recordingOutput = recordingOutput
+        activeSegmentURL = segmentURL
+        try await stream.startCapture()
+    }
+
+    private func stopActiveSegment() async throws -> URL? {
+        guard let stream, activeSegmentURL != nil else { return nil }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            segmentFinishContinuation = continuation
+            Task {
+                do {
+                    try await stream.stopCapture()
+                    if self.segmentFinishContinuation != nil {
+                        self.finishActiveSegment()
+                    }
+                } catch {
+                    finishActiveSegmentAfterStop(error)
+                }
+            }
         }
     }
 
     nonisolated func recordingOutputDidFinishRecording(_ recordingOutput: SCRecordingOutput) {
-        finishWithSuccess()
+        finishActiveSegment()
     }
 
     nonisolated func recordingOutput(_ recordingOutput: SCRecordingOutput, didFailWithError error: Error) {
-        if isStopping {
-            finishAfterIntentionalStopOrFail(error)
-        } else {
+        if segmentFinishContinuation != nil {
+            finishActiveSegmentAfterStop(error)
+        } else if !isStopping {
             finishWithFailure(error)
         }
     }
 
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
-        if isStopping {
-            return
+        if segmentFinishContinuation != nil {
+            finishActiveSegmentAfterStop(error)
+        } else if !isStopping {
+            finishWithFailure(error)
         }
-        finishWithFailure(error)
     }
 
     nonisolated private func finishWithSuccess() {
@@ -240,12 +321,128 @@ private final class DisplayRecordingSession: NSObject, SCStreamDelegate, SCRecor
         finishHandler = nil
     }
 
-    nonisolated private func finishAfterIntentionalStopOrFail(_ error: Error) {
-        if FileManager.default.fileExists(atPath: outputURL.path),
-           (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? NSNumber)?.intValue ?? 0 > 0 {
-            finishWithSuccess()
+    nonisolated private func finishActiveSegment() {
+        guard let activeSegmentURL else { return }
+        stream = nil
+        recordingOutput = nil
+        self.activeSegmentURL = nil
+
+        if FileManager.default.fileExists(atPath: activeSegmentURL.path),
+           fileSize(at: activeSegmentURL) > 0 {
+            segmentURLs.append(activeSegmentURL)
+            segmentFinishContinuation?.resume(returning: activeSegmentURL)
         } else {
-            finishWithFailure(error)
+            segmentFinishContinuation?.resume(throwing: RecordingError.noSegmentsRecorded)
         }
+        segmentFinishContinuation = nil
+    }
+
+    nonisolated private func finishActiveSegmentAfterStop(_ error: Error) {
+        guard let activeSegmentURL else {
+            segmentFinishContinuation?.resume(throwing: error)
+            segmentFinishContinuation = nil
+            return
+        }
+
+        if FileManager.default.fileExists(atPath: activeSegmentURL.path),
+           fileSize(at: activeSegmentURL) > 0 {
+            finishActiveSegment()
+        } else {
+            stream = nil
+            recordingOutput = nil
+            self.activeSegmentURL = nil
+            segmentFinishContinuation?.resume(throwing: error)
+            segmentFinishContinuation = nil
+        }
+    }
+
+    private func writeFinalMovie() async throws {
+        let usableSegmentURLs = segmentURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard let firstSegmentURL = usableSegmentURLs.first else {
+            throw RecordingError.noSegmentsRecorded
+        }
+
+        try? FileManager.default.removeItem(at: outputURL)
+
+        if usableSegmentURLs.count == 1 {
+            try FileManager.default.copyItem(at: firstSegmentURL, to: outputURL)
+            return
+        }
+
+        let composition = AVMutableComposition()
+        guard let compositionTrack = composition.addMutableTrack(
+            withMediaType: .video,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            throw RecordingError.exportFailed
+        }
+
+        var insertionTime = CMTime.zero
+        var appliedPreferredTransform = false
+
+        for segmentURL in usableSegmentURLs {
+            let asset = AVURLAsset(url: segmentURL)
+            let videoTracks = try await asset.loadTracks(withMediaType: .video)
+            guard let videoTrack = videoTracks.first else { continue }
+
+            let duration = try await asset.load(.duration)
+            guard duration > .zero else { continue }
+
+            if !appliedPreferredTransform {
+                compositionTrack.preferredTransform = try await videoTrack.load(.preferredTransform)
+                appliedPreferredTransform = true
+            }
+
+            try compositionTrack.insertTimeRange(
+                CMTimeRange(start: .zero, duration: duration),
+                of: videoTrack,
+                at: insertionTime
+            )
+            insertionTime = CMTimeAdd(insertionTime, duration)
+        }
+
+        guard insertionTime > .zero else {
+            throw RecordingError.noSegmentsRecorded
+        }
+
+        try await export(composition)
+    }
+
+    private func export(_ composition: AVMutableComposition) async throws {
+        guard let exportSession = AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetPassthrough
+        ) ?? AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetHighestQuality
+        ) else {
+            throw RecordingError.exportFailed
+        }
+
+        exportSession.outputURL = outputURL
+        exportSession.outputFileType = .mov
+        exportSession.shouldOptimizeForNetworkUse = false
+
+        try await withCheckedThrowingContinuation { continuation in
+            exportSession.exportAsynchronously {
+                switch exportSession.status {
+                case .completed:
+                    continuation.resume(returning: ())
+                case .failed, .cancelled:
+                    continuation.resume(throwing: exportSession.error ?? RecordingError.exportFailed)
+                default:
+                    continuation.resume(throwing: RecordingError.exportFailed)
+                }
+            }
+        }
+    }
+
+    nonisolated private func fileSize(at url: URL) -> Int64 {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    private func cleanupTemporarySegments() {
+        try? FileManager.default.removeItem(at: temporaryDirectoryURL)
     }
 }

@@ -47,6 +47,11 @@ private struct ScreenRecordingCommands: Commands {
                 recorder.toggleRecording()
             }
             .keyboardShortcut("5", modifiers: [.command, .shift])
+
+            Button(recorder.isPaused ? "Resume Recording" : "Pause Recording") {
+                recorder.togglePause()
+            }
+            .disabled(!recorder.isRecording)
         }
     }
 }
