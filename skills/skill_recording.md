@@ -10,6 +10,8 @@ For longer exploratory reviews, prefer writing narration notes during the record
 
 For short polished videos, use the stricter segment-first edit flow: inspect the site first, write a few site-specific lines, generate the WAV files before recording, measure their exact durations, record one matching browser segment per WAV, mux each segment with its own audio, then concatenate the finished clips.
 
+Use `scripts/recording.py` for repeatable media work. Do not rebuild manifests, ffprobe loops, or ffmpeg concat logic with shell unless debugging a one-off command. Python preserves labels literally, handles `07_...` style names safely, and keeps exact duration math out of brittle shell quoting.
+
 ## Required Local Services
 
 - wkdomains Local API: `http://127.0.0.1:9001`
@@ -94,10 +96,41 @@ curl -sS http://127.0.0.1:9001/api/v1/links | jq .
 4. Use one voice unless the demo specifically needs character variety.
 5. Generate the WAV files before recording.
 6. Measure each WAV duration with `ffprobe`.
-7. Record one browser segment per WAV, slightly longer than the WAV.
-8. Extract each segment to exactly the WAV duration.
+7. Record one browser segment per WAV with the measured WAV duration as the target visible length.
+8. Raw screen recordings may include a small start/stop buffer, but final extracted clips must be exactly the measured WAV duration.
 9. Mux each extracted video segment with its matching WAV.
 10. Concatenate the muxed clips.
+
+Exact timing rule:
+
+- Generate the WAV first.
+- Measure it immediately.
+- Plan the visual action to fit that duration.
+- Record the raw clip for the WAV duration plus only minimal capture padding when needed.
+- Trim/mux the final clip to the exact measured WAV duration, never to an estimated number.
+
+Preferred helper:
+
+```sh
+python3 scripts/recording.py tts narration.tsv wavs.tsv \
+  --prefix gripit \
+  --voice cinematic_trailer
+```
+
+`narration.tsv` format:
+
+```text
+label<TAB>text
+01_hero<TAB>Gripit opens with a refreshingly concrete promise...
+02_scroll<TAB>As I scroll, this becomes less like another problem bank...
+```
+
+`wavs.tsv` output format:
+
+```text
+label<TAB>wav_path<TAB>exact_duration_seconds
+01_hero<TAB>/Users/aa/os/VoxCPM/outputs/http/gripit_01_hero.wav<TAB>13.440000
+```
 
 This produces a final structure like:
 
@@ -131,7 +164,7 @@ Sixty two thousand tools, seventeen thousand developers, and teams from Google t
 The open question I still have is permissions: when an agent can touch Slack, HubSpot, Shopify, and Gmail, show me the audit trail before I hand it the keys.
 ```
 
-Generate and measure:
+Generate and measure manually only when the Python helper is not appropriate:
 
 ```sh
 curl -sS -X POST http://127.0.0.1:9002/say \
@@ -163,6 +196,35 @@ ffmpeg -y -f concat -safe 0 -i concat.txt -c copy -movflags +faststart final.mov
 
 Use this flow for short 30 to 60 second demos. Use the manifest/delayed-audio flow only when a single continuous recording is more important than exact segment-level narration.
 
+To assemble clip/audio pairs, prefer:
+
+```sh
+python3 scripts/recording.py assemble \
+  --raws raws.tsv \
+  --wavs wavs.tsv \
+  --order order.txt \
+  --work /tmp/site_demo_assemble \
+  --output /Users/aa/Desktop/site_demo.mov
+```
+
+`raws.tsv` format:
+
+```text
+label<TAB>raw_mov_path
+01_hero<TAB>/Users/aa/Library/Containers/com.wkdomains.macos-app/Data/Desktop/wkdomain_....mov
+```
+
+`order.txt` format:
+
+```text
+01_hero
+02_scroll
+03_cta
+04_question
+```
+
+The helper re-measures each WAV and builds each final clip with `-t exact_wav_duration`. This is the required assembly path for polished demos.
+
 ## Section-By-Section Review Flow
 
 Use this when the user wants a review that follows a landing page section by section, such as 10 clips before the FAQ.
@@ -172,10 +234,11 @@ Use this when the user wants a review that follows a landing page section by sec
 3. Scroll to candidate positions and make a contact sheet.
 4. Write one narration line per visible section.
 5. Generate every WAV before recording.
-6. Record each section as its own raw movie.
-7. Trim each raw movie to the matching WAV duration.
-8. Mux each trimmed movie with exactly one WAV.
-9. Concatenate the muxed clips.
+6. Measure every WAV and save `wavs.tsv`.
+7. Record each section as its own raw movie, targeting the matching WAV duration.
+8. Trim each raw movie to the exact matching WAV duration.
+9. Mux each trimmed movie with exactly one WAV.
+10. Concatenate the muxed clips.
 
 This is slower than recording one long video, but it avoids cumulative timing drift and makes each clip easier to re-do.
 
@@ -266,7 +329,8 @@ curl -sS -X POST http://127.0.0.1:9001/api/v1/action \
   -H 'Content-Type: application/json' \
   -d '{"type":"scroll","y":760,"style":"human","durationMs":3500}'
 
-# Keep recording slightly longer than the WAV duration.
+# Keep the visible action matched to the WAV duration. Allow only small raw
+# capture padding if needed, then trim the final clip to the exact WAV duration.
 sleep 14.8
 
 curl -sS -X POST http://127.0.0.1:9001/api/v1/recording/stop
@@ -286,14 +350,12 @@ label<TAB>target_y<TAB>wav_duration<TAB>raw_mov<TAB>scroll_ms
 Then assemble:
 
 ```sh
-ffmpeg -y -ss 0 -t "$duration" -i "$raw" -i "$wav" \
-  -map 0:v:0 -map 1:a:0 \
-  -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \
-  -c:a aac -b:a 192k -shortest "$clip"
-
-printf "file '%s'\n" "$clip" >> concat.txt
-
-ffmpeg -y -f concat -safe 0 -i concat.txt -c copy -movflags +faststart final.mov
+python3 scripts/recording.py assemble \
+  --raws raws.tsv \
+  --wavs wavs.tsv \
+  --order order.txt \
+  --work /tmp/site_sections_assemble \
+  --output /Users/aa/Desktop/site_sections.mov
 ```
 
 Verification for section-by-section clips:
@@ -310,6 +372,7 @@ Expected:
 
 - One audio stream in each clip.
 - No delayed audio stack.
+- Each final clip duration equals its measured WAV duration, within small encoder rounding.
 - Final duration equals the sum of the WAV durations, within small encoder rounding.
 - Section clips visibly land on the intended content.
 - The commentary references the visible section, not the mechanics of scrolling.
@@ -400,6 +463,20 @@ Keep each line around 2 to 8 seconds. Funny is good, but it should be anchored t
 Do not attach audio to each temp video segment during recording. Let the recorder keep video-only segments and add all narration at the end.
 
 For short polished videos, do not use `adelay`/`amix`. Instead, create separate muxed clips and concatenate them. The output should never have multiple narration tracks active at once.
+
+For quiz, form, or product-test-drive videos where the narration is created during the run, still use the segment-first discipline:
+
+1. Inspect the current screen while not recording.
+2. Write one line for the visible screen.
+3. Generate the WAV.
+4. Measure the WAV.
+5. Record the visible action with that exact duration as the target.
+6. Save `raws.tsv`, `wavs.tsv`, and `order.txt`.
+7. Assemble with `scripts/recording.py assemble`.
+
+This is the lesson from the Gripit placement-test demo. The first answer clip failed because the click used a partial label and the API returned a near match instead of clicking. For multiple-choice tests, inspect the exact button text and click that exact text, or use a known safe selector such as `button:not(:disabled)` only for unambiguous `NEXT` or `FINISH` buttons.
+
+Avoid shell loops for assembly. A shell loop mangled labels like `07_q03_answer` in practice, causing a missing-manifest failure. Always let `scripts/recording.py` join labels, WAVs, raw clips, and output clips.
 
 ## Turning A Long Raw Recording Into A Watchable Demo
 
@@ -694,6 +771,9 @@ The app assembles them into the final `.mov`, then removes the temp directory. I
 - If `resume` is followed by `pause` too quickly, the segment may be empty.
 - If the script records only the API call duration, not the visible action duration, the final movie misses the scroll/navigation.
 - macOS `date +%s%3N` does not provide millisecond timing like GNU date. Use fixed known durations, Python, Perl, or another reliable timer.
+- Do not use ad hoc shell loops for labeled manifests. Use Python, specifically `scripts/recording.py`, so labels like `07_q03_answer` remain literal and joins are deterministic.
+- Always measure the exact duration of every generated WAV before recording or assembly. The WAV duration is the timing source of truth.
+- Raw recordings may have a little capture padding, but final clip duration must be cut to the exact measured WAV duration.
 - Do not let speech generation happen during the recording unless the demo specifically needs to show it. It makes timing harder and adds long non-visual waits.
 - For short polished videos, generate speech before recording so the visual segment can be planned around the exact WAV duration.
 - Do not stack multiple delayed narration tracks for a short segmented edit. Mux one audio file per video clip and concatenate the clips.
@@ -705,6 +785,7 @@ The app assembles them into the final `.mov`, then removes the temp directory. I
 - If final assembly fails with `Cannot Open`, suspect an unfinalized segment file.
 - Pause should wait for the recording output to finish writing before starting the next segment.
 - After `pause`, include a short delay before `resume`; 2 to 3 seconds is a practical safe value for demos.
+- For browser clicks, exact text matters. Partial text can return high-scoring `nearMatches` without clicking. Inspect the action response and verify `ok: true`.
 
 ## Verification
 
