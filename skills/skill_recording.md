@@ -4,7 +4,9 @@ Use this when an agent needs to record the visible macOS desktop while driving t
 
 ## Goal
 
-Record only visible action. Pause recording while the agent reads, thinks, extracts DOM, plans the next move, or generates narration. Resume recording for user-visible actions such as scrolling, navigation, viewport changes, console-panel display, and UI interaction.
+Record only visible action. Pause recording while the agent reads, thinks, extracts DOM, or plans the next move. Resume recording for user-visible actions such as scrolling, navigation, viewport changes, console-panel display, and UI interaction.
+
+Prefer writing narration notes during the recording and generating VoxCPM audio after the recording is stopped. This keeps speech synthesis latency out of the pause/resume timing problem.
 
 ## Required Local Services
 
@@ -61,7 +63,7 @@ curl -sS http://127.0.0.1:9001/api/v1/links | jq .
 curl -sS http://127.0.0.1:9001/api/v1/console | jq .
 ```
 
-5. Generate the next narration line while still paused.
+5. Write the next narration line, voice, and segment label into a manifest while still paused.
 6. Resume recording.
 7. Perform one visible action.
 8. Wait for the visible action to finish.
@@ -69,6 +71,8 @@ curl -sS http://127.0.0.1:9001/api/v1/console | jq .
 10. Leave a short pause delay so the segment has time to finalize.
 11. Repeat.
 12. Resume briefly before stop, then stop through the API.
+13. Generate all VoxCPM WAV files after the video exists.
+14. Mux the WAV files into the final video using the segment manifest.
 
 ## Important Timing Lesson
 
@@ -82,14 +86,16 @@ sleep 1
 
 curl -sS -X POST http://127.0.0.1:9001/api/v1/action \
   -H 'Content-Type: application/json' \
-  -d '{"type":"scroll","direction":"down","style":"human","durationMs":6200}'
+  -d '{"type":"scroll","direction":"bottom","style":"human","durationMs":32000}'
 
-sleep 7
+sleep 34
 curl -sS -X POST http://127.0.0.1:9001/api/v1/recording/pause
 sleep 3
 ```
 
 The extra sleep after pause matters. It gives the ScreenCaptureKit recording output time to finish the segment before the next resume starts another segment.
+
+Use `direction:"bottom"` for a real full-page pass. `direction:"down"` is a single page-sized move and can look like the agent barely inspected anything.
 
 ## Human-Style Website Review
 
@@ -107,13 +113,28 @@ curl -sS -X POST http://127.0.0.1:9001/api/v1/viewport \
   -d '{"mode":"mobileSmall"}'
 ```
 
-6. Mobile scroll: check headline, nav, CTA, overflow, text wrapping.
-7. Switch back to desktop and return near the top.
-8. Stop recording.
+6. Verify the viewport actually changed before scrolling:
+
+```sh
+curl -sS http://127.0.0.1:9001/api/v1/viewport | jq '{mode,width,height}'
+```
+
+Expected mobile state:
+
+```json
+{ "mode": "mobileSmall", "width": 390, "height": 720 }
+```
+
+7. Mobile scroll: use `direction:"bottom"` with a long enough `durationMs` to reach the page bottom.
+8. Switch back to desktop and verify `mode:"desktop"`.
+9. Return near the top.
+10. Stop recording.
 
 ## Narration With VoxCPM
 
-Generate audio while recording is paused:
+Best default: do not generate audio while recording. Write notes first, then call VoxCPM after the final video exists.
+
+Generate one WAV per narration note:
 
 ```sh
 curl -sS -X POST http://127.0.0.1:9002/say \
@@ -138,13 +159,22 @@ Keep each line around 2 to 8 seconds. Funny is good, but it should be anchored t
 
 Do not attach audio to each temp video segment during recording. Let the recorder keep video-only segments and add all narration at the end.
 
-Maintain a manifest:
+Maintain two manifests while recording:
 
 ```text
-label<TAB>wav_path<TAB>visible_segment_duration_seconds
-home-scroll<TAB>/Users/aa/os/VoxCPM/outputs/http/line_001.wav<TAB>6
-product<TAB>/Users/aa/os/VoxCPM/outputs/http/line_002.wav<TAB>5
-mobile-scroll<TAB>/Users/aa/os/VoxCPM/outputs/http/line_003.wav<TAB>7
+segments.tsv
+label<TAB>visible_segment_duration_seconds
+intro<TAB>4
+home-desktop-scroll<TAB>34
+home-mobile-scroll<TAB>34
+```
+
+```text
+narration_notes.tsv
+label<TAB>voice<TAB>text
+intro<TAB>cinematic_trailer<TAB>Record the browser flow first, generate audio later.
+home-desktop-scroll<TAB>noir_detective<TAB>Full desktop scroll. This is where the page has to prove the product is real.
+home-mobile-scroll<TAB>luxury_brand<TAB>Mobile full-page scroll. The viewport is smaller and less forgiving.
 ```
 
 Then mux narration onto the final `.mov` with delayed audio tracks:
@@ -160,7 +190,7 @@ ffmpeg -y \
   narrated.mov
 ```
 
-Use the manifest to calculate the `adelay` values. The first delay should usually skip the intro/orientation seconds.
+Use `segments.tsv` to calculate cumulative segment start times for `adelay`. Generate the WAV files only after recording has stopped, then write a third manifest with the generated WAV paths.
 
 ## Recorder Temp Files
 
@@ -185,6 +215,9 @@ The app assembles them into the final `.mov`, then removes the temp directory. I
 - If `resume` is followed by `pause` too quickly, the segment may be empty.
 - If the script records only the API call duration, not the visible action duration, the final movie misses the scroll/navigation.
 - macOS `date +%s%3N` does not provide millisecond timing like GNU date. Use fixed known durations, Python, Perl, or another reliable timer.
+- Do not let speech generation happen during the recording unless the demo specifically needs to show it. It makes timing harder and adds long non-visual waits.
+- Always verify viewport mode after `POST /api/v1/viewport`. If the viewport is not `mobileSmall`, do not record the mobile scroll.
+- Avoid brittle shell helper names. In zsh, a local variable named `path` can interfere with command lookup because `path` is tied to `PATH`; prefer names like `endpoint`.
 - If final assembly fails with `Cannot Open`, suspect an unfinalized segment file.
 - Pause should wait for the recording output to finish writing before starting the next segment.
 - After `pause`, include a short delay before `resume`; 2 to 3 seconds is a practical safe value for demos.
@@ -196,6 +229,7 @@ After stop:
 ```sh
 curl -sS http://127.0.0.1:9001/api/v1/recording | jq .
 ffprobe -v error -show_entries format=duration,size -of json final.mov | jq .
+curl -sS http://127.0.0.1:9001/api/v1/scroll | jq .
 ```
 
 Expected:
@@ -206,6 +240,7 @@ Expected:
 - A real `outputPath`
 - `ffprobe` can open the file
 - Video dimensions should match full display capture quality
+- Full-page scroll traces should end with `status:"completed"` and `position.y` close to `maxY`.
 
 ## Demo Notes
 
