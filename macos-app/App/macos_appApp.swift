@@ -14,10 +14,16 @@ import SwiftUI
 struct macos_appApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var appModel = AppModel()
+    @StateObject private var appModel: AppModel
     @StateObject private var historyFaviconStore = HistoryFaviconStore()
     @StateObject private var bookmarkFaviconStore = HistoryFaviconStore()
-    @StateObject private var screenRecorder = ScreenRecorder()
+    @StateObject private var screenRecorder: ScreenRecorder
+
+    init() {
+        let screenRecorder = ScreenRecorder()
+        _screenRecorder = StateObject(wrappedValue: screenRecorder)
+        _appModel = StateObject(wrappedValue: AppModel(screenRecorder: screenRecorder))
+    }
 
     var body: some Scene {
         Window("", id: "main") {

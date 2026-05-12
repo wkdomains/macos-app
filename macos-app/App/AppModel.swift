@@ -13,13 +13,13 @@ final class AppModel: ObservableObject {
 
     private let apiServer: LocalAPIServer
 
-    init() {
+    init(screenRecorder: ScreenRecorder) {
         let settingsStore = AppSettingsStore.shared
         BrowserDebugLogging.startMainThreadStallMonitor()
 
         browser = BrowserModel(settingsStore: settingsStore)
         browser.setLocalAPIBaseURL("http://localhost:\(settingsStore.settings.port)")
-        apiServer = LocalAPIServer(browser: browser, settings: settingsStore.settings)
+        apiServer = LocalAPIServer(browser: browser, settings: settingsStore.settings, screenRecorder: screenRecorder)
         apiServer.start()
         browser.restoreOpenTabs(settingsStore.startupURLs)
     }

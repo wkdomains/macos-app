@@ -75,27 +75,48 @@ final class ScreenRecorder: ObservableObject {
     }
 
     func togglePause() {
-        guard let session, isRecording else { return }
-
         if isPaused {
-            Task {
-                do {
-                    try await session.resume()
-                    self.isPaused = false
-                } catch {
-                    self.handleFinish(.failure(error))
-                }
-            }
+            resumeRecording()
         } else {
-            isPaused = true
-            Task {
-                do {
-                    try await session.pause()
-                } catch {
-                    self.handleFinish(.failure(error))
-                }
+            pauseRecording()
+        }
+    }
+
+    func pauseRecording() {
+        guard let session, isRecording else { return }
+        guard !isPaused else { return }
+
+        isPaused = true
+        Task {
+            do {
+                try await session.pause()
+            } catch {
+                self.handleFinish(.failure(error))
             }
         }
+    }
+
+    func resumeRecording() {
+        guard let session, isRecording else { return }
+        guard isPaused else { return }
+
+        Task {
+            do {
+                try await session.resume()
+                self.isPaused = false
+            } catch {
+                self.handleFinish(.failure(error))
+            }
+        }
+    }
+
+    var apiState: [String: Any] {
+        [
+            "recording": isRecording,
+            "paused": isPaused,
+            "outputPath": lastOutputURL?.path ?? NSNull(),
+            "lastError": lastErrorMessage ?? NSNull()
+        ]
     }
 
     private func handleFinish(_ result: Result<URL, Error>) {
