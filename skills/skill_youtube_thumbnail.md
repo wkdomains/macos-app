@@ -177,6 +177,30 @@ shadow: rgba(0,0,0,.45)
 
 Do not use too many accent colors in one thumbnail. One strong accent is enough.
 
+## Rendering Quality
+
+Do not render the final thumbnail directly at `1280 x 720` when it includes rotated cards, rounded badges, outlines, or diagonal background texture. Those elements will look jagged and cheap.
+
+Preferred render pipeline:
+
+```text
+1. Compose at 3x or 4x size, such as 5120 x 2880.
+2. Draw rounded rectangles, badges, strokes, shadows, and rotated cards at that larger size.
+3. Use bicubic/Lanczos resampling for rotated screenshots and logos.
+4. Downsample once to 1280 x 720 with Lanczos.
+5. Export the final PNG from the downsampled image.
+```
+
+Polish rules:
+
+- Avoid tight diagonal stripes or tiny texture. They shimmer and look pixelated in YouTube previews.
+- Use broad, low-opacity background bands or smooth gradients instead.
+- Keep rounded badges simple. Hard black outlines at final resolution make corners look crunchy.
+- Use softer shadows plus thinner strokes instead of huge text outlines.
+- If a tilted screenshot card is used, keep the full card inside the canvas unless the crop is clearly intentional and no text is cut off.
+- Build the screenshot card from the highest-resolution video frame available, then downsample. Do not upscale a 1280px still.
+- After rendering, inspect both full size and `320 x 180`; jagged corners that are invisible in code are obvious in the image.
+
 ## Iteration Lessons From the WithOne Thumbnail
 
 The first WithOne thumbnail was directionally useful but needed these fixes:
@@ -190,6 +214,7 @@ The first WithOne thumbnail was directionally useful but needed these fixes:
 - Keep the bottom-right corner free for YouTube's duration overlay. Avoid important pills, labels, or logo marks there.
 - Use fewer accents. Yellow border plus cyan underline is enough; adding green can make the design feel scattered.
 - Badges should be close to the idea they label. A bottom badge detached from the title/card feels decorative.
+- If corners or edges look pixelated, the fix is usually rendering technique, not more decoration: rerender at 4x, use rounded masks at 4x, rotate at 4x, then downsample.
 
 A strong recurring layout for site-review videos:
 
