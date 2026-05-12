@@ -401,6 +401,62 @@ Do not attach audio to each temp video segment during recording. Let the recorde
 
 For short polished videos, do not use `adelay`/`amix`. Instead, create separate muxed clips and concatenate them. The output should never have multiple narration tracks active at once.
 
+For an already-trimmed long video, do not simply concatenate all WAV narration and speed it up to the full video duration. That can make good audio drift into the wrong visual section. If the edit is section-based, treat the video as a sequence of visual slots and place one existing WAV into each slot.
+
+Repair pattern for an existing trimmed video and existing WAV files:
+
+```sh
+VIDEO=/Users/aa/Desktop/kelviq_trimmed.mov
+WAV_DIR=/Users/aa/os/VoxCPM/outputs/http
+WORK=/tmp/kelviq_sync/fixed_slots
+
+rm -rf "$WORK"
+mkdir -p "$WORK"
+
+VIDEO_DUR=$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO")
+SLOT_COUNT=18
+SLOT=$(awk -v d="$VIDEO_DUR" -v n="$SLOT_COUNT" 'BEGIN { printf "%.9f", d / n }')
+
+: > "$WORK/concat.txt"
+
+for i in $(seq 1 "$SLOT_COUNT"); do
+  in=$(printf "$WAV_DIR/kelviq_sync_%02d.wav" "$i")
+  out=$(printf "$WORK/slot_%02d.wav" "$i")
+
+  ffmpeg -y -hide_banner -loglevel error \
+    -i "$in" -f lavfi -t "$SLOT" -i anullsrc=r=48000:cl=stereo \
+    -filter_complex "[0:a]aformat=sample_rates=48000:channel_layouts=stereo[a0];[1:a]aformat=sample_rates=48000:channel_layouts=stereo[sil];[a0][sil]concat=n=2:v=0:a=1,atrim=0:$SLOT,asetpts=N/SR/TB[out]" \
+    -map '[out]' -c:a pcm_s16le "$out"
+
+  printf "file '%s'\n" "$out" >> "$WORK/concat.txt"
+done
+
+ffmpeg -y -hide_banner -loglevel error \
+  -f concat -safe 0 -i "$WORK/concat.txt" \
+  -c:a pcm_s16le "$WORK/voice_ordered.wav"
+
+ffmpeg -y -hide_banner -loglevel error \
+  -i "$WORK/voice_ordered.wav" -t "$VIDEO_DUR" \
+  -c:a aac -b:a 192k /tmp/voice_ordered_fixed.m4a
+
+ffmpeg -y -hide_banner -loglevel error \
+  -i "$VIDEO" -i /tmp/voice_ordered_fixed.m4a \
+  -map 0:v:0 -map 1:a:0 \
+  -c:v copy -c:a copy -movflags +faststart -shortest \
+  /Users/aa/Desktop/kelviq_trimmed_with_voice.mov
+```
+
+Before rebuilding, verify the WAV files are actually distinct and ordered:
+
+```sh
+for f in "$WAV_DIR"/kelviq_sync_*.wav; do
+  printf '%s ' "$(basename "$f")"
+  shasum -a 256 "$f" | awk '{print substr($1,1,12)}'
+done
+```
+
+If the hashes differ but the final video repeats the first line, the bug is in assembly, not generation. Do not call VoxCPM again; rebuild from the existing WAVs with explicit intermediate slot files.
+
 Maintain two manifests while recording:
 
 ```text
@@ -471,6 +527,8 @@ The app assembles them into the final `.mov`, then removes the temp directory. I
 - Do not let speech generation happen during the recording unless the demo specifically needs to show it. It makes timing harder and adds long non-visual waits.
 - For short polished videos, generate speech before recording so the visual segment can be planned around the exact WAV duration.
 - Do not stack multiple delayed narration tracks for a short segmented edit. Mux one audio file per video clip and concatenate the clips.
+- For an already-trimmed section-based video, do not compress one long concatenated narration track to fit the total duration. Slot each existing WAV against its matching visual section instead.
+- If the final audio repeats the first narration line over and over, first verify the source WAV hashes. If they are distinct, keep the WAVs and rebuild the audio bed using explicit per-slot intermediate files.
 - If narration is about the mechanics of recording instead of the website, rewrite it before generating audio.
 - Always verify viewport mode after `POST /api/v1/viewport`. If the viewport is not `mobileSmall`, do not record the mobile scroll.
 - Avoid brittle shell helper names. In zsh, a local variable named `path` can interfere with command lookup because `path` is tied to `PATH`; prefer names like `endpoint`.
