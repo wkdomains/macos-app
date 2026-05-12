@@ -20,9 +20,10 @@ For wkdomains demo videos, use a “tilted evidence card” layout:
 - A still frame from the final video as the main visual.
 - Rotate the still frame slightly, usually `-4` to `-8` degrees.
 - Add a thick bright border and subtle shadow around the still.
-- Add the wkdomains logo as a badge.
+- Add the wkdomains logo as a badge, preferably pinned to the still frame or headline cluster.
 - Add 2 to 5 words of bold headline text.
 - Add one short sublabel only if it improves clarity.
+- Keep every sticker, badge, and headline fully inside the canvas. Never leave partial words clipped at the edge.
 
 This makes the thumbnail feel like a captured artifact from the demo, not a generic SaaS graphic.
 
@@ -62,12 +63,15 @@ Use very short, punchy copy.
 Good examples for wkdomains videos:
 
 ```text
+AI READS A WEBSITE
 AI SPEED REVIEW
 AGENT WATCHES WEB
 60 SEC SITE DIGEST
 READS THE WHOLE SITE
 CODING AGENT BROWSER
 ```
+
+Prefer a specific viewer-facing angle over generic labels. `AI READS A WEBSITE` is usually stronger than `AI SITE REVIEW` because it describes the surprising action in plain words.
 
 Avoid:
 
@@ -148,10 +152,12 @@ Main visual:
   rotated -5 degrees
   thick border, 8-14 px
   subtle drop shadow
+  fully readable unless a deliberate crop adds energy without cutting text
 
 Logo:
   wk logo badge near one corner of the still or headline
   do not cover important page text
+  avoid isolated floating placement with no relationship to the composition
 
 Accent:
   one bright color: yellow, cyan, or green
@@ -170,6 +176,31 @@ shadow: rgba(0,0,0,.45)
 ```
 
 Do not use too many accent colors in one thumbnail. One strong accent is enough.
+
+## Iteration Lessons From the WithOne Thumbnail
+
+The first WithOne thumbnail was directionally useful but needed these fixes:
+
+- Replace generic headlines with concrete action. `AI READS / A WEBSITE` read better than `AI SITE / REVIEW`.
+- Do not clip stickers or text. A cut-off `WATCHING THE` badge looked unfinished.
+- Do not push the tilted still so far right that the main proof disappears. Keep enough of the browser/site visible.
+- Brighten the still frame or add a subtle overlay so the website content is recognizable.
+- Crop noisy terminal content unless it supports the story. The browser/site should be the evidence.
+- Pin the WK logo to the tilted card or headline area. A logo floating alone in the corner feels detached.
+- Keep the bottom-right corner free for YouTube's duration overlay. Avoid important pills, labels, or logo marks there.
+- Use fewer accents. Yellow border plus cyan underline is enough; adding green can make the design feel scattered.
+- Badges should be close to the idea they label. A bottom badge detached from the title/card feels decorative.
+
+A strong recurring layout for site-review videos:
+
+```text
+Headline: AI READS / A WEBSITE
+Sublabel: 10 SECTIONS / WITHONE.AI
+Badge: REAL BROWSER
+Visual: tilted browser still, bright enough to read, yellow border
+Logo: WK badge attached to the still-card corner
+Optional tag: AI SPEED, placed fully inside the still card
+```
 
 ## Example Concepts
 
@@ -276,6 +307,9 @@ Check:
 - Is there one obvious idea?
 - Is the YouTube duration overlay area free of critical text?
 - Is file size under YouTube’s limit?
+- Are all sticker and badge labels fully visible, with no accidental edge clipping?
+- Does the composition still work if viewed for one second at small size?
+- Is the still frame designed into the thumbnail rather than pasted in as a raw screenshot?
 
 ## Common Mistakes
 
@@ -284,8 +318,12 @@ Check:
 - Still frame is too small or unrecognizable.
 - Thumbnail looks like a screenshot instead of a designed image.
 - Logo is tiny or hidden.
+- Logo is isolated from the rest of the layout.
 - No contrast when scaled down.
 - Important text under the bottom-right duration badge.
+- Decorative stickers are clipped or use partial words.
+- The tilted card is cropped so aggressively that the actual website is hard to inspect.
+- The headline names the format instead of the hook.
 - Exporting a huge file that YouTube recompresses harshly.
 
 ## Final Output
