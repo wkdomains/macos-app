@@ -122,6 +122,8 @@ struct AppSettings: Codable {
 
 final class AppSettingsStore {
     static let shared = AppSettingsStore()
+    static let runtimePortEnvironmentKeys = ["WKDOMAINS_PORT", "WKDOMAINS_API_PORT"]
+    static let runtimePortArgumentNames = ["--port", "--api-port", "--wkdomains-port"]
 
     let directoryURL: URL
     let settingsURL: URL
@@ -152,6 +154,37 @@ final class AppSettingsStore {
 
     var settings: AppSettings {
         cachedSettings
+    }
+
+    static func runtimePortOverride(
+        arguments: [String] = CommandLine.arguments,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> UInt16? {
+        for key in runtimePortEnvironmentKeys {
+            if let port = validPort(environment[key]) {
+                return port
+            }
+        }
+
+        for (index, argument) in arguments.enumerated() {
+            for name in runtimePortArgumentNames {
+                if argument == name,
+                   arguments.indices.contains(index + 1),
+                   let port = validPort(arguments[index + 1])
+                {
+                    return port
+                }
+
+                if argument.hasPrefix("\(name)=") {
+                    let rawPort = String(argument.dropFirst(name.count + 1))
+                    if let port = validPort(rawPort) {
+                        return port
+                    }
+                }
+            }
+        }
+
+        return nil
     }
 
     var startupURL: URL {
@@ -567,6 +600,17 @@ final class AppSettingsStore {
         }
         settings.mainWindowFrame = normalizedWindowFrame(settings.mainWindowFrame)
         return settings
+    }
+
+    private static func validPort(_ rawValue: String?) -> UInt16? {
+        guard let rawValue,
+              let port = UInt16(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+              port > 0
+        else {
+            return nil
+        }
+
+        return port
     }
 
     nonisolated private static func normalizedWindowFrame(_ frame: AppWindowFrame?) -> AppWindowFrame? {

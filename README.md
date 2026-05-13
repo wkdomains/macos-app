@@ -43,6 +43,19 @@ Change the port in:
 ~/.config/wkdomains/settings.json
 ```
 
+For two simultaneous app instances, keep one on the configured/default port and
+launch the second with a per-process override:
+
+```sh
+open -n -a wkdomains --args --port 9003
+```
+
+You can also use an environment override when starting the app binary directly:
+
+```sh
+WKDOMAINS_PORT=9003 /path/to/wkdomains.app/Contents/MacOS/wkdomains
+```
+
 Examples:
 
 ```sh

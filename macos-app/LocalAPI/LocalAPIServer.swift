@@ -16,14 +16,16 @@ final class LocalAPIServer {
     private let requestedPort: UInt16
     private let queue = DispatchQueue.main
     private var listener: NWListener?
+    private var boundPort: UInt16?
     private var debugRequestCounter = 0
+    var portDidChange: ((UInt16) -> Void)?
     var captureScreenshots: [String: Data] = [:]
     var captureScreenshotOrder: [String] = []
 
-    init(browser: BrowserModel, settings: AppSettings, screenRecorder: ScreenRecorder) {
+    init(browser: BrowserModel, port: UInt16, screenRecorder: ScreenRecorder) {
         dataReader = WebsiteDataReader(browser: browser)
         self.screenRecorder = screenRecorder
-        requestedPort = settings.port
+        requestedPort = port
     }
 
     func start() {
@@ -43,7 +45,10 @@ final class LocalAPIServer {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
 
-                    if case .failed = state {
+                    if case .ready = state {
+                        self.boundPort = port
+                        self.portDidChange?(port)
+                    } else if case .failed = state {
                         let nextPort = port == UInt16.max ? AppSettings.defaultPort : port + 1
                         self.listener?.cancel()
                         self.listener = nil

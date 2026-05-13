@@ -15,11 +15,15 @@ final class AppModel: ObservableObject {
 
     init(screenRecorder: ScreenRecorder) {
         let settingsStore = AppSettingsStore.shared
+        let apiPort = AppSettingsStore.runtimePortOverride() ?? settingsStore.settings.port
         BrowserDebugLogging.startMainThreadStallMonitor()
 
         browser = BrowserModel(settingsStore: settingsStore)
-        browser.setLocalAPIBaseURL("http://localhost:\(settingsStore.settings.port)")
-        apiServer = LocalAPIServer(browser: browser, settings: settingsStore.settings, screenRecorder: screenRecorder)
+        browser.setLocalAPIBaseURL("http://localhost:\(apiPort)")
+        apiServer = LocalAPIServer(browser: browser, port: apiPort, screenRecorder: screenRecorder)
+        apiServer.portDidChange = { [weak browser] port in
+            browser?.setLocalAPIBaseURL("http://localhost:\(port)")
+        }
         apiServer.start()
         browser.restoreOpenTabs(settingsStore.startupURLs)
     }

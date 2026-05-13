@@ -14,6 +14,20 @@ The port can be changed in:
 ~/.config/wkdomains/settings.json
 ```
 
+To run two separate app processes for two agents, launch the second instance
+with a runtime port override. This does not rewrite the settings file:
+
+```sh
+open -n -a wkdomains --args --port 9003
+```
+
+When starting the app executable directly, environment overrides are also
+supported:
+
+```sh
+WKDOMAINS_PORT=9003 /path/to/wkdomains.app/Contents/MacOS/wkdomains
+```
+
 ## Screenshot
 
 Get a PNG of the currently rendered visible page:
