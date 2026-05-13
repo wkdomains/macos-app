@@ -11,20 +11,7 @@ import WebKit
 
 extension ContentView {
     var browserWorkspace: some View {
-        GeometryReader { proxy in
-            HStack(spacing: 0) {
-                browserContent
-                    .frame(width: isBotPanelVisible ? proxy.size.width * 0.75 : proxy.size.width)
-
-                if isBotPanelVisible {
-                    BotTerminalPanel(terminal: browser.botTerminal)
-                        .frame(width: proxy.size.width * 0.25)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height)
-            .animation(.easeInOut(duration: 0.18), value: isBotPanelVisible)
-        }
+        browserContent
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -32,47 +19,51 @@ extension ContentView {
         ZStack {
             Color(nsColor: browser.viewportMode == .desktop ? .textBackgroundColor : .windowBackgroundColor)
 
-            ZStack {
-                BrowserWebViewStack(
-                    tabs: browser.tabStates,
-                    activeTabID: browser.activeTabID,
-                    blocksProgrammaticFocus: isAddressFocused || isPageFindFocused
-                )
-
-                if !browser.hasAttemptedNavigation {
-                    EmptyBrowserState()
-                }
-
-                if let errorMessage = browser.errorMessage {
-                    BrowserErrorState(message: errorMessage) {
-                        browser.reload()
-                    }
-                }
-
-                if isPageFindVisible {
-                    pageFindBar
-                        .padding(.top, 12)
-                        .padding(.trailing, 12)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-
-                if browser.isConsolePanelVisible {
-                    BrowserConsolePanel(records: browser.consoleRecords) {
-                        browser.setConsolePanelVisible(false)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+            BrowserXRayWorkspace(
+                browser: browser,
+                isVisible: isXRayModeVisible && browser.viewportMode == .desktop
+            ) {
+                browserPageSurface
             }
-            .frame(width: browser.viewportMode.width)
-            .frame(
-                maxWidth: browser.viewportMode == .desktop ? .infinity : nil,
-                maxHeight: .infinity
-            )
-            .background(Color(nsColor: .textBackgroundColor))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    var browserPageSurface: some View {
+        ZStack {
+            BrowserWebViewStack(
+                tabs: browser.tabStates,
+                activeTabID: browser.activeTabID,
+                blocksProgrammaticFocus: isAddressFocused || isPageFindFocused
+            )
+
+            if !browser.hasAttemptedNavigation {
+                EmptyBrowserState()
+            }
+
+            if let errorMessage = browser.errorMessage {
+                BrowserErrorState(message: errorMessage) {
+                    browser.reload()
+                }
+            }
+
+            if isPageFindVisible {
+                pageFindBar
+                    .padding(.top, 12)
+                    .padding(.trailing, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            if browser.isConsolePanelVisible {
+                BrowserConsolePanel(records: browser.consoleRecords) {
+                    browser.setConsolePanelVisible(false)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .background(Color(nsColor: .textBackgroundColor))
     }
 
     var pageFindBar: some View {
@@ -214,12 +205,13 @@ extension ContentView {
             .help("JavaScript console")
 
             Button {
-                if isBotPanelVisible {
-                    isBotPanelVisible = false
-                    browser.closeBotTerminal()
+                guard browser.viewportMode == .desktop else { return }
+                isBotPanelVisible = false
+                browser.closeBotTerminal()
+                if isXRayModeVisible {
+                    isXRayModeVisible = false
                 } else {
-                    isBotPanelVisible = true
-                    browser.requestLLMSSummary()
+                    isXRayModeVisible = true
                 }
             } label: {
                 Image(systemName: "memorychip")
@@ -228,13 +220,14 @@ extension ContentView {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(isBotPanelVisible ? Color.accentColor : .secondary)
+            .foregroundStyle(browser.viewportMode == .desktop ? (isXRayModeVisible ? .primary : .secondary) : .tertiary)
             .background(
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(isBotPanelVisible ? Color.accentColor.opacity(0.14) : Color.clear)
+                    .fill(isXRayModeVisible && browser.viewportMode == .desktop ? Color.primary.opacity(0.12) : Color.clear)
             )
-            .accessibilityLabel("Bot panel")
-            .help("Bot panel")
+            .disabled(browser.viewportMode != .desktop)
+            .accessibilityLabel("Terminator view")
+            .help(browser.viewportMode == .desktop ? "Terminator view" : "Terminator view is available in desktop viewport")
         }
     }
 

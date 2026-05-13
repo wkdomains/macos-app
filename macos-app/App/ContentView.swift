@@ -17,6 +17,7 @@ struct ContentView: View {
     @State var isBotPanelVisible = false
     @State var isPageFindFocused = false
     @State var isPageFindVisible = false
+    @State var isXRayModeVisible = false
     @State var pageFindDraft = ""
     @State var pageFindMatchFound: Bool?
     @State var shouldSelectPageFindText = false
@@ -138,6 +139,16 @@ struct ContentView: View {
         }
         .onChange(of: browser.pageFindRequestID) { _, _ in
             showPageFindBar()
+        }
+        .onChange(of: browser.viewportMode) { _, mode in
+            if mode != .desktop {
+                isXRayModeVisible = false
+            }
+        }
+        .onChange(of: isXRayModeVisible) { _, isVisible in
+            if !isVisible {
+                browser.restoreOriginalPageViewAfterXRay()
+            }
         }
         .onChange(of: pageFindDraft) { _, _ in
             findPageText()
