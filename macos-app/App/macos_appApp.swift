@@ -31,7 +31,6 @@ struct macos_appApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
-            CommandGroup(replacing: .newItem) {}
             BrowserTabCommands(browser: appModel.browser)
             ScreenRecordingCommands(recorder: screenRecorder)
             BrowserHistoryCommands(browser: appModel.browser, faviconStore: historyFaviconStore)
@@ -66,7 +65,12 @@ private struct BrowserTabCommands: Commands {
     @ObservedObject var browser: BrowserModel
 
     var body: some Commands {
-        CommandGroup(after: .newItem) {
+        CommandGroup(replacing: .newItem) {
+            Button("New Tab") {
+                browser.addEmptyTab()
+            }
+            .keyboardShortcut("t", modifiers: .command)
+
             Button("Close Tab") {
                 browser.closeActiveTab()
             }

@@ -11,6 +11,7 @@ struct BrowserTabStripView: View {
     let items: [BrowserTabItem]
     let selectTab: (UUID) -> Void
     let addTab: () -> Void
+    let closeTab: (UUID) -> Void
     let moveTab: (UUID, Int) -> Void
     let togglePinnedTab: (UUID) -> Void
     let mouseBridge: BrowserTabStripMouseEventBridge?
@@ -44,7 +45,8 @@ struct BrowserTabStripView: View {
                             item: item,
                             favicon: faviconStore.image(for: item.url),
                             width: item.isPinned ? pinnedTabWidth : tabWidth,
-                            height: tabHeight
+                            height: tabHeight,
+                            close: { closeTab(item.id) }
                         )
                         .background(tabFrameReader(for: item.id))
                     }
@@ -64,6 +66,10 @@ struct BrowserTabStripView: View {
                     .contextMenu {
                         Button(item.isPinned ? "Unpin Tab" : "Pin Tab") {
                             togglePinnedTab(item.id)
+                        }
+
+                        Button("Close Tab") {
+                            closeTab(item.id)
                         }
                     }
                     .gesture(tabDragGesture(for: item, at: index))
@@ -223,6 +229,13 @@ struct BrowserTabStripView: View {
             return false
         }
 
+        if closeButtonFrame(for: item, in: hitLayout.frame).contains(point) {
+            logTabDrag("bridge-close tab=\(shortID(item.id)) index=\(hitLayout.index) point=\(describe(point))")
+            closeTab(item.id)
+            dragState.cancel()
+            return true
+        }
+
         logTabDrag("bridge-down tab=\(shortID(item.id)) index=\(hitLayout.index) point=\(describe(point))")
         dragState.prepareDragging(item: item, at: hitLayout.index, startPoint: point)
         return true
@@ -307,6 +320,19 @@ struct BrowserTabStripView: View {
             leadingX = trafficLightInset
         }
         return CGRect(x: leadingX, y: minY, width: newTabWidth, height: tabHeight)
+    }
+
+    private func closeButtonFrame(for item: BrowserTabItem, in tabFrame: CGRect) -> CGRect {
+        guard !item.isPinned else { return .null }
+
+        let buttonSize: CGFloat = 20
+        let trailingPadding: CGFloat = 9
+        return CGRect(
+            x: tabFrame.maxX - trailingPadding - buttonSize,
+            y: tabFrame.midY - (buttonSize / 2),
+            width: buttonSize,
+            height: buttonSize
+        ).insetBy(dx: -4, dy: -4)
     }
 
     private func describe(_ point: CGPoint) -> String {

@@ -227,17 +227,28 @@ extension BrowserModel {
     }
 
     func closeActiveTab() {
+        closeTab(activeTabID)
+    }
+
+    func closeTab(_ tabID: UUID) {
+        if tabStates.count == 1,
+           tabStates.first?.id == tabID
+        {
+            addEmptyTab()
+        }
+
         guard tabStates.count > 1,
-              let closingIndex = tabStates.firstIndex(where: { $0.id == activeTabID })
+              let closingIndex = tabStates.firstIndex(where: { $0.id == tabID })
         else {
             return
         }
 
         let closingTab = tabStates[closingIndex]
+        let wasActive = closingTab.id == activeTabID
         let nextIndex = closingIndex == tabStates.index(before: tabStates.endIndex)
             ? tabStates.index(before: closingIndex)
             : tabStates.index(after: closingIndex)
-        let nextTabID = tabStates[nextIndex].id
+        let nextTabID = wasActive ? tabStates[nextIndex].id : nil
 
         closingTab.webView.stopLoading()
         closingTab.cookiePersistence.saveNow()
@@ -245,8 +256,13 @@ extension BrowserModel {
         closingTab.observations.removeAll()
         BrowserWebExtension.shared.didCloseTab(closingTab)
         tabStates.remove(at: closingIndex)
-        selectTab(nextTabID)
-        persistOpenTabs()
+
+        if let nextTabID {
+            selectTab(nextTabID)
+        } else {
+            refreshPublishedTabs()
+            persistOpenTabs()
+        }
     }
 
     func moveTab(_ sourceID: UUID, to targetID: UUID) {

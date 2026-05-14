@@ -326,8 +326,6 @@ extension ContentView {
            suggestions.indices.contains(selectedSuggestionIndex)
         {
             selectSuggestion(suggestions[selectedSuggestionIndex])
-        } else if let addressCompletion {
-            selectSuggestion(addressCompletion.suggestion)
         } else {
             hideSuggestions()
             isAddressEditing = false

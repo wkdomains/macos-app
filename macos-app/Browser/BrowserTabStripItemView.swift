@@ -11,6 +11,10 @@ struct BrowserTabStripItemView: View {
     let favicon: NSImage?
     let width: CGFloat
     let height: CGFloat
+    let close: () -> Void
+
+    @State private var isHovering = false
+    @State private var isCloseHovering = false
 
     var body: some View {
         ZStack {
@@ -21,18 +25,23 @@ struct BrowserTabStripItemView: View {
             } else {
                 HStack(spacing: 9) {
                     faviconView
+
                     Text(title)
                         .font(.system(size: 13, weight: item.isActive ? .semibold : .medium))
                         .foregroundStyle(item.isActive ? Color.primary : Color.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
+
+                    closeButton
                 }
-                .padding(.horizontal, 13)
+                .padding(.leading, 13)
+                .padding(.trailing, 9)
             }
         }
         .frame(width: width, height: height)
         .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
     }
 
     private var title: String {
@@ -86,5 +95,28 @@ struct BrowserTabStripItemView: View {
             }
         }
         .frame(width: 18, height: 18)
+    }
+
+    private var closeButton: some View {
+        Button(action: close) {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(closeButtonForeground)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(item.isActive || isHovering ? 1 : 0.64)
+        .background(
+            Circle()
+                .fill(isCloseHovering ? Color.white.opacity(0.10) : Color.clear)
+        )
+        .onHover { isCloseHovering = $0 }
+        .accessibilityLabel("Close tab")
+        .help("Close Tab")
+    }
+
+    private var closeButtonForeground: Color {
+        item.isActive || isHovering ? .primary : .secondary
     }
 }

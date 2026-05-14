@@ -349,3 +349,222 @@ The browser becomes less like a windshield and more like a cockpit.
 [3]: https://blog.trailofbits.com/2026/02/20/using-threat-modeling-and-prompt-injection-to-audit-comet/ "Using threat modeling and prompt injection to audit Comet - The Trail of Bits Blog"
 [4]: https://www.microsoft.com/en-us/security/blog/2026/05/07/prompts-become-shells-rce-vulnerabilities-ai-agent-frameworks/ "When prompts become shells: RCE vulnerabilities in AI agent frameworks | Microsoft Security Blog"
 
+
+I haven’t used `wkdomains` as a local daily-driver browser, so I won’t pretend I have. I have used agent-visible browsing workflows in this environment, and I’ve looked closely at your repo/docs. My take: the interesting part is **not** “LLM controls a browser.” That is already getting crowded. The interesting part is **human-owned browser state made legible to an agent**.
+
+Your repo already says the right thing: wkdomains lets the human browse normally while the agent gets structured access to the same page: screenshot, URL, viewport, visible DOM, links, forms, console, XHR/fetch shapes, cookies/storage, and domain discovery files like `llms.txt`, OpenAPI, sitemap, robots, and agent cards. The README’s “browser left, machine-readable context right” framing is exactly the category. ([GitHub][1])
+
+## My favorite feature
+
+The killer feature is **XHR/fetch `jsonShape` plus authenticated browser context**.
+
+Screenshots are useful. DOM summaries are useful. But the moment an agent can say, “this visible table is probably powered by `GET /api/...`, and the response shape is `array<object{id,name,status,...}>`,” the browser stops being just a viewport and becomes a live reverse-engineering console. Your docs describe `/api/v1/xhr` as returning observed XHR/fetch calls with compact redacted `jsonShape` summaries, and `/api/v1/cookies` as giving the coding tool the auth/session context needed to replay those same endpoints. That is powerful, and it is also sensitive, so it should become a first-class permission boundary. ([GitHub][2])
+
+My second favorite feature is the **browser terminal backed by MCP human requests**. The “watcher agent” loop is the right human-agent interaction pattern: the user asks from inside the browser, the agent inspects current browser state, replies in place, and the main coding session remains separate. ([GitHub][3])
+
+## What I’d put on the wish list
+
+The feature I want most is **evidence-backed answers**. Every browser-agent reply should be able to say: “I know this because of DOM ref `@e23`, XHR request `r17`, console message `c4`, and screenshot crop `s2`.” Not just “the agent says so.” A Together browser should make the agent show its work at the page-state level.
+
+The next feature is **visible-text-to-API provenance**: select a number, label, table cell, error message, or disabled button, then ask, “Where did this come from?” The browser should correlate visible DOM text, recent XHR JSON, console events, and source hints. Your own vision doc already lists future tools like `find_api_for_visible_text`, `replay_xhr`, `list_xhr`, and `compare_viewports`; I would promote those from “future tools” to the core identity of the project. ([GitHub][4])
+
+The third is a hard **permission and redaction model**. Localhost-only is not enough when the API can expose cookies, storage, screenshots, and authenticated replay. A local process can still call localhost. Add explicit scopes like `read.page`, `read.dom`, `read.screenshot`, `read.network.shape`, `read.network.body`, `read.storage`, `act.click`, `act.fill`, `act.submit`, `replay.xhr`. MCP’s own spec emphasizes explicit user consent, user control over data sharing/actions, and clear UIs for authorization; your project should embody that better than the generic agent browsers. ([Model Context Protocol][5])
+
+## The Netscape analogy
+
+The Marc Andreessen/Netscape lesson is not “build a browser.” It is: **find the new interface layer, make it radically easier, then let developers build against it before the incumbents know what standard they are supposed to defend**.
+
+Mosaic’s breakthrough was making the web visible and usable: inline images with text, simple clicking, and an installable graphical experience that made people want to create web pages. ([WIRED][6]) Netscape then moved fast commercially: Andreessen and Jim Clark formed the company in 1994, released early browser versions over the internet, made it available free to individuals/nonprofits, and pushed a cross-platform browser that integrated web, email, and newsgroups. ([LivingInternet][7])
+
+Your equivalent is not HTML rendering. WebKit already does that. Your equivalent is:
+
+> Make the live browser state readable, controllable, attributable, permissioned, and portable for a human+agent pair.
+
+That is the standard.
+
+## What I would do today with `wkdomains`
+
+Create a `standards/` directory and publish a v0.1 spec. Do not wait for polish. Netscape did not wait for permission from a standards body. But avoid the browser-war mistake: make the interface open, testable, and easy for other browsers to copy.
+
+Call it something like:
+
+```text
+standards/
+  together-browser-context-v0.md
+  schemas/
+    context.schema.json
+    snapshot.schema.json
+    dom-node.schema.json
+    network-event.schema.json
+    action.schema.json
+    evidence.schema.json
+    permission.schema.json
+  examples/
+    basic-page.context.json
+    xhtml-table-with-xhr.bundle.json
+    disabled-button-diagnosis.answer.json
+```
+
+Define five primitive objects:
+
+```text
+Context
+  What page/tab/identity/viewport/domain am I looking at?
+
+Snapshot
+  What is visible now? Screenshot, DOM summary, accessibility tree, layout rects.
+
+Network
+  What did the page request? Method, URL, status, timing, initiator, jsonShape, redaction state.
+
+Action
+  What can the agent do? click/fill/press/scroll/submit/replay, with wait conditions and permission requirements.
+
+Evidence
+  Why does the agent believe its answer? DOM refs, XHR refs, console refs, screenshot refs, source hints.
+```
+
+Then add one endpoint that returns the whole agent-readable bundle:
+
+```http
+GET /api/v1/context-bundle
+```
+
+Return a normalized object like:
+
+```json
+{
+  "version": "together-browser-context/v0.1",
+  "page": {
+    "url": "https://example.com/dashboard",
+    "title": "Dashboard",
+    "host": "example.com",
+    "viewport": { "mode": "mobile-small", "width": 390, "height": 844 }
+  },
+  "permissions": {
+    "granted": ["read.page", "read.dom", "read.network.shape"],
+    "withheld": ["read.storage", "read.network.body", "act.submit"]
+  },
+  "snapshot": {
+    "screenshotRef": "s1",
+    "domRefs": ["@e1", "@e2", "@e3"]
+  },
+  "network": {
+    "requests": [
+      {
+        "ref": "xhr17",
+        "method": "GET",
+        "urlPattern": "/api/sites",
+        "status": 200,
+        "jsonShape": "array<object{id,name,status,+8 more}>",
+        "bodyRedacted": true
+      }
+    ]
+  },
+  "console": {
+    "messages": []
+  }
+}
+```
+
+That one endpoint becomes your “view source” moment for the AI browser era.
+
+## The standards that matter
+
+**1. The permission standard.**
+Every endpoint gets a scope. Every agent session gets a visible badge. Every sensitive read has an audit trail. Every write action is either human-approved or explicitly pre-authorized. MCP elicitation already has a useful model for user interaction, including form mode and URL mode, and it explicitly forbids using form-mode elicitation for secrets like passwords, API keys, access tokens, and payment credentials. That maps directly onto browser-agent safety. ([Model Context Protocol][8])
+
+**2. The evidence standard.**
+Agent answers should cite browser evidence the way serious research cites sources. Example:
+
+```json
+{
+  "answer": "The Pricing button is disabled because the account lacks billing_admin.",
+  "evidence": [
+    { "type": "dom", "ref": "@e44", "field": "disabled", "value": true },
+    { "type": "xhr", "ref": "xhr12", "jsonPath": "$.user.roles", "valueShape": "array<string>" },
+    { "type": "console", "ref": "c3", "message": "billing_admin required" }
+  ],
+  "confidence": "high"
+}
+```
+
+This is where wkdomains can beat generic agent browsers. The answer is not just natural language. It is grounded in page state.
+
+**3. The `jsonShape` standard.**
+Make your `jsonShape` grammar public. Define how arrays, objects, nullable fields, redacted values, nested objects, samples, and diffs are represented. This could become the agent-readable equivalent of HAR for modern app APIs.
+
+**4. The action target standard.**
+Do not rely on CSS selectors alone. Define an action target envelope:
+
+```json
+{
+  "target": {
+    "ref": "@e12",
+    "role": "button",
+    "name": "Save changes",
+    "text": "Save",
+    "selectorHints": ["button[data-testid='save']"],
+    "rect": { "x": 312, "y": 640, "width": 128, "height": 44 }
+  }
+}
+```
+
+This gives agents a stable ref, semantic fallback, visual fallback, and selector fallback.
+
+**5. The session bundle standard.**
+Make “write current page files to `/tmp`” into a formal export format. Your article already describes saving `console.json`, `dom.json`, and `screenshot.png`; turn that into `together-session-bundle.json` plus artifacts. ([wkdomains.com][9]) This becomes the thing people attach to GitHub issues: “Here is the exact browser state my agent saw.”
+
+## How to position against Chrome DevTools MCP, Stagehand, and Browser Use
+
+Chrome DevTools MCP is already a serious incumbent for agent-visible Chrome: Google describes it as giving coding agents DevTools access, and its tool reference includes input automation, navigation, emulation, performance, network, debugging, memory, extensions, and WebMCP tools. ([Chrome for Developers][10]) Stagehand is pushing the “act/extract/observe/agent” automation layer, explicitly trying to sit between brittle selectors and unpredictable agents. ([docs.stagehand.dev][11]) Browser Use is a large open-source automation project that can run locally or self-hosted. ([docs.browser-use.com][12])
+
+So do **not** compete on “agent can click a button.” That will commoditize.
+
+Compete on:
+
+> The human is already there. The agent sees exactly what the human sees, with permissions, provenance, auth context, network shape, and a browser-native conversation loop.
+
+That is the gap.
+
+## The concrete move
+
+Open a GitHub issue or doc titled:
+
+```text
+Together Browser Context v0.1: a shared human-agent browser state format
+```
+
+Then define the first compliance checklist:
+
+```text
+A Together Browser v0.1 implementation MUST expose:
+- current page metadata
+- viewport-aware screenshot
+- sanitized visible DOM with stable refs
+- accessibility role/name for interactive elements
+- recent XHR/fetch summaries with jsonShape
+- console/error summaries
+- scoped permission manifest
+- action endpoint with wait conditions
+- evidence refs for DOM/network/console/screenshot
+- exportable session bundle
+```
+
+That is how you define the category. Not by saying “AI browser,” but by making the first crisp contract other people can implement.
+
+Your best feature today is `jsonShape`. Your best strategic move is turning it, plus DOM refs, permissions, and evidence bundles, into the **HAR file of the human+agent browser era**.
+
+[1]: https://github.com/wkdomains/macos-app "GitHub - wkdomains/macos-app: A macOS browser for developers and coding agents. wkdomains lets tools like Codex and Claude Code see the page you are viewing, capture screenshots, inspect XHR/fetch calls, understand JSON response shapes, and reuse your authenticated browser context through a local API. · GitHub"
+[2]: https://github.com/wkdomains/macos-app/blob/main/docs/local-api.md "macos-app/docs/local-api.md at main · wkdomains/macos-app · GitHub"
+[3]: https://github.com/wkdomains/macos-app/blob/main/docs/mcp-terminal.md "macos-app/docs/mcp-terminal.md at main · wkdomains/macos-app · GitHub"
+[4]: https://github.com/wkdomains/macos-app/blob/main/docs/vision.md "macos-app/docs/vision.md at main · wkdomains/macos-app · GitHub"
+[5]: https://modelcontextprotocol.io/specification/2025-11-25 "Specification - Model Context Protocol"
+[6]: https://www.wired.com/2010/04/0422mosaic-web-browser "April 22, 1993: Mosaic Browser Lights Up Web With Color, Creativity | WIRED"
+[7]: https://www.livinginternet.com/w/wi_netscape.htm "Netscape History - Web Browser, Marc Andreessen, Jim Clark, Mosaic | LivingInternet"
+[8]: https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation "Elicitation - Model Context Protocol"
+[9]: https://wkdomains.com/2026/may/on-the-dark-side/ "On the Dark Side | wkdomains.com"
+[10]: https://developer.chrome.com/docs/devtools/agents "Chrome DevTools for agents  |  Chrome for Developers"
+[11]: https://docs.stagehand.dev/v3/first-steps/introduction "Introducing Stagehand - Stagehand"
+[12]: https://docs.browser-use.com/open-source/introduction "Browser Use Open Source - Browser Use"
+

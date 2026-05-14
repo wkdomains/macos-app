@@ -34,6 +34,10 @@ enum AddressResolver {
             return searchResolution(for: value)
         }
 
+        if isBareSearchKeyword(value) {
+            return searchResolution(for: value)
+        }
+
         return inferredWebpageResolution(for: value) ?? searchResolution(for: value)
     }
 
@@ -84,18 +88,13 @@ enum AddressResolver {
         guard !value.contains("@") else { return nil }
 
         let initialScheme = isLocalHostLike(value) ? "http" : "https"
-        guard var components = URLComponents(string: "\(initialScheme)://\(value)"),
+        guard let components = URLComponents(string: "\(initialScheme)://\(value)"),
               let parsedHost = components.host
         else {
             return nil
         }
 
-        var host = parsedHost
-        let didAppendDotCom = shouldAppendDotCom(to: host)
-        if didAppendDotCom {
-            host = "\(host).com"
-            components.host = host
-        }
+        let host = parsedHost
 
         guard hostLooksNavigable(host),
               let primaryURL = components.url
@@ -109,7 +108,7 @@ enum AddressResolver {
             fallbackURLs: fallbackURLs(for: components, primaryURL: primaryURL),
             displayTitle: displayText(for: primaryURL),
             searchQuery: nil,
-            didAppendDotCom: didAppendDotCom
+            didAppendDotCom: false
         )
     }
 
@@ -162,11 +161,15 @@ enum AddressResolver {
         value.range(of: "://") != nil
     }
 
-    private static func shouldAppendDotCom(to host: String) -> Bool {
-        !host.contains(".")
-            && !isLocalHost(host)
-            && !isIPAddress(host)
-            && host.range(of: "^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$", options: .regularExpression) != nil
+    private static func isBareSearchKeyword(_ value: String) -> Bool {
+        guard value.range(
+            of: "^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$",
+            options: .regularExpression
+        ) != nil else {
+            return false
+        }
+
+        return !isLocalHost(value) && !isIPAddress(value)
     }
 
     private static func hostLooksNavigable(_ host: String) -> Bool {

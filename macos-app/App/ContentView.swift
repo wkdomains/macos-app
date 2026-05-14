@@ -37,6 +37,7 @@ struct ContentView: View {
                     items: browser.tabs,
                     selectTab: { browser.selectTab($0) },
                     addTab: { browser.addEmptyTab() },
+                    closeTab: { browser.closeTab($0) },
                     moveTab: { browser.moveTab($0, toDropIndex: $1) },
                     togglePinnedTab: { browser.togglePinnedTab($0) },
                     mouseBridge: tabStripMouseBridge
