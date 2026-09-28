@@ -209,4 +209,55 @@ extension BrowserModel {
       });
     })();
     """
+
+    static let documentCaptureScript = """
+    (() => {
+      const html = document.documentElement?.outerHTML || "";
+      const absolute = (value) => {
+        try { return new URL(value, document.baseURI).href; } catch (_) { return null; }
+      };
+      const text = (element) => String(element?.innerText || element?.textContent || "")
+        .replace(/\\s+/g, " ").trim().slice(0, 400);
+      const context = (element) => {
+        let node = element;
+        for (let depth = 0; depth < 5 && node; depth++, node = node.parentElement) {
+          const value = text(node);
+          if (value.length >= 8 && value.length <= 400) return value;
+        }
+        return text(element.parentElement);
+      };
+      const visible = (element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden"
+          && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
+      };
+      const images = Array.from(document.images).slice(0, 500).map((element) => ({
+        url: absolute(element.currentSrc || element.getAttribute("data-lazy-src")
+          || element.getAttribute("data-src") || element.src),
+        alt: element.alt || "",
+        context: context(element),
+        visible: visible(element),
+        kind: "img"
+      })).filter((image) => image.url);
+      const backgrounds = [];
+      for (const element of Array.from(document.querySelectorAll("body *")).slice(0, 5000)) {
+        if (backgrounds.length >= 250) break;
+        const background = getComputedStyle(element).backgroundImage;
+        if (!background || background === "none") continue;
+        const match = background.match(/url\\(["']?(.*?)["']?\\)/);
+        if (!match) continue;
+        const url = absolute(match[1]);
+        if (url) backgrounds.push({url, alt: "", context: context(element),
+          visible: visible(element), kind: "background"});
+      }
+      return JSON.stringify({
+        url: location.href,
+        title: document.title || "",
+        base_url: document.baseURI,
+        html,
+        images: [...images, ...backgrounds]
+      });
+    })();
+    """
 }

@@ -590,6 +590,18 @@ final class LocalAPIServer {
             return
         }
 
+        if request.path == "/api/v1/document" {
+            dataReader.readDocument { [weak self] result in
+                switch result {
+                case .success(let response):
+                    self?.sendJSONObject(response, contentType: "application/json; charset=utf-8", status: .ok, on: connection)
+                case .failure(let error):
+                    self?.sendError(status: .serviceUnavailable, message: error.localizedDescription, on: connection)
+                }
+            }
+            return
+        }
+
         if request.path == "/api/v1/scroll" || request.path == "/api/v1/scroll-trace" {
             BrowserDebugLogging.log("[wkdomains-debug] local-api scroll trace start id=\(debugID)")
             dataReader.readScrollTrace { [weak self] result in

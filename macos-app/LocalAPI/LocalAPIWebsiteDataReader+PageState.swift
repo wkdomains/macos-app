@@ -87,6 +87,10 @@ extension WebsiteDataReader {
         evaluateJSONScript(BrowserModel.linksInspectionScript, label: "links", completion: completion)
     }
 
+    func readDocument(completion: @escaping (Result<Any, Error>) -> Void) {
+        evaluateJSONScript(BrowserModel.documentCaptureScript, label: "document", completion: completion)
+    }
+
     func readScrollTrace(completion: @escaping (Result<Any, Error>) -> Void) {
         let script = """
         JSON.stringify((() => {
