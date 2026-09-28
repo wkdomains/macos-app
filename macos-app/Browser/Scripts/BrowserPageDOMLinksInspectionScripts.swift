@@ -232,9 +232,11 @@ extension BrowserModel {
         return style.display !== "none" && style.visibility !== "hidden"
           && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
       };
+      const imageURL = (element) => [element.currentSrc, element.getAttribute("data-lazy-src"),
+        element.getAttribute("data-src"), element.getAttribute("src")]
+        .map(absolute).find((url) => url && /^https?:/.test(url));
       const images = Array.from(document.images).slice(0, 500).map((element) => ({
-        url: absolute(element.currentSrc || element.getAttribute("data-lazy-src")
-          || element.getAttribute("data-src") || element.src),
+        url: imageURL(element),
         alt: element.alt || "",
         context: context(element),
         visible: visible(element),
